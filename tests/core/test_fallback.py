@@ -28,7 +28,7 @@ class TestSeasonalFallback:
         )
         # June 21 is winter in southern hemisphere
         assert northern > southern
-        assert southern == pytest.approx(1.0, abs=0.5)
+        assert southern == pytest.approx(1.0, abs=0.05)
 
     def test_output_bounded_by_min_and_max(self):
         for month in range(1, 13):
