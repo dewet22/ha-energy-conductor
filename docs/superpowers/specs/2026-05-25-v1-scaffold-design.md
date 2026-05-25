@@ -86,6 +86,8 @@ Catching architectural drift at lint time is cheaper than catching it in review.
 
 All dataclasses are frozen. `now` is always injected, never read from a clock — every core function takes a `SiteState` whose `now` was set by the adapter, so any scenario at any time is constructible in a test.
 
+**Every `datetime` field is timezone-aware (UTC) by contract.** Dataclasses validate this in `__post_init__` and raise `ValueError` on naive datetimes. See §10 for the full time/timezone contract.
+
 ```python
 @dataclass(frozen=True)
 class Battery:
@@ -450,7 +452,40 @@ No HA installs in CI. Fast, deterministic, runs in under 30s.
 - **Conventional commits** (`feat:`, `fix:`, `refactor:`, etc).
 - **No pre-commit hook** — `ruff check --fix` and `ruff format` run manually per user preference.
 
-## 10. Roadmap / explicitly-deferred items
+## 10. Time and timezone handling
+
+**Single rule: every `datetime` in `energy_conductor` core is timezone-aware. Naive `datetime` is a bug.**
+
+### Internal representation: UTC
+
+All `datetime` fields in `model.py` (`SiteState.now`, `ForecastSlot.start`, `TariffState.cheap_window_end`, `TariffState.next_cheap_window_start`) are UTC-aware. This matches HA's recorder/statistics convention and makes arithmetic unambiguous.
+
+### Local time at boundaries only
+
+Two places where local time legitimately appears:
+
+1. **Config time inputs.** `overnight_plan_time` and `overnight_window_end_time` are local — users mean "9pm here", not "9pm UTC". HA's `async_track_time_change` interprets these in HA's configured local timezone natively, including DST. For comparisons the adapter does explicitly, it converts via `homeassistant.util.dt.as_local()`.
+2. **Calendar-date operations.** "Day of year" for the seasonal fallback (§7) and "today" for the recorder stats query are *local-date* concepts. The adapter converts `now` to local before extracting `.date()` for these. Around midnight UTC vs midnight local this matters.
+
+### Inbound data
+
+- HA sensor `state.last_updated` is UTC-aware. Flows into the model unchanged.
+- Solcast forecast slot timestamps are UTC-aware (the HA integration publishes them that way). Flow into `ForecastSlot.start` unchanged.
+- HA recorder statistics timestamps are UTC. The stats query window is computed in UTC.
+
+### Enforcement
+
+- **Runtime:** every dataclass with `datetime` fields validates in `__post_init__` that each field has `tzinfo is not None and utcoffset() is not None`. Raises `ValueError` on naive datetimes. One-line check per class; rules out a whole class of "tests passed locally, broke for a user in another zone" bugs structurally.
+- **Lint:** ruff `DTZ` rules (flake8-datetimez) ban naive `datetime.now()`, `datetime.utcnow()`, and `datetime.fromtimestamp()` without `tz=`. Applied repo-wide.
+- **Test discipline:** `tests/core/builders.py` defaults all datetime fields to UTC-aware values. The `at("06:00")` helper returns a UTC-aware datetime anchored to a fixed test date.
+
+### DST corner cases
+
+- The overnight plan trigger at 21:00 fires correctly across DST transitions; HA's time-change tracker handles it.
+- A cheap window crossing a DST boundary (e.g. UK spring-forward at 01:00 inside the 23:30–05:30 Intelligent Go window) is correctly measured in elapsed UTC hours by `cheap_window_end - now`. That's the right answer for the morning-gap calculation — solar arrives at a real instant, not a wall-clock instant.
+- Autumn's doubled hour (02:00 occurring twice): `async_track_time_change(hour=21)` fires once. No core changes needed.
+
+## 11. Roadmap / explicitly-deferred items
 
 ### v1.1 — small follow-ups; regime model already supports them
 
