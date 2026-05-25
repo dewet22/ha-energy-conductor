@@ -5,6 +5,7 @@ boundary is enforced by ruff (see pyproject.toml's TID rules).
 """
 
 from energy_conductor.decisions import Decision, DecisionKind
+from energy_conductor.fallback import seasonal_fallback_kwh
 from energy_conductor.model import (
     Battery,
     EVCharger,
@@ -13,6 +14,7 @@ from energy_conductor.model import (
     SolarForecast,
     TariffState,
 )
+from energy_conductor.overnight import plan_overnight
 
 __all__ = [
     "Battery",
@@ -23,4 +25,6 @@ __all__ = [
     "SiteState",
     "SolarForecast",
     "TariffState",
+    "plan_overnight",
+    "seasonal_fallback_kwh",
 ]
