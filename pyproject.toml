@@ -5,7 +5,7 @@ description = "Entity-driven energy coordination for Home Assistant"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "Apache-2.0" }
-authors = [{ name = "dewet22" }]
+authors = [{ name = "dewet22", email = "dewet22@users.noreply.github.com" }]
 dependencies = []
 
 [project.urls]
