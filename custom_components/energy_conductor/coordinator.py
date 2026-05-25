@@ -13,7 +13,6 @@ from homeassistant.helpers.event import (
     async_track_time_change,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import dt as dt_util
 
 from energy_conductor.decisions import Decision
 from energy_conductor.discharge_guard import discharge_limit
@@ -102,7 +101,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
         # If we have no cached plan, run one immediately so the sensor isn't empty
         if self.last_overnight_plan is None:
-            await self._run_overnight_plan(dt_util.utcnow())
+            await self._run_overnight_plan()
 
     async def async_stop(self) -> None:
         for unsub in self._unsubs:
@@ -150,13 +149,24 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         except EntityProblem as exc:
             _LOGGER.warning("Skipping overnight plan: %s", exc)
             return
-        decision = plan_overnight(
-            state,
-            target_entity=self.config[CONF_BATTERY_CHARGE_CONTROL],
-            daily_kwh_target=float(
-                self.config.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET)
-            ),
-        )
+        except Exception:
+            self.status = STATUS_ERROR
+            self.last_error = "Overnight plan failed (see logs)"
+            _LOGGER.exception("Unexpected error building SiteState for overnight plan")
+            return
+        try:
+            decision = plan_overnight(
+                state,
+                target_entity=self.config[CONF_BATTERY_CHARGE_CONTROL],
+                daily_kwh_target=float(
+                    self.config.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET)
+                ),
+            )
+        except Exception:
+            self.status = STATUS_ERROR
+            self.last_error = "plan_overnight crashed (see logs)"
+            _LOGGER.exception("plan_overnight crashed")
+            return
         await self._emit(decision)
         self.last_overnight_plan = decision
 
@@ -170,6 +180,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         try:
             await self.writer.write(decision)
         except WriteFailure as exc:
+            self._dedupe.pop(key, None)  # allow retry on next tick
             _LOGGER.warning("Write failed: %s", exc)
             # Surface as a second notification (per spec §5)
             failure_decision = Decision(
