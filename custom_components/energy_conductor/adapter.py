@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from datetime import time as dt_time
 from typing import Any
 
-from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -113,8 +112,9 @@ class Adapter:
         now = dt_util.utcnow()
 
         # Battery — required entities; failure here is hard.
+        # SoC sensors don't update when the battery is idle — use a loose staleness threshold
         soc = _read_float(
-            self.hass, self.config[CONF_BATTERY_SOC_SENSOR], max_age_seconds=STALE_POWER_SECONDS
+            self.hass, self.config[CONF_BATTERY_SOC_SENSOR], max_age_seconds=STALE_FORECAST_SECONDS
         )
         max_charge = _max_attr(self.hass, self.config[CONF_BATTERY_CHARGE_CONTROL], default=3000)
         max_discharge = _max_attr(
@@ -185,7 +185,8 @@ class Adapter:
         # raw is "HH:MM:SS" from TimeSelector
         hh, mm, *_ = (int(p) for p in raw.split(":"))
         local_now = dt_util.as_local(now)
-        candidate_local = local_now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        # Use combine+as_local so DST offset is recalculated from scratch for that wall-clock time
+        candidate_local = dt_util.as_local(datetime.combine(local_now.date(), dt_time(hh, mm, 0)))
         if candidate_local <= local_now:
             # Roll forward using date arithmetic so DST transitions don't shift the wall-clock time
             tomorrow = (local_now + timedelta(days=1)).date()
@@ -232,7 +233,7 @@ class Adapter:
                     if isinstance(start_raw, datetime)
                     else dt_util.parse_datetime(start_raw)
                 )
-                if start is None or start.tzinfo is None:
+                if start is None or start.tzinfo is None or start.utcoffset() is None:
                     continue
                 kwh = float(item.get("pv_estimate", 0.0))
                 slots.append(ForecastSlot(start=start, energy_kwh=kwh))
@@ -259,9 +260,8 @@ class Adapter:
 
     async def _stats_based_fallback(self, now: datetime, generation_entity: str) -> float | None:
         start_period = now - timedelta(days=STATS_LOOKBACK_DAYS)
-        recorder = get_instance(self.hass)
-        stats = await recorder.async_add_executor_job(
-            statistics_during_period,
+        # statistics_during_period is async in HA 2024+
+        stats = await statistics_during_period(
             self.hass,
             start_period,
             now,
@@ -274,8 +274,17 @@ class Adapter:
         local_today = dt_util.as_local(now).date()
         target_doy = local_today.timetuple().tm_yday
         window_values: list[float] = []
-        for row in rows:
-            ts = row.get("start")
+        # Solar generation sensors are total_increasing: `sum` is cumulative lifetime total.
+        # Daily generation = difference between consecutive daily rows.
+        for i in range(1, len(rows)):
+            prev_sum = rows[i - 1].get("sum")
+            curr_sum = rows[i].get("sum")
+            if prev_sum is None or curr_sum is None:
+                continue
+            daily_kwh = float(curr_sum) - float(prev_sum)
+            if daily_kwh < 0:
+                continue  # skip meter resets
+            ts = rows[i].get("start")
             if ts is None:
                 continue
             ts_local = dt_util.as_local(
@@ -283,9 +292,7 @@ class Adapter:
             )
             doy = ts_local.date().timetuple().tm_yday
             if abs(doy - target_doy) <= STATS_CALENDAR_WINDOW_DAYS:
-                value = row.get("sum")
-                if value is not None:
-                    window_values.append(float(value))
+                window_values.append(daily_kwh)
         if len(window_values) < STATS_MIN_DATA_POINTS:
             return None
         return statistics.quantiles(window_values, n=100)[int(STATS_PERCENTILE * 100) - 1]

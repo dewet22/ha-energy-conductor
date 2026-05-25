@@ -110,7 +110,8 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
     @callback
     def _on_state_change(self, event) -> None:
-        self.hass.async_create_task(self.async_request_refresh())
+        # async_request_refresh is itself a @callback — call directly, don't wrap in a task
+        self.async_request_refresh()
 
     async def _async_update_data(self) -> None:
         self.ticks_total += 1
@@ -180,7 +181,8 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         try:
             await self.writer.write(decision)
         except WriteFailure as exc:
-            self._dedupe.pop(key, None)  # allow retry on next tick
+            # Do NOT pop the dedupe key — retrying on every tick would cause notification spam.
+            # A new write attempt will happen naturally when the decision value changes.
             _LOGGER.warning("Write failed: %s", exc)
             # Surface as a second notification (per spec §5)
             failure_decision = Decision(
