@@ -62,7 +62,7 @@ STATS_MIN_DATA_POINTS = 7
 STATS_PERCENTILE = 0.25
 
 # Staleness thresholds
-STALE_POWER_SECONDS = 5 * 60       # 5 minutes
+STALE_POWER_SECONDS = 5 * 60  # 5 minutes
 STALE_FORECAST_SECONDS = 24 * 3600  # 24 hours
 
 # Diagnostic sensor states

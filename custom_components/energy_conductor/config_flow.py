@@ -186,15 +186,13 @@ BEHAVIOUR_SCHEMA = vol.Schema(
                 translation_key="write_mode",
             )
         ),
-        vol.Required(CONF_NOTIFY_TARGET): EntitySelector(
-            EntitySelectorConfig(domain="notify")
-        ),
+        vol.Required(CONF_NOTIFY_TARGET): EntitySelector(EntitySelectorConfig(domain="notify")),
         vol.Required(
             CONF_OVERNIGHT_PLAN_TIME, default=DEFAULT_OVERNIGHT_PLAN_TIME.isoformat()
         ): TimeSelector(),
-        vol.Required(
-            CONF_DAILY_KWH_TARGET, default=DEFAULT_DAILY_KWH_TARGET
-        ): _kwh_selector(max_value=200),
+        vol.Required(CONF_DAILY_KWH_TARGET, default=DEFAULT_DAILY_KWH_TARGET): _kwh_selector(
+            max_value=200
+        ),
     }
 )
 
@@ -216,9 +214,7 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
         self._data.update(user_input)
         return await self.async_step_tariff()
 
-    async def async_step_tariff(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_tariff(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(step_id="tariff", data_schema=TARIFF_SCHEMA)
         self._data.update(user_input)
@@ -244,9 +240,7 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
         self._data.update(user_input)
         return await self.async_step_ev()
 
-    async def async_step_ev(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_ev(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(step_id="ev", data_schema=EV_SCHEMA)
         # Only store EV fields when a power sensor is actually configured
@@ -275,9 +269,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
         self.config_entry = config_entry
         self._data: dict[str, Any] = dict(config_entry.data)
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self.async_step_behaviour(user_input)
 
     async def async_step_behaviour(

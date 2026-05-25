@@ -43,9 +43,7 @@ class Notifier:
         # Notify targets selected by EntitySelector(domain='notify') are like 'notify.mobile_app_x'
         # Strip the 'notify.' prefix for the service name.
         service_name = (
-            self.notify_target.split(".", 1)[1]
-            if "." in self.notify_target
-            else self.notify_target
+            self.notify_target.split(".", 1)[1] if "." in self.notify_target else self.notify_target
         )
         try:
             await self.hass.services.async_call(

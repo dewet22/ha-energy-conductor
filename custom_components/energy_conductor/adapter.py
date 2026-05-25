@@ -93,7 +93,7 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     raw = state.attributes.get("max")
     try:
         return int(raw)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
@@ -145,9 +145,7 @@ class Adapter:
         ev_charger: EVCharger | None = None
         if ev_sensor:
             try:
-                ev_power = _read_float(
-                    self.hass, ev_sensor, max_age_seconds=STALE_POWER_SECONDS
-                )
+                ev_power = _read_float(self.hass, ev_sensor, max_age_seconds=STALE_POWER_SECONDS)
                 ev_charger = EVCharger(
                     power_w=ev_power,
                     min_activation_power_w=int(
@@ -207,9 +205,7 @@ class Adapter:
             sensor_id = self.config.get(CONF_FORECAST_DAILY_SENSOR)
             if sensor_id:
                 try:
-                    kwh = _read_float(
-                        self.hass, sensor_id, max_age_seconds=STALE_FORECAST_SECONDS
-                    )
+                    kwh = _read_float(self.hass, sensor_id, max_age_seconds=STALE_FORECAST_SECONDS)
                     slots = [ForecastSlot(start=now, energy_kwh=kwh)]
                 except EntityProblem as exc:
                     _LOGGER.warning("Daily forecast sensor unavailable: %s", exc)
@@ -218,9 +214,7 @@ class Adapter:
             return SolarForecast(slots=slots, fallback_kwh=None, fallback_source=None)
 
         fallback_kwh, fallback_source = await self._compute_fallback(now)
-        return SolarForecast(
-            slots=[], fallback_kwh=fallback_kwh, fallback_source=fallback_source
-        )
+        return SolarForecast(slots=[], fallback_kwh=fallback_kwh, fallback_source=fallback_source)
 
     def _slots_from_solcast(self, sensor_id: str) -> list[ForecastSlot]:
         state = self.hass.states.get(sensor_id)
@@ -242,7 +236,7 @@ class Adapter:
                     continue
                 kwh = float(item.get("pv_estimate", 0.0))
                 slots.append(ForecastSlot(start=start, energy_kwh=kwh))
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 continue
         return slots
 
@@ -263,9 +257,7 @@ class Adapter:
         )
         return seasonal, "seasonal"
 
-    async def _stats_based_fallback(
-        self, now: datetime, generation_entity: str
-    ) -> float | None:
+    async def _stats_based_fallback(self, now: datetime, generation_entity: str) -> float | None:
         start_period = now - timedelta(days=STATS_LOOKBACK_DAYS)
         recorder = get_instance(self.hass)
         stats = await recorder.async_add_executor_job(
