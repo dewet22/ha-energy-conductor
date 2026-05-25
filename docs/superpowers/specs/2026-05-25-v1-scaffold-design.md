@@ -441,14 +441,13 @@ No HA installs in CI. Fast, deterministic, runs in under 30s.
 ## 9. Tooling and scaffolding
 
 - **`uv`** for dependency management. Single `pyproject.toml` at the repo root covers both the core package and the HA component's dev workflow.
-- **Python 3.12+** (matches HA 2024.6 baseline).
-- **`ruff`** for lint + format. Rules baseline: `E, F, I, B, UP, SIM, RUF, TID`. `TID` enforces the architectural invariants (§2).
+- **Python 3.14+** (current HA-supported version; no reason to pin to an older floor on a greenfield project).
+- **`ruff`** for lint + format. Rules baseline: `E, F, I, B, UP, SIM, RUF, TID, DTZ`. `TID` enforces the architectural invariants (§2); `DTZ` enforces the timezone contract (§10).
 - **Line length 100.** No `# noqa` without an explanatory comment.
 - **Dependency groups:** runtime for `energy_conductor` core is stdlib only; dev includes `pytest`, `pytest-asyncio`, `hypothesis`, `ruff`, `coverage[toml]`.
 - **`manifest.json`:** `domain: energy_conductor`, `config_flow: true`, `iot_class: local_polling`, `requirements: []`, `version: 0.1.0`.
 - **`hacs.json`:** installable as a custom HACS repository from day one. Submission to default list deferred.
 - **`.gitignore`:** add `__pycache__/`, `.pytest_cache/`, `.coverage`, `htmlcov/`, `.venv/`, `dist/`, `*.egg-info/` at repo root.
-- **Commit author** set to `dewet22@users.noreply.github.com` per GivEnergy projects convention.
 - **Conventional commits** (`feat:`, `fix:`, `refactor:`, etc).
 - **No pre-commit hook** — `ruff check --fix` and `ruff format` run manually per user preference.
 
