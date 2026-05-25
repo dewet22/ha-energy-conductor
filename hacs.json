@@ -1,0 +1,6 @@
+{
+  "name": "Energy Conductor",
+  "render_readme": true,
+  "homeassistant": "2026.1.0",
+  "content_in_root": false
+}
