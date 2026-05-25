@@ -74,7 +74,7 @@ def _sensor_selector(device_class: str | None = None) -> EntitySelector:
     return EntitySelector(EntitySelectorConfig(**cfg))
 
 
-def _number_selector() -> EntitySelector:
+def _number_entity_selector() -> EntitySelector:
     return EntitySelector(EntitySelectorConfig(domain="number"))
 
 
@@ -117,8 +117,8 @@ def _watts_selector(*, min_value: int = 0, max_value: int = 10000) -> NumberSele
 BATTERY_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_BATTERY_SOC_SENSOR): _sensor_selector(device_class="battery"),
-        vol.Required(CONF_BATTERY_CHARGE_CONTROL): _number_selector(),
-        vol.Required(CONF_BATTERY_DISCHARGE_LIMIT): _number_selector(),
+        vol.Required(CONF_BATTERY_CHARGE_CONTROL): _number_entity_selector(),
+        vol.Required(CONF_BATTERY_DISCHARGE_LIMIT): _number_entity_selector(),
         vol.Required(CONF_BATTERY_CAPACITY_KWH): _kwh_selector(min_value=0.5, max_value=100),
         vol.Required(
             CONF_BATTERY_RESERVE_PERCENT, default=DEFAULT_RESERVE_PERCENT
@@ -249,7 +249,9 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(step_id="ev", data_schema=EV_SCHEMA)
-        self._data.update({k: v for k, v in user_input.items() if v is not None})
+        # Only store EV fields when a power sensor is actually configured
+        if user_input.get(CONF_EV_POWER_SENSOR):
+            self._data.update({k: v for k, v in user_input.items() if v is not None})
         return await self.async_step_behaviour()
 
     async def async_step_behaviour(
@@ -295,7 +297,8 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         )
                     ),
                     vol.Required(
-                        CONF_NOTIFY_TARGET, default=self._data[CONF_NOTIFY_TARGET]
+                        CONF_NOTIFY_TARGET,
+                        default=self._data.get(CONF_NOTIFY_TARGET, ""),
                     ): EntitySelector(EntitySelectorConfig(domain="notify")),
                     vol.Required(
                         CONF_DAILY_KWH_TARGET,
