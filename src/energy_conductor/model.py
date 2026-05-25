@@ -46,11 +46,12 @@ class ForecastSlot:
 class SolarForecast:
     """Either `slots` is non-empty OR `fallback_kwh` is set — never both, never neither."""
 
-    slots: list[ForecastSlot]
+    slots: tuple[ForecastSlot, ...]
     fallback_kwh: float | None
     fallback_source: str | None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "slots", tuple(self.slots))
         has_slots = bool(self.slots)
         has_fallback = self.fallback_kwh is not None
         if has_slots == has_fallback:
