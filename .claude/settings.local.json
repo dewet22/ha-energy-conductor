@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -c user.email=dewet22@users.noreply.github.com add docs/superpowers/)",
+      "Bash(git -c user.email=dewet22@users.noreply.github.com commit -m ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(uv sync *)",
+      "Bash(uv run *)"
+    ]
+  }
+}

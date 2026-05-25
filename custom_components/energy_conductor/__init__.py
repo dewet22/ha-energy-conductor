@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from typing import TYPE_CHECKING
 
 from .const import DOMAIN
-from .coordinator import EnergyConductorCoordinator
 
-PLATFORMS = [Platform.SENSOR]
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
+PLATFORMS = ["sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from homeassistant.const import Platform
+
+    from .coordinator import EnergyConductorCoordinator
+
     coordinator = EnergyConductorCoordinator(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     try:
         await coordinator.async_config_entry_first_refresh()
         await coordinator.async_start()
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
     except Exception:
         await coordinator.async_stop()
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
@@ -28,8 +33,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from homeassistant.const import Platform
+
+    from .coordinator import EnergyConductorCoordinator
+
     coordinator: EnergyConductorCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
     if unloaded:
         if coordinator is not None:
             await coordinator.async_stop()
