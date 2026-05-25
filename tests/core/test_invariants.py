@@ -57,14 +57,18 @@ def test_overnight_target_within_reserve_and_100(
     power_w=st.floats(min_value=0, max_value=8000, allow_nan=False, allow_infinity=False),
     min_activation=st.integers(min_value=500, max_value=3000),
     baseline=load_w,
+    cheap_now=st.booleans(),
+    dispatching_now=st.booleans(),
 )
 @settings(max_examples=200)
-def test_discharge_no_intermediate_regime(power_w, min_activation, baseline):
-    """For a given configuration, only three distinct limit values can ever be returned:
-    0 (cheap), baseline (dispatch+drawing), or max (default).
-    Never any other value."""
+def test_discharge_no_intermediate_regime(
+    power_w, min_activation, baseline, cheap_now, dispatching_now
+):
+    """For any combination of tariff state and EV state, only three distinct limit
+    values can ever be returned: 0 (cheap), round(baseline) (dispatch+drawing),
+    or max_discharge_power_w (default). Never any other value."""
     state = a_site_state(
-        tariff=a_tariff(ev_dispatching_now=True),
+        tariff=a_tariff(cheap_window_now=cheap_now, ev_dispatching_now=dispatching_now),
         ev_charger=an_ev_charger(power_w=power_w, min_activation_power_w=min_activation),
         battery=a_battery(max_discharge_power_w=3000),
         baseline_load_w=baseline,
