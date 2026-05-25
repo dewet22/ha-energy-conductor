@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 import statistics
-from dataclasses import dataclass
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
@@ -60,11 +60,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class StateError:
-    reason: str
 
 
 def _read_float(hass: HomeAssistant, entity_id: str, *, max_age_seconds: int) -> float:
@@ -194,7 +189,9 @@ class Adapter:
         local_now = dt_util.as_local(now)
         candidate_local = local_now.replace(hour=hh, minute=mm, second=0, microsecond=0)
         if candidate_local <= local_now:
-            candidate_local = candidate_local + timedelta(days=1)
+            # Roll forward using date arithmetic so DST transitions don't shift the wall-clock time
+            tomorrow = (local_now + timedelta(days=1)).date()
+            candidate_local = dt_util.as_local(datetime.combine(tomorrow, dt_time(hh, mm, 0)))
         return dt_util.as_utc(candidate_local)
 
     async def _build_forecast(self, now: datetime) -> SolarForecast:
