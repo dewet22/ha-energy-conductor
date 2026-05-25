@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.model import SiteState
+from .decisions import Decision, DecisionKind
+from .model import SiteState
 
 MEANINGFUL_SLOT_KWH = 0.25  # 500W average over a 30min slot
 MORNING_GAP_CAP_H = 6  # absolute cap on morning_gap_hours

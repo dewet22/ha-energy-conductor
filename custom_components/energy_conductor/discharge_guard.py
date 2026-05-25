@@ -8,8 +8,8 @@ Priority order:
 
 from __future__ import annotations
 
-from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.model import SiteState
+from .decisions import Decision, DecisionKind
+from .model import SiteState
 
 _BUCKET_W = 100  # dedupe granularity; baseline jitter <100W doesn't re-notify
 

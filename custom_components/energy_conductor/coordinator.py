@@ -14,10 +14,6 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from energy_conductor.decisions import Decision
-from energy_conductor.discharge_guard import discharge_limit
-from energy_conductor.overnight import plan_overnight
-
 from .adapter import Adapter, EntityProblem
 from .const import (
     CONF_BATTERY_CHARGE_CONTROL,
@@ -39,7 +35,10 @@ from .const import (
     STATUS_OK,
     WRITE_MODE_DRY_RUN,
 )
+from .decisions import Decision
+from .discharge_guard import discharge_limit
 from .notifier import Notifier
+from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)

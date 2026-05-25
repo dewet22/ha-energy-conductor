@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from typing import TYPE_CHECKING
 
 from .const import DOMAIN
-from .coordinator import EnergyConductorCoordinator
 
-PLATFORMS = [Platform.SENSOR]
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
+PLATFORMS = ["sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from .coordinator import EnergyConductorCoordinator
+
     coordinator = EnergyConductorCoordinator(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     try:
@@ -28,6 +31,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from .coordinator import EnergyConductorCoordinator
+
     coordinator: EnergyConductorCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
