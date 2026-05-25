@@ -14,8 +14,6 @@ PLATFORMS = ["sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    from homeassistant.const import Platform
-
     from .coordinator import EnergyConductorCoordinator
 
     coordinator = EnergyConductorCoordinator(hass, entry)
@@ -23,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
         await coordinator.async_start()
-        await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
         await coordinator.async_stop()
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
@@ -33,12 +31,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    from homeassistant.const import Platform
-
     from .coordinator import EnergyConductorCoordinator
 
     coordinator: EnergyConductorCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         if coordinator is not None:
             await coordinator.async_stop()
