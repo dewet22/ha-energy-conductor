@@ -49,11 +49,11 @@ def plan_overnight(
     target_percent = max(int(state.battery.reserve_percent), min(raw_percent, 100))
 
     is_fallback = not state.solar_forecast.slots
-    fallback_note = (
-        f", fallback {state.solar_forecast.fallback_source}"
-        if is_fallback and state.solar_forecast.fallback_source
-        else ""
-    )
+    if is_fallback:
+        source_label = state.solar_forecast.fallback_source or "unknown"
+        fallback_note = f", fallback {source_label}"
+    else:
+        fallback_note = ""
     reason = (
         f"Morning gap {morning_gap_hours:.1f}h x {state.baseline_load_w:.0f}W "
         f"= {morning_gap_kwh:.1f} kWh; forecast {forecast_kwh:.1f} kWh; "
