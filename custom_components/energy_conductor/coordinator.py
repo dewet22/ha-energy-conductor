@@ -193,3 +193,4 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 dedupe_key=f"{decision.dedupe_key}-failed",
             )
             await self.notifier.notify(failure_decision)
+            self.notifications_sent += 1

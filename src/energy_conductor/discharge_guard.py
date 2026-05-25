@@ -24,7 +24,7 @@ def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:
         limit_w = 0
         reason = "Cheap window active — battery idle"
     elif state.tariff.ev_dispatching_now and _ev_drawing(state):
-        limit_w = round(state.baseline_load_w)
+        limit_w = max(0, min(round(state.baseline_load_w), state.battery.max_discharge_power_w))
         reason = f"EV dispatch active — capping discharge at house baseline ({limit_w}W)"
     else:
         limit_w = state.battery.max_discharge_power_w

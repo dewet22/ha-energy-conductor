@@ -50,7 +50,7 @@ class Notifier:
                 "notify",
                 service_name,
                 {"message": message, "title": "Energy Conductor"},
-                blocking=False,
+                blocking=True,
             )
         except Exception:
             _LOGGER.exception("Notification dispatch failed for decision %s", decision)

@@ -92,7 +92,7 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     raw = state.attributes.get("max")
     try:
         return int(raw)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):  # fmt: skip
         return default
 
 
@@ -237,7 +237,7 @@ class Adapter:
                     continue
                 kwh = float(item.get("pv_estimate", 0.0))
                 slots.append(ForecastSlot(start=start, energy_kwh=kwh))
-            except KeyError, TypeError, ValueError:
+            except (KeyError, TypeError, ValueError):  # fmt: skip
                 continue
         return slots
 
@@ -291,7 +291,10 @@ class Adapter:
                 ts if isinstance(ts, datetime) else dt_util.utc_from_timestamp(ts)
             )
             doy = ts_local.date().timetuple().tm_yday
-            if abs(doy - target_doy) <= STATS_CALENDAR_WINDOW_DAYS:
+            # Wrap-aware distance so Jan 1-14 can match late-December historical data
+            dist = abs(doy - target_doy)
+            dist = min(dist, 365 - dist)
+            if dist <= STATS_CALENDAR_WINDOW_DAYS:
                 window_values.append(daily_kwh)
         if len(window_values) < STATS_MIN_DATA_POINTS:
             return None

@@ -7,7 +7,7 @@ Naive datetimes are rejected in __post_init__.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def _require_aware(name: str, value: datetime | None) -> None:
@@ -15,6 +15,8 @@ def _require_aware(name: str, value: datetime | None) -> None:
         return
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware (got naive datetime)")
+    if value.utcoffset() != timedelta(0):
+        raise ValueError(f"{name} must be UTC (+00:00), got utcoffset={value.utcoffset()!r}")
 
 
 @dataclass(frozen=True)

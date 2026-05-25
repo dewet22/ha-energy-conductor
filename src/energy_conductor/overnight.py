@@ -11,10 +11,10 @@ MISSING_FORECAST_GAP_H = 4  # default gap when no forecast slots are present
 
 
 def _first_meaningful_slot_start(state: SiteState):
-    for slot in state.solar_forecast.slots:
-        if slot.energy_kwh >= MEANINGFUL_SLOT_KWH:
-            return slot.start
-    return None
+    starts = [
+        slot.start for slot in state.solar_forecast.slots if slot.energy_kwh >= MEANINGFUL_SLOT_KWH
+    ]
+    return min(starts, default=None)
 
 
 def _morning_gap_hours(state: SiteState) -> float:

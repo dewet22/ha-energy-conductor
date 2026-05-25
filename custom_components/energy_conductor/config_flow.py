@@ -267,7 +267,8 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
 class EnergyConductorOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         self.config_entry = config_entry
-        self._data: dict[str, Any] = dict(config_entry.data)
+        # Merge data+options so defaults reflect whatever was previously saved in either place
+        self._defaults: dict[str, Any] = {**config_entry.data, **config_entry.options}
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self.async_step_behaviour(user_input)
@@ -280,7 +281,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 {
                     vol.Required(
                         CONF_WRITE_MODE,
-                        default=self._data.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN),
+                        default=self._defaults.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN),
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=[WRITE_MODE_DRY_RUN, WRITE_MODE_LIVE],
@@ -290,14 +291,22 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                     ),
                     vol.Required(
                         CONF_NOTIFY_TARGET,
-                        default=self._data.get(CONF_NOTIFY_TARGET, ""),
+                        default=self._defaults.get(CONF_NOTIFY_TARGET, ""),
                     ): EntitySelector(EntitySelectorConfig(domain="notify")),
                     vol.Required(
                         CONF_DAILY_KWH_TARGET,
-                        default=self._data.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
+                        default=self._defaults.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
                     ): _kwh_selector(max_value=200),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
-        self._data.update(user_input)
-        return self.async_create_entry(title="", data=self._data)
+        # Only persist the three behaviour-level keys into entry.options,
+        # not the full config snapshot (which lives in entry.data).
+        return self.async_create_entry(
+            title="",
+            data={
+                CONF_WRITE_MODE: user_input[CONF_WRITE_MODE],
+                CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
+                CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
+            },
+        )
