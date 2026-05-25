@@ -272,7 +272,9 @@ class Adapter:
         )
         rows = stats.get(generation_entity, [])
         local_today = dt_util.as_local(now).date()
-        target_doy = local_today.timetuple().tm_yday
+        # Normalise to a leap year so DOY comparisons are on a consistent 366-day ring
+        # and Feb-28/Mar-1 boundaries are handled correctly across leap and non-leap years.
+        target_doy = local_today.replace(year=2000).timetuple().tm_yday
         window_values: list[float] = []
         # Solar generation sensors are total_increasing: `sum` is cumulative lifetime total.
         # Daily generation = difference between consecutive daily rows.
@@ -290,10 +292,10 @@ class Adapter:
             ts_local = dt_util.as_local(
                 ts if isinstance(ts, datetime) else dt_util.utc_from_timestamp(ts)
             )
-            doy = ts_local.date().timetuple().tm_yday
+            doy = ts_local.date().replace(year=2000).timetuple().tm_yday
             # Wrap-aware distance so Jan 1-14 can match late-December historical data
             dist = abs(doy - target_doy)
-            dist = min(dist, 365 - dist)
+            dist = min(dist, 366 - dist)
             if dist <= STATS_CALENDAR_WINDOW_DAYS:
                 window_values.append(daily_kwh)
         if len(window_values) < STATS_MIN_DATA_POINTS:
