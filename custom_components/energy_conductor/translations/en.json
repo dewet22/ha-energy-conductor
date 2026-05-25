@@ -1,10 +1,94 @@
 {
   "config": {
-    "step": {},
+    "step": {
+      "battery": {
+        "title": "Battery",
+        "description": "Map the entities representing your hybrid inverter's battery.",
+        "data": {
+          "battery_soc_sensor": "Battery SoC sensor",
+          "battery_charge_control": "Charge power control (number entity)",
+          "battery_discharge_limit": "Discharge power limit (number entity)",
+          "battery_capacity_kwh": "Battery capacity (kWh)",
+          "battery_reserve_percent": "Reserve SoC floor (%)"
+        }
+      },
+      "tariff": {
+        "title": "Tariff",
+        "description": "Cheap-rate signals from your tariff provider integration.",
+        "data": {
+          "cheap_rate_sensor": "Cheap-rate (whole-house) binary sensor",
+          "dispatching_sensor": "Smart dispatch active (optional; e.g. Octopus Intelligent)",
+          "overnight_window_end_time": "Overnight window end (local time)"
+        }
+      },
+      "forecast_source": {
+        "title": "Solar forecast — source",
+        "description": "Pick the kind of solar forecast available in Home Assistant.",
+        "data": {
+          "forecast_source": "Source"
+        }
+      },
+      "forecast": {
+        "title": "Solar forecast — details",
+        "description": "Forecast sensor and seasonal-fallback parameters.",
+        "data": {
+          "forecast_solcast_sensor": "Solcast forecast sensor",
+          "forecast_daily_sensor": "Daily-total kWh sensor",
+          "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
+          "winter_min_kwh": "Winter minimum fallback (kWh)",
+          "summer_max_kwh": "Summer maximum fallback (kWh)",
+          "southern_hemisphere": "Southern hemisphere"
+        }
+      },
+      "ev": {
+        "title": "EV charger (optional)",
+        "description": "If present, enables the EV-dispatch discharge regime.",
+        "data": {
+          "ev_power_sensor": "EV charger power sensor",
+          "ev_min_activation_power_w": "Minimum activation power (W)"
+        }
+      },
+      "behaviour": {
+        "title": "Behaviour",
+        "description": "Write mode and notification target.",
+        "data": {
+          "write_mode": "Write mode",
+          "notify_target": "Notification target",
+          "overnight_plan_time": "Overnight plan time (local)",
+          "daily_kwh_target": "Daily kWh target (v1 constant)"
+        }
+      }
+    },
     "error": {},
-    "abort": {}
+    "abort": {
+      "already_configured": "Energy Conductor is already configured."
+    }
   },
   "options": {
-    "step": {}
+    "step": {
+      "behaviour": {
+        "title": "Behaviour",
+        "data": {
+          "write_mode": "Write mode",
+          "notify_target": "Notification target",
+          "daily_kwh_target": "Daily kWh target"
+        }
+      }
+    }
+  },
+  "selector": {
+    "forecast_source": {
+      "options": {
+        "solcast": "Solcast (half-hourly)",
+        "daily_total_sensor": "Daily total sensor",
+        "none": "None (use seasonal/stats fallback)"
+      }
+    },
+    "write_mode": {
+      "options": {
+        "dry_run": "Dry run (notify only)",
+        "live": "Live (notify and write)"
+      }
+    }
   }
 }
