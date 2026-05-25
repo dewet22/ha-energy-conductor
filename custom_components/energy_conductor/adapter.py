@@ -92,7 +92,7 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     raw = state.attributes.get("max")
     try:
         return int(raw)
-    except (TypeError, ValueError):  # fmt: skip
+    except TypeError, ValueError:
         return default
 
 
@@ -237,7 +237,7 @@ class Adapter:
                     continue
                 kwh = float(item.get("pv_estimate", 0.0))
                 slots.append(ForecastSlot(start=start, energy_kwh=kwh))
-            except (KeyError, TypeError, ValueError):  # fmt: skip
+            except KeyError, TypeError, ValueError:
                 continue
         return slots
 
