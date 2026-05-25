@@ -18,16 +18,6 @@ from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from energy_conductor.fallback import seasonal_fallback_kwh
-from energy_conductor.model import (
-    Battery,
-    EVCharger,
-    ForecastSlot,
-    SiteState,
-    SolarForecast,
-    TariffState,
-)
-
 from .const import (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_CONTROL,
@@ -56,6 +46,15 @@ from .const import (
     STATS_LOOKBACK_DAYS,
     STATS_MIN_DATA_POINTS,
     STATS_PERCENTILE,
+)
+from .fallback import seasonal_fallback_kwh
+from .model import (
+    Battery,
+    EVCharger,
+    ForecastSlot,
+    SiteState,
+    SolarForecast,
+    TariffState,
 )
 
 _LOGGER = logging.getLogger(__name__)

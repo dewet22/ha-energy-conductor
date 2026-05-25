@@ -4,10 +4,10 @@ This package MUST NOT import from `homeassistant`. The architectural
 boundary is enforced by ruff (see pyproject.toml's TID rules).
 """
 
-from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.discharge_guard import discharge_limit
-from energy_conductor.fallback import seasonal_fallback_kwh
-from energy_conductor.model import (
+from .decisions import Decision, DecisionKind
+from .discharge_guard import discharge_limit
+from .fallback import seasonal_fallback_kwh
+from .model import (
     Battery,
     EVCharger,
     ForecastSlot,
@@ -15,7 +15,7 @@ from energy_conductor.model import (
     SolarForecast,
     TariffState,
 )
-from energy_conductor.overnight import plan_overnight
+from .overnight import plan_overnight
 
 __all__ = [
     "Battery",

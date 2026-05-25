@@ -6,9 +6,8 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from energy_conductor.decisions import Decision, DecisionKind
-
 from .const import WRITE_MODE_DRY_RUN
+from .decisions import Decision, DecisionKind
 
 _LOGGER = logging.getLogger(__name__)
 
