@@ -71,7 +71,8 @@
         "data": {
           "write_mode": "Write mode",
           "notify_target": "Notification target",
-          "daily_kwh_target": "Daily kWh target"
+          "daily_kwh_target": "Daily kWh target",
+          "device_name": "Device name (overrides Home Assistant location)"
         }
       }
     }

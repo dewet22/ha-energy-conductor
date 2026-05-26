@@ -37,6 +37,7 @@ CONF_WRITE_MODE = "write_mode"
 CONF_NOTIFY_TARGET = "notify_target"
 CONF_OVERNIGHT_PLAN_TIME = "overnight_plan_time"
 CONF_DAILY_KWH_TARGET = "daily_kwh_target"
+CONF_DEVICE_NAME = "device_name"
 
 # Enum values
 FORECAST_SOURCE_SOLCAST = "solcast"

@@ -26,6 +26,8 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
     TimeSelector,
 )
 
@@ -37,6 +39,7 @@ from .const import (
     CONF_BATTERY_SOC_SENSOR,
     CONF_CHEAP_RATE_SENSOR,
     CONF_DAILY_KWH_TARGET,
+    CONF_DEVICE_NAME,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
@@ -297,10 +300,14 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         CONF_DAILY_KWH_TARGET,
                         default=self._defaults.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
                     ): _kwh_selector(max_value=200),
+                    vol.Optional(
+                        CONF_DEVICE_NAME,
+                        description={"suggested_value": self._defaults.get(CONF_DEVICE_NAME, "")},
+                    ): TextSelector(TextSelectorConfig()),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
-        # Only persist the three behaviour-level keys into entry.options,
+        # Only persist the behaviour-level keys into entry.options,
         # not the full config snapshot (which lives in entry.data).
         return self.async_create_entry(
             title="",
@@ -308,5 +315,6 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 CONF_WRITE_MODE: user_input[CONF_WRITE_MODE],
                 CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
                 CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
+                CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
             },
         )

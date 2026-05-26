@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from datetime import timedelta
 from typing import Any
 
@@ -37,6 +38,8 @@ from .const import (
 )
 from .decisions import Decision
 from .discharge_guard import discharge_limit
+from .jitter import hourly_jitter_offset
+from .model import SiteState
 from .notifier import Notifier
 from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
@@ -69,6 +72,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.notifications_sent: int = 0
         self.last_overnight_plan: Decision | None = None
         self.last_discharge_decision: Decision | None = None
+        self.last_site_state: SiteState | None = None
 
         self._unsubs: list = []
 
@@ -96,6 +100,23 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             async_track_time_change(
                 self.hass, self._run_overnight_plan, hour=hh, minute=mm, second=0
             )
+        )
+
+        # Hourly re-evaluation with startup-chosen jitter (HH:54..HH:56).
+        # Spread across instances to avoid stampeding herd.
+        jitter_minute, jitter_second = hourly_jitter_offset(random.randint(-60, 60))
+        self._unsubs.append(
+            async_track_time_change(
+                self.hass,
+                self._run_overnight_plan,
+                minute=jitter_minute,
+                second=jitter_second,
+            )
+        )
+        _LOGGER.info(
+            "Hourly plan re-evaluation scheduled for HH:%02d:%02d",
+            jitter_minute,
+            jitter_second,
         )
 
         # If we have no cached plan, run one immediately so the sensor isn't empty
@@ -129,6 +150,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
         self.status = STATUS_OK
         self.last_error = None
+        self.last_site_state = state
 
         try:
             decision = discharge_limit(
@@ -154,6 +176,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self.last_error = "Overnight plan failed (see logs)"
             _LOGGER.exception("Unexpected error building SiteState for overnight plan")
             return
+        self.last_site_state = state
         try:
             decision = plan_overnight(
                 state,

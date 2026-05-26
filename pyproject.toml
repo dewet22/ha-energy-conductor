@@ -55,6 +55,7 @@ source = ["custom_components/energy_conductor"]
 omit = [
     "custom_components/energy_conductor/__init__.py",
     "custom_components/energy_conductor/adapter.py",
+    "custom_components/energy_conductor/binary_sensor.py",
     "custom_components/energy_conductor/config_flow.py",
     "custom_components/energy_conductor/coordinator.py",
     "custom_components/energy_conductor/notifier.py",
