@@ -37,6 +37,7 @@ from .const import (
 )
 from .decisions import Decision
 from .discharge_guard import discharge_limit
+from .model import SiteState
 from .notifier import Notifier
 from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
@@ -69,6 +70,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.notifications_sent: int = 0
         self.last_overnight_plan: Decision | None = None
         self.last_discharge_decision: Decision | None = None
+        self.last_site_state: SiteState | None = None
 
         self._unsubs: list = []
 
@@ -129,6 +131,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
         self.status = STATUS_OK
         self.last_error = None
+        self.last_site_state = state
 
         try:
             decision = discharge_limit(
@@ -154,6 +157,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self.last_error = "Overnight plan failed (see logs)"
             _LOGGER.exception("Unexpected error building SiteState for overnight plan")
             return
+        self.last_site_state = state
         try:
             decision = plan_overnight(
                 state,
