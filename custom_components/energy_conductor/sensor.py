@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -26,6 +27,11 @@ async def async_setup_entry(
             StatusSensor(coordinator, entry),
             OvernightPlanSensor(coordinator, entry),
             DischargeDecisionSensor(coordinator, entry),
+            BatterySocSensor(coordinator, entry),
+            BatteryReservePercentSensor(coordinator, entry),
+            BatteryUsableEnergySensor(coordinator, entry),
+            BatteryMaxChargeSensor(coordinator, entry),
+            BatteryMaxDischargeSensor(coordinator, entry),
         ]
     )
 
@@ -114,3 +120,92 @@ class DischargeDecisionSensor(_BaseSensor):
         if d is None:
             return {}
         return {"reason": d.reason, "dedupe_key": d.dedupe_key}
+
+
+class BatterySocSensor(_BaseSensor):
+    _attr_translation_key = "battery_soc"
+    _attr_name = "Battery SoC"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-battery-soc"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.battery.soc_percent
+
+
+class BatteryReservePercentSensor(_BaseSensor):
+    _attr_translation_key = "battery_reserve"
+    _attr_name = "Battery reserve"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-battery-reserve"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.battery.reserve_percent
+
+
+class BatteryUsableEnergySensor(_BaseSensor):
+    _attr_translation_key = "battery_usable_energy"
+    _attr_name = "Battery usable energy"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-battery-usable-energy"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        if state is None:
+            return None
+        battery = state.battery
+        usable_percent = max(0.0, battery.soc_percent - battery.reserve_percent)
+        return round(battery.capacity_kwh * usable_percent / 100, 2)
+
+
+class BatteryMaxChargeSensor(_BaseSensor):
+    _attr_translation_key = "battery_max_charge"
+    _attr_name = "Battery max charge"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-battery-max-charge"
+
+    @property
+    def native_value(self) -> int | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.battery.max_charge_power_w
+
+
+class BatteryMaxDischargeSensor(_BaseSensor):
+    _attr_translation_key = "battery_max_discharge"
+    _attr_name = "Battery max discharge"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-battery-max-discharge"
+
+    @property
+    def native_value(self) -> int | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.battery.max_discharge_power_w
