@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_NAME, DOMAIN
+from .const import CONF_DEVICE_NAME, CONF_FORECAST_SOURCE, DOMAIN
 from .coordinator import EnergyConductorCoordinator
 
 
@@ -32,6 +32,7 @@ async def async_setup_entry(
             BatteryUsableEnergySensor(coordinator, entry),
             BatteryMaxChargeSensor(coordinator, entry),
             BatteryMaxDischargeSensor(coordinator, entry),
+            SolarForecastSensor(coordinator, entry),
         ]
     )
 
@@ -209,3 +210,38 @@ class BatteryMaxDischargeSensor(_BaseSensor):
     def native_value(self) -> int | None:
         state = self.coordinator.last_site_state
         return None if state is None else state.battery.max_discharge_power_w
+
+
+class SolarForecastSensor(_BaseSensor):
+    _attr_translation_key = "solar_forecast"
+    _attr_name = "Solar forecast today"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-solar-forecast-today"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else round(state.solar_forecast.total_kwh_today, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        if state is None:
+            return {}
+        forecast = state.solar_forecast
+        if forecast.slots:
+            # Slot-based: source comes from config (solcast vs daily_total_sensor)
+            source = self.coordinator.config.get(CONF_FORECAST_SOURCE, "unknown")
+        else:
+            # Fallback: source is whichever fallback path produced the value
+            source = forecast.fallback_source or "unknown"
+        return {
+            "slot_count": len(forecast.slots),
+            "source": source,
+            "fallback_source": forecast.fallback_source,
+        }
