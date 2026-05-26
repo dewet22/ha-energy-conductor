@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from datetime import timedelta
 from typing import Any
 
@@ -37,6 +38,7 @@ from .const import (
 )
 from .decisions import Decision
 from .discharge_guard import discharge_limit
+from .jitter import hourly_jitter_offset
 from .model import SiteState
 from .notifier import Notifier
 from .overnight import plan_overnight
@@ -98,6 +100,23 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             async_track_time_change(
                 self.hass, self._run_overnight_plan, hour=hh, minute=mm, second=0
             )
+        )
+
+        # Hourly re-evaluation with startup-chosen jitter (HH:54..HH:56).
+        # Spread across instances to avoid stampeding herd.
+        jitter_minute, jitter_second = hourly_jitter_offset(random.randint(-60, 60))
+        self._unsubs.append(
+            async_track_time_change(
+                self.hass,
+                self._run_overnight_plan,
+                minute=jitter_minute,
+                second=jitter_second,
+            )
+        )
+        _LOGGER.info(
+            "Hourly plan re-evaluation scheduled for HH:%02d:%02d",
+            jitter_minute,
+            jitter_second,
         )
 
         # If we have no cached plan, run one immediately so the sensor isn't empty
