@@ -36,7 +36,7 @@ async def async_setup_entry(
     )
 
 
-class _BaseBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class _BaseBinarySensor(CoordinatorEntity["EnergyConductorCoordinator"], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 

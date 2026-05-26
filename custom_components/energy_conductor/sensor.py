@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
@@ -167,6 +167,9 @@ class BatteryUsableEnergySensor(_BaseSensor):
     _attr_name = "Battery usable energy"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
+    # Point-in-time stored energy (not cumulative), so MEASUREMENT — not
+    # TOTAL_INCREASING which ENERGY would otherwise imply.
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
@@ -222,6 +225,9 @@ class SolarForecastSensor(_BaseSensor):
     _attr_name = "Solar forecast today"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
+    # Daily forecast total is a point-in-time prediction (changes as the
+    # forecast model updates), not a cumulative meter — MEASUREMENT.
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
