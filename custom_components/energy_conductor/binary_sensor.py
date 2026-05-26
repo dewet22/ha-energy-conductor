@@ -49,6 +49,7 @@ class _BaseBinarySensor(CoordinatorEntity["EnergyConductorCoordinator"], BinaryS
         device_name = (
             self.coordinator.config.get(CONF_DEVICE_NAME)
             or self.coordinator.hass.config.location_name
+            or "Energy Conductor"
         )
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
