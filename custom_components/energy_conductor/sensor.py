@@ -7,10 +7,11 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_DEVICE_NAME, DOMAIN
 from .coordinator import EnergyConductorCoordinator
 
 
@@ -35,6 +36,19 @@ class _BaseSensor(CoordinatorEntity[EnergyConductorCoordinator], SensorEntity):
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry_id = entry.entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        device_name = (
+            self.coordinator.config.get(CONF_DEVICE_NAME)
+            or self.coordinator.hass.config.location_name
+        )
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name=device_name,
+            manufacturer="Energy Conductor",
+            model="v1",
+        )
 
 
 class StatusSensor(_BaseSensor):
