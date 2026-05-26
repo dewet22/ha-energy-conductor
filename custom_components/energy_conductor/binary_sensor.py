@@ -62,7 +62,8 @@ class _BaseBinarySensor(CoordinatorEntity["EnergyConductorCoordinator"], BinaryS
 class TariffCheapNowBinarySensor(_BaseBinarySensor):
     _attr_translation_key = "tariff_cheap_now"
     _attr_name = "Cheap window now"
-    _attr_device_class = BinarySensorDeviceClass.POWER
+    # No device_class — HA's binary-sensor classes (POWER, RUNNING, PLUG, …)
+    # all describe physical states and would be misleading for a tariff signal.
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
