@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
@@ -33,6 +34,10 @@ async def async_setup_entry(
             BatteryMaxChargeSensor(coordinator, entry),
             BatteryMaxDischargeSensor(coordinator, entry),
             SolarForecastSensor(coordinator, entry),
+            CheapWindowEndSensor(coordinator, entry),
+            EVChargerPowerSensor(coordinator, entry),
+            BaselineLoadSensor(coordinator, entry),
+            LastSiteStateAtSensor(coordinator, entry),
         ]
     )
 
@@ -245,3 +250,71 @@ class SolarForecastSensor(_BaseSensor):
             "source": source,
             "fallback_source": forecast.fallback_source,
         }
+
+
+class CheapWindowEndSensor(_BaseSensor):
+    _attr_translation_key = "cheap_window_end"
+    _attr_name = "Cheap window end"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-cheap-window-end"
+
+    @property
+    def native_value(self) -> datetime | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.tariff.cheap_window_end
+
+
+class EVChargerPowerSensor(_BaseSensor):
+    _attr_translation_key = "ev_charger_power"
+    _attr_name = "EV charger power"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-ev-charger-power"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        if state is None or state.ev_charger is None:
+            return None
+        return state.ev_charger.power_w
+
+
+class BaselineLoadSensor(_BaseSensor):
+    _attr_translation_key = "baseline_load"
+    _attr_name = "Baseline load"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-baseline-load"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.baseline_load_w
+
+
+class LastSiteStateAtSensor(_BaseSensor):
+    _attr_translation_key = "last_state_read_at"
+    _attr_name = "Last state read at"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-last-state-read-at"
+
+    @property
+    def native_value(self) -> datetime | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.now
