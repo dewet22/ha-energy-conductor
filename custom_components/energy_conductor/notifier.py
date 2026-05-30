@@ -39,17 +39,16 @@ class Notifier:
 
     async def notify(self, decision: Decision) -> None:
         message = render_message(decision, self.write_mode)
-        # Notify targets selected by EntitySelector(domain='notify') are like 'notify.mobile_app_x'
-        # Strip the 'notify.' prefix for the service name.
-        service_name = (
-            self.notify_target.split(".", 1)[1] if "." in self.notify_target else self.notify_target
-        )
+        # notify_target is a notify *entity_id* (EntitySelector(domain='notify')), e.g.
+        # 'notify.pixel_9a'. Entity-platform notifiers are driven by the notify.send_message
+        # action with the entity_id as target — there is no per-entity 'notify.<name>' service.
         try:
             await self.hass.services.async_call(
                 "notify",
-                service_name,
+                "send_message",
                 {"message": message, "title": "Energy Conductor"},
                 blocking=True,
+                target={"entity_id": self.notify_target},
             )
         except Exception:
             _LOGGER.exception("Notification dispatch failed for decision %s", decision)
