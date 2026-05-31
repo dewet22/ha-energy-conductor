@@ -135,7 +135,10 @@ class BatterySocSensor(_BaseSensor):
     _attr_translation_key = "battery_soc"
     _attr_name = "Battery SoC"
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.BATTERY
+    # No device_class: SensorDeviceClass.BATTERY is for *device* batteries (remotes,
+    # sensors) and triggers HA's low-battery scanners. House storage SoC is not that.
+    _attr_icon = "mdi:battery-high"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
@@ -152,7 +155,8 @@ class BatteryReservePercentSensor(_BaseSensor):
     _attr_translation_key = "battery_reserve"
     _attr_name = "Battery reserve"
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_icon = "mdi:battery-low"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
