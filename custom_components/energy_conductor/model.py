@@ -63,7 +63,7 @@ class SolarForecast:
             )
 
     @property
-    def total_kwh_today(self) -> float:
+    def total_kwh_forecast(self) -> float:
         if self.slots:
             return sum(slot.energy_kwh for slot in self.slots)
         assert self.fallback_kwh is not None  # invariant from __post_init__

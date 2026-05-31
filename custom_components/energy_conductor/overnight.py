@@ -41,7 +41,7 @@ def plan_overnight(
     morning_gap_hours = _morning_gap_hours(state)
     morning_gap_kwh = state.baseline_load_w * morning_gap_hours / 1000.0
 
-    forecast_kwh = state.solar_forecast.total_kwh_today
+    forecast_kwh = state.solar_forecast.total_kwh_forecast
     forecast_deficit = max(0.0, daily_kwh_target - forecast_kwh)
 
     target_kwh = morning_gap_kwh + forecast_deficit

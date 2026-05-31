@@ -32,7 +32,7 @@
         "title": "Solar forecast — details",
         "description": "Forecast sensor and seasonal-fallback parameters.",
         "data": {
-          "forecast_solcast_sensor": "Solcast forecast sensor",
+          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor for overnight planning)",
           "forecast_daily_sensor": "Daily-total kWh sensor",
           "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
           "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",

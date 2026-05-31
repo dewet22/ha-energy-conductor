@@ -288,7 +288,7 @@ class BatteryMaxDischargeSensor(_BaseSensor):
 
 class SolarForecastSensor(_BaseSensor):
     _attr_translation_key = "solar_forecast"
-    _attr_name = "Solar forecast today"
+    _attr_name = "Solar forecast tomorrow"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     # Daily forecast total is a point-in-time prediction (changes as the forecast
     # model updates), not a cumulative meter — MEASUREMENT.  ENERGY device class
@@ -303,7 +303,7 @@ class SolarForecastSensor(_BaseSensor):
     @property
     def native_value(self) -> float | None:
         state = self.coordinator.last_site_state
-        return None if state is None else round(state.solar_forecast.total_kwh_today, 2)
+        return None if state is None else round(state.solar_forecast.total_kwh_forecast, 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -321,12 +321,12 @@ class SolarForecastSensor(_BaseSensor):
             "slot_count": len(forecast.slots),
             "source": source,
             "fallback_source": forecast.fallback_source,
+            "planning_horizon": "tomorrow" if forecast.slots else "estimate",
         }
-        if source == "daily_total_sensor":
+        if source == "daily_sensor":
             attrs["planning_note"] = (
-                "daily_total_sensor reflects today's actual generation, not tomorrow's "
-                "expected. For overnight planning this is an approximation; Solcast or "
-                "seasonal fallback are more accurate for forward-looking decisions."
+                "daily_total_sensor reflects today's actual generation used as a "
+                "proxy for tomorrow's. For overnight planning Solcast is more accurate."
             )
         return attrs
 

@@ -222,14 +222,20 @@ class Adapter:
         if source == FORECAST_SOURCE_SOLCAST:
             sensor_id = self.config.get(CONF_FORECAST_SOLCAST_SENSOR)
             if sensor_id:
-                slots = self._slots_from_solcast(sensor_id)
+                slots = self._slots_from_solcast(sensor_id, now)
         elif source == FORECAST_SOURCE_DAILY:
             # Daily-total sensor: synthesise a single slot covering today
             sensor_id = self.config.get(CONF_FORECAST_DAILY_SENSOR)
             if sensor_id:
                 try:
                     kwh = _read_float(self.hass, sensor_id, max_age_seconds=STALE_FORECAST_SECONDS)
-                    slots = [ForecastSlot(start=now, energy_kwh=kwh)]
+                    # Use as fallback_kwh, not as a synthetic slot. A daily-total
+                    # sensor shows today's actual generation by planning time (~21:00).
+                    # Creating a synthetic slot with start=now made _morning_gap_hours()
+                    # return 0 (the slot predates tomorrow's window end), so the plan
+                    # never provisioned a morning gap. Treating it as fallback_kwh
+                    # preserves the MISSING_FORECAST_GAP_H default gap assumption.
+                    return SolarForecast(slots=[], fallback_kwh=kwh, fallback_source="daily_sensor")
                 except EntityProblem as exc:
                     _LOGGER.warning("Daily forecast sensor unavailable: %s", exc)
 
@@ -239,13 +245,16 @@ class Adapter:
         fallback_kwh, fallback_source = await self._compute_fallback(now)
         return SolarForecast(slots=[], fallback_kwh=fallback_kwh, fallback_source=fallback_source)
 
-    def _slots_from_solcast(self, sensor_id: str) -> list[ForecastSlot]:
+    def _slots_from_solcast(self, sensor_id: str, now: datetime) -> list[ForecastSlot]:
         state = self.hass.states.get(sensor_id)
         if state is None:
             return []
         # Solcast HA integration exposes a 'detailedForecast' attribute as a list of dicts:
-        # [{'period_start': '2026-06-21T05:30:00+00:00', 'pv_estimate': 0.5}, ...]
+        # [{'period_start': datetime(2026-06-01, tzinfo=Europe/London), 'pv_estimate': 0.5}, ...]
+        # period_start is a timezone-aware datetime in the HA instance's local timezone.
         raw = state.attributes.get("detailedForecast") or []
+        # Determine tomorrow in local time for the date filter below.
+        tomorrow_local = dt_util.as_local(now + timedelta(days=1)).date()
         slots: list[ForecastSlot] = []
         for item in raw:
             try:
@@ -257,8 +266,19 @@ class Adapter:
                 )
                 if start is None or start.tzinfo is None or start.utcoffset() is None:
                     continue
+                # ForecastSlot requires UTC. Solcast provides local-timezone datetimes
+                # (e.g. BST / Europe/London). Convert explicitly — without this, every
+                # slot raises ValueError in ForecastSlot.__post_init__ and is silently
+                # dropped by the except block, leaving the forecast always empty.
+                start_utc = dt_util.as_utc(start)
+                # Keep only tomorrow's local-date slots. This filters out today's
+                # past/current slots (which inflate the planning total) and multi-day
+                # lookahead — defence-in-depth if the user configures a "forecast today"
+                # or aggregate sensor instead of the dedicated "forecast tomorrow" sensor.
+                if dt_util.as_local(start_utc).date() != tomorrow_local:
+                    continue
                 kwh = float(item.get("pv_estimate", 0.0))
-                slots.append(ForecastSlot(start=start, energy_kwh=kwh))
+                slots.append(ForecastSlot(start=start_utc, energy_kwh=kwh))
             except KeyError, TypeError, ValueError:
                 continue
         return slots

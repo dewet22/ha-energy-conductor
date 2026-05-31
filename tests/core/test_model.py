@@ -74,7 +74,7 @@ class TestSolarForecastContract:
         with pytest.raises(ValueError, match="exactly one"):
             SolarForecast(slots=[], fallback_kwh=None, fallback_source=None)
 
-    def test_total_kwh_today_sums_slots(self):
+    def test_total_kwh_forecast_sums_slots(self):
         forecast = SolarForecast(
             slots=[
                 ForecastSlot(start=utc(hour=10), energy_kwh=1.5),
@@ -83,11 +83,11 @@ class TestSolarForecastContract:
             fallback_kwh=None,
             fallback_source=None,
         )
-        assert forecast.total_kwh_today == pytest.approx(3.5)
+        assert forecast.total_kwh_forecast == pytest.approx(3.5)
 
-    def test_total_kwh_today_uses_fallback_when_no_slots(self):
+    def test_total_kwh_forecast_uses_fallback_when_no_slots(self):
         forecast = SolarForecast(slots=[], fallback_kwh=4.2, fallback_source="seasonal")
-        assert forecast.total_kwh_today == pytest.approx(4.2)
+        assert forecast.total_kwh_forecast == pytest.approx(4.2)
 
 
 class TestEVChargerOptional:
