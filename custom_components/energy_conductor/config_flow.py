@@ -270,14 +270,14 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return EnergyConductorOptionsFlow(config_entry)
+        return EnergyConductorOptionsFlow()
 
 
 class EnergyConductorOptionsFlow(OptionsFlow):
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
-        # Merge data+options so defaults reflect whatever was previously saved in either place
-        self._defaults: dict[str, Any] = {**config_entry.data, **config_entry.options}
+    def __init__(self) -> None:
+        # In HA 2026.5+, OptionsFlow.config_entry is a read-only property set by the
+        # framework before __init__ runs. Access it via self.config_entry in step handlers.
+        pass
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self.async_step_behaviour(user_input)
@@ -285,12 +285,18 @@ class EnergyConductorOptionsFlow(OptionsFlow):
     async def async_step_behaviour(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        # Merge data+options here (not in __init__) because self.config_entry is
+        # injected by the framework after __init__ runs in HA 2026.5+.
+        defaults: dict[str, Any] = {
+            **self.config_entry.data,
+            **self.config_entry.options,
+        }
         if user_input is None:
             schema = vol.Schema(
                 {
                     vol.Required(
                         CONF_WRITE_MODE,
-                        default=self._defaults.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN),
+                        default=defaults.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN),
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=[WRITE_MODE_DRY_RUN, WRITE_MODE_LIVE],
@@ -300,25 +306,23 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                     ),
                     vol.Required(
                         CONF_NOTIFY_TARGET,
-                        default=self._defaults.get(CONF_NOTIFY_TARGET, ""),
+                        default=defaults.get(CONF_NOTIFY_TARGET, ""),
                     ): EntitySelector(EntitySelectorConfig(domain="notify")),
                     vol.Required(
                         CONF_DAILY_KWH_TARGET,
-                        default=self._defaults.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
+                        default=defaults.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
                     ): _kwh_selector(max_value=200),
                     vol.Optional(
                         CONF_DEVICE_NAME,
-                        description={"suggested_value": self._defaults.get(CONF_DEVICE_NAME, "")},
+                        description={"suggested_value": defaults.get(CONF_DEVICE_NAME, "")},
                     ): TextSelector(TextSelectorConfig()),
                     vol.Optional(
                         CONF_HOME_LOAD_SENSOR,
-                        description={"suggested_value": self._defaults.get(CONF_HOME_LOAD_SENSOR)},
+                        description={"suggested_value": defaults.get(CONF_HOME_LOAD_SENSOR)},
                     ): _sensor_selector(device_class="power"),
                     vol.Optional(
                         CONF_MANAGED_LOAD_SENSORS,
-                        description={
-                            "suggested_value": self._defaults.get(CONF_MANAGED_LOAD_SENSORS)
-                        },
+                        description={"suggested_value": defaults.get(CONF_MANAGED_LOAD_SENSORS)},
                     ): EntitySelector(
                         EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
                     ),
