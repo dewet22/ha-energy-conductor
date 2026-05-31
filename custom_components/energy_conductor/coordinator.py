@@ -70,6 +70,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_error: str | None = None
         self.ticks_total: int = 0
         self.notifications_sent: int = 0
+        # Notify-dispatch failures are tracked independently of `status`, which a clean
+        # tick resets every 30s. These persist so a silently-failing notify target is
+        # visible on the diagnostic sensor rather than lost to the log.
+        self.notify_failures: int = 0
+        self.last_notify_error: str | None = None
         self.last_overnight_plan: Decision | None = None
         self.last_discharge_decision: Decision | None = None
         self.last_site_state: SiteState | None = None
@@ -198,14 +203,13 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         key = (decision.kind.value, decision.target_entity)
         if self._dedupe.get(key) == decision.dedupe_key:
             return
-        self._dedupe[key] = decision.dedupe_key
-        await self.notifier.notify(decision)
-        self.notifications_sent += 1
+        notify_ok = await self._notify(decision)
         try:
             await self.writer.write(decision)
         except WriteFailure as exc:
-            # Do NOT pop the dedupe key — retrying on every tick would cause notification spam.
-            # A new write attempt will happen naturally when the decision value changes.
+            # Commit the dedupe key so the write (and its failure notification) does not
+            # retry every tick. A fresh write attempt happens when the decision value changes.
+            self._dedupe[key] = decision.dedupe_key
             _LOGGER.warning("Write failed: %s", exc)
             # Surface as a second notification (per spec §5)
             failure_decision = Decision(
@@ -215,5 +219,24 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 reason=f"WRITE FAILED — {exc}",
                 dedupe_key=f"{decision.dedupe_key}-failed",
             )
-            await self.notifier.notify(failure_decision)
-            self.notifications_sent += 1
+            await self._notify(failure_decision)
+            return
+        # Write succeeded. Only commit the dedupe key if the user was actually notified —
+        # otherwise a failed notification for a recurring decision would be suppressed
+        # forever. Leaving the key uncommitted retries the (idempotent) write + notify on
+        # the next tick until the notification gets through.
+        if notify_ok:
+            self._dedupe[key] = decision.dedupe_key
+
+    async def _notify(self, decision: Decision) -> bool:
+        """Dispatch a notification; record any failure on the diagnostic counters.
+
+        Returns True if the notification was delivered, False on failure.
+        """
+        error = await self.notifier.notify(decision)
+        self.notifications_sent += 1
+        if error is not None:
+            self.notify_failures += 1
+            self.last_notify_error = error
+            return False
+        return True

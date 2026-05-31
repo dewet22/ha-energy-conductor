@@ -82,6 +82,8 @@ class StatusSensor(_BaseSensor):
             "last_error": self.coordinator.last_error,
             "ticks_total": self.coordinator.ticks_total,
             "notifications_sent": self.coordinator.notifications_sent,
+            "notify_failures": self.coordinator.notify_failures,
+            "last_notify_error": self.coordinator.last_notify_error,
         }
 
 

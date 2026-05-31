@@ -22,7 +22,7 @@ def _format_value(decision: Decision) -> str:
         return f"{decision.value}%"
     if decision.kind == DecisionKind.SET_DISCHARGE_LIMIT:
         return f"{decision.value}W"
-    return str(decision.value)
+    return str(decision.value)  # pragma: no cover - defensive; all kinds handled above
 
 
 def render_message(decision: Decision, write_mode: str) -> str:
@@ -37,7 +37,14 @@ class Notifier:
         self.notify_target = notify_target_entity
         self.write_mode = write_mode
 
-    async def notify(self, decision: Decision) -> None:
+    async def notify(self, decision: Decision) -> str | None:
+        """Dispatch a notification.
+
+        Returns None on success, or a short error string on failure. Never raises:
+        a notification failure must not crash a coordinator tick. The caller surfaces
+        the returned error to the diagnostic counters so it isn't lost (the original
+        bug was a swallowed exception that left the integration looking dead).
+        """
         message = render_message(decision, self.write_mode)
         # notify_target is a notify *entity_id* (EntitySelector(domain='notify')), e.g.
         # 'notify.pixel_9a'. Entity-platform notifiers are driven by the notify.send_message
@@ -50,5 +57,7 @@ class Notifier:
                 blocking=True,
                 target={"entity_id": self.notify_target},
             )
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("Notification dispatch failed for decision %s", decision)
+            return f"{self.notify_target}: {exc}"
+        return None
