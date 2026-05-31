@@ -13,7 +13,16 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_NAME, CONF_FORECAST_SOURCE, DOMAIN
+from .const import (
+    BASELINE_IDLE_THRESHOLD_W,
+    BASELINE_LOOKBACK_DAYS,
+    BASELINE_PERCENTILE,
+    CONF_DEVICE_NAME,
+    CONF_FORECAST_SOURCE,
+    CONF_HOME_LOAD_SENSOR,
+    CONF_MANAGED_LOAD_SENSORS,
+    DOMAIN,
+)
 from .coordinator import EnergyConductorCoordinator
 
 
@@ -301,7 +310,7 @@ class EVChargerPowerSensor(_BaseSensor):
 
 class BaselineLoadSensor(_BaseSensor):
     _attr_translation_key = "baseline_load"
-    _attr_name = "Baseline load"
+    _attr_name = "Calculated baseline load"
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -318,7 +327,18 @@ class BaselineLoadSensor(_BaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         state = self.coordinator.last_site_state
-        return {} if state is None else {"source": state.baseline_source}
+        config = self.coordinator.config
+        attrs: dict[str, Any] = {
+            "source": state.baseline_source if state is not None else None,
+            "home_load_sensor": config.get(CONF_HOME_LOAD_SENSOR),
+            "managed_load_sensors": config.get(CONF_MANAGED_LOAD_SENSORS) or [],
+            "lookback_days": BASELINE_LOOKBACK_DAYS,
+            "percentile": f"p{int(BASELINE_PERCENTILE * 100)}",
+            "idle_threshold_w": int(BASELINE_IDLE_THRESHOLD_W),
+        }
+        if state is not None and state.baseline_qualifying_buckets is not None:
+            attrs["qualifying_buckets"] = state.baseline_qualifying_buckets
+        return attrs
 
 
 class LastSiteStateAtSensor(_BaseSensor):

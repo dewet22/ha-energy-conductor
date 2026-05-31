@@ -55,10 +55,11 @@ async def test_learns_baseline_from_idle_floor(hass, now):
     adapter = _adapter(hass, config)
 
     with patch(_PATCH_TARGET, return_value={HOME: home_rows, EV: ev_rows}) as mock_stats:
-        value, source = adapter._compute_baseline(now)
+        value, source, n_buckets = adapter._compute_baseline(now)
 
     mock_stats.assert_called_once()
     assert source == "stats"
+    assert n_buckets == 56  # 60 total - 4 EV-active buckets
     # EV-active buckets excluded → p50 of the ~700-760 floor.
     assert value == pytest.approx(730, abs=40)
 
@@ -66,7 +67,7 @@ async def test_learns_baseline_from_idle_floor(hass, now):
 async def test_no_home_sensor_uses_default_without_querying(hass, now):
     adapter = _adapter(hass, {})  # no CONF_HOME_LOAD_SENSOR
     with patch(_PATCH_TARGET) as mock_stats:
-        value, source = adapter._compute_baseline(now)
+        value, source, _ = adapter._compute_baseline(now)
 
     assert (value, source) == (DEFAULT_BASELINE_LOAD_W, "default")
     mock_stats.assert_not_called()
@@ -75,7 +76,7 @@ async def test_no_home_sensor_uses_default_without_querying(hass, now):
 async def test_recorder_exception_falls_back_to_default(hass, now):
     adapter = _adapter(hass, {CONF_HOME_LOAD_SENSOR: HOME})
     with patch(_PATCH_TARGET, side_effect=RuntimeError("recorder down")):
-        value, source = adapter._compute_baseline(now)
+        value, source, _ = adapter._compute_baseline(now)
 
     assert (value, source) == (DEFAULT_BASELINE_LOAD_W, "default")
 
@@ -85,7 +86,7 @@ async def test_insufficient_samples_falls_back_to_default(hass, now):
     home_rows = _hourly_rows([700.0] * 10, start=base)  # only 10 < min_samples (48)
     adapter = _adapter(hass, {CONF_HOME_LOAD_SENSOR: HOME, CONF_MANAGED_LOAD_SENSORS: []})
     with patch(_PATCH_TARGET, return_value={HOME: home_rows}):
-        value, source = adapter._compute_baseline(now)
+        value, source, _ = adapter._compute_baseline(now)
 
     assert (value, source) == (DEFAULT_BASELINE_LOAD_W, "default")
 
@@ -101,9 +102,10 @@ async def test_ev_active_but_series_missing_bucket_excluded(hass, now):
 
     adapter = _adapter(hass, {CONF_HOME_LOAD_SENSOR: HOME, CONF_MANAGED_LOAD_SENSORS: [EV]})
     with patch(_PATCH_TARGET, return_value={HOME: home_rows, EV: ev_rows}):
-        value, source = adapter._compute_baseline(now)
+        value, source, n_buckets = adapter._compute_baseline(now)
 
     assert source == "stats"
+    assert n_buckets == 50  # spike bucket excluded (missing EV key)
     assert value == pytest.approx(700, abs=1)  # spike excluded
 
 
@@ -112,7 +114,8 @@ async def test_empty_managed_list_uses_whole_series(hass, now):
     home_rows = _hourly_rows([700.0, 760.0] * 30, start=base)  # 60 buckets, no managed
     adapter = _adapter(hass, {CONF_HOME_LOAD_SENSOR: HOME, CONF_MANAGED_LOAD_SENSORS: []})
     with patch(_PATCH_TARGET, return_value={HOME: home_rows}):
-        value, source = adapter._compute_baseline(now)
+        value, source, n_buckets = adapter._compute_baseline(now)
 
     assert source == "stats"
+    assert n_buckets == 60
     assert value == pytest.approx(730, abs=40)

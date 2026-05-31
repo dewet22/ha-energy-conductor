@@ -180,7 +180,7 @@ class Adapter:
         solar_forecast = await self._build_forecast(now)
 
         # Baseline load — learned from the home-load sensor's idle-floor history.
-        baseline_load_w, baseline_source = self._compute_baseline(now)
+        baseline_load_w, baseline_source, baseline_qualifying_buckets = self._compute_baseline(now)
 
         return SiteState(
             now=now,
@@ -190,6 +190,7 @@ class Adapter:
             tariff=tariff,
             baseline_load_w=baseline_load_w,
             baseline_source=baseline_source,
+            baseline_qualifying_buckets=baseline_qualifying_buckets,
         )
 
     def _cheap_window_end(self, now: datetime, cheap_now: bool) -> datetime | None:
@@ -323,24 +324,26 @@ class Adapter:
             return None
         return statistics.quantiles(window_values, n=100)[int(STATS_PERCENTILE * 100) - 1]
 
-    def _compute_baseline(self, now: datetime) -> tuple[float, str]:
-        """Return (baseline_w, source) for the uncontrolled house floor.
+    def _compute_baseline(self, now: datetime) -> tuple[float, str, int | None]:
+        """Return (baseline_w, source, qualifying_buckets) for the uncontrolled house floor.
 
         Learns from the home-load sensor's idle-floor history when configured;
-        otherwise (or on insufficient data / recorder failure) returns the
-        static default. `source` is "stats" or "default".
+        otherwise (or on insufficient data / recorder failure) returns the static
+        default. `source` is "stats" or "default"; `qualifying_buckets` is the number
+        of idle-floor hours that fed the percentile (None when falling back to default).
         """
         home_sensor = self.config.get(CONF_HOME_LOAD_SENSOR)
         if home_sensor:
             try:
-                value = self._stats_based_baseline(now, home_sensor)
-                if value is not None:
-                    return value, "stats"
+                result = self._stats_based_baseline(now, home_sensor)
+                if result is not None:
+                    value, n_buckets = result
+                    return value, "stats", n_buckets
             except Exception:  # recorder failures must not crash the integration
                 _LOGGER.exception("Stats-based baseline failed; using default")
-        return DEFAULT_BASELINE_LOAD_W, "default"
+        return DEFAULT_BASELINE_LOAD_W, "default", None
 
-    def _stats_based_baseline(self, now: datetime, home_entity: str) -> float | None:
+    def _stats_based_baseline(self, now: datetime, home_entity: str) -> tuple[float, int] | None:
         managed_entities = list(self.config.get(CONF_MANAGED_LOAD_SENSORS) or [])
         entities = {home_entity, *managed_entities}
         start_period = now - timedelta(days=BASELINE_LOOKBACK_DAYS)
@@ -369,6 +372,9 @@ class Adapter:
         samples = idle_floor_samples(
             home_by_bucket, managed_by_bucket, idle_threshold_w=BASELINE_IDLE_THRESHOLD_W
         )
-        return learned_baseline_w(
+        value = learned_baseline_w(
             samples, percentile=BASELINE_PERCENTILE, min_samples=BASELINE_MIN_SAMPLES
         )
+        if value is None:
+            return None
+        return value, len(samples)
