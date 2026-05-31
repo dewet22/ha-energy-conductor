@@ -27,10 +27,10 @@ def _battery(**overrides):
 
 def _tariff(**overrides):
     defaults = dict(
-        cheap_window_now=False,
+        off_peak_now=False,
         ev_dispatching_now=False,
-        cheap_window_end=None,
-        next_cheap_window_start=None,
+        off_peak_window_end=None,
+        next_off_peak_window_start=None,
     )
     return TariffState(**(defaults | overrides))
 
@@ -58,7 +58,7 @@ class TestNaiveDatetimeRejected:
 
     def test_tariff_rejects_naive_window_end(self):
         with pytest.raises(ValueError, match="timezone-aware"):
-            _tariff(cheap_window_end=datetime(2026, 6, 1, 6, 0))  # noqa: DTZ001
+            _tariff(off_peak_window_end=datetime(2026, 6, 1, 6, 0))  # noqa: DTZ001
 
 
 class TestSolarForecastContract:

@@ -17,10 +17,20 @@ from .const import (
     BASELINE_IDLE_THRESHOLD_W,
     BASELINE_LOOKBACK_DAYS,
     BASELINE_PERCENTILE,
+    CONF_BATTERY_CHARGE_CONTROL,
+    CONF_BATTERY_DISCHARGE_LIMIT,
+    CONF_BATTERY_RESERVE_PERCENT,
+    CONF_BATTERY_SOC_SENSOR,
     CONF_DEVICE_NAME,
+    CONF_EV_MIN_ACTIVATION_W,
+    CONF_EV_POWER_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
+    CONF_OVERNIGHT_WINDOW_END_TIME,
+    DEFAULT_BATTERY_MAX_POWER_W,
+    DEFAULT_EV_MIN_ACTIVATION_W,
+    DEFAULT_RESERVE_PERCENT,
     DOMAIN,
 )
 from .coordinator import EnergyConductorCoordinator
@@ -159,6 +169,10 @@ class BatterySocSensor(_BaseSensor):
         state = self.coordinator.last_site_state
         return None if state is None else state.battery.soc_percent
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"source_entity": self.coordinator.config.get(CONF_BATTERY_SOC_SENSOR)}
+
 
 class BatteryReservePercentSensor(_BaseSensor):
     _attr_translation_key = "battery_reserve"
@@ -176,6 +190,14 @@ class BatteryReservePercentSensor(_BaseSensor):
     def native_value(self) -> float | None:
         state = self.coordinator.last_site_state
         return None if state is None else state.battery.reserve_percent
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "configured_value_pct": self.coordinator.config.get(
+                CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT
+            )
+        }
 
 
 class BatteryUsableEnergySensor(_BaseSensor):
@@ -200,10 +222,25 @@ class BatteryUsableEnergySensor(_BaseSensor):
         usable_percent = max(0.0, battery.soc_percent - battery.reserve_percent)
         return round(battery.capacity_kwh * usable_percent / 100, 2)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        if state is None:
+            return {}
+        b = state.battery
+        return {
+            "soc_pct": b.soc_percent,
+            "reserve_pct": b.reserve_percent,
+            "capacity_kwh": b.capacity_kwh,
+            "calculation": (
+                f"max(0, {b.soc_percent:.1f} - {b.reserve_percent:.1f})% x {b.capacity_kwh} kWh"
+            ),
+        }
+
 
 class BatteryMaxChargeSensor(_BaseSensor):
     _attr_translation_key = "battery_max_charge"
-    _attr_name = "Battery max charge"
+    _attr_name = "Battery charge power limit"
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -217,10 +254,17 @@ class BatteryMaxChargeSensor(_BaseSensor):
         state = self.coordinator.last_site_state
         return None if state is None else state.battery.max_charge_power_w
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "source_entity": self.coordinator.config.get(CONF_BATTERY_CHARGE_CONTROL),
+            "default_w": DEFAULT_BATTERY_MAX_POWER_W,
+        }
+
 
 class BatteryMaxDischargeSensor(_BaseSensor):
     _attr_translation_key = "battery_max_discharge"
-    _attr_name = "Battery max discharge"
+    _attr_name = "Battery discharge power limit"
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -233,6 +277,13 @@ class BatteryMaxDischargeSensor(_BaseSensor):
     def native_value(self) -> int | None:
         state = self.coordinator.last_site_state
         return None if state is None else state.battery.max_discharge_power_w
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "source_entity": self.coordinator.config.get(CONF_BATTERY_DISCHARGE_LIMIT),
+            "default_w": DEFAULT_BATTERY_MAX_POWER_W,
+        }
 
 
 class SolarForecastSensor(_BaseSensor):
@@ -266,16 +317,23 @@ class SolarForecastSensor(_BaseSensor):
         else:
             # Fallback: source is whichever fallback path produced the value
             source = forecast.fallback_source or "unknown"
-        return {
+        attrs: dict[str, Any] = {
             "slot_count": len(forecast.slots),
             "source": source,
             "fallback_source": forecast.fallback_source,
         }
+        if source == "daily_total_sensor":
+            attrs["planning_note"] = (
+                "daily_total_sensor reflects today's actual generation, not tomorrow's "
+                "expected. For overnight planning this is an approximation; Solcast or "
+                "seasonal fallback are more accurate for forward-looking decisions."
+            )
+        return attrs
 
 
 class CheapWindowEndSensor(_BaseSensor):
-    _attr_translation_key = "cheap_window_end"
-    _attr_name = "Cheap window end"
+    _attr_translation_key = "off_peak_window_end"
+    _attr_name = "Overnight window end"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -286,7 +344,20 @@ class CheapWindowEndSensor(_BaseSensor):
     @property
     def native_value(self) -> datetime | None:
         state = self.coordinator.last_site_state
-        return None if state is None else state.tariff.cheap_window_end
+        return None if state is None else state.tariff.off_peak_window_end
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "configured_end_time": self.coordinator.config.get(CONF_OVERNIGHT_WINDOW_END_TIME),
+            "note": (
+                "Planning boundary for overnight charge decisions. "
+                "Reflects the configured overnight window end time regardless of "
+                "why the off-peak rate sensor is currently active (e.g. OI dispatch slots "
+                "outside the overnight period share the same off-peak rate sensor but have "
+                "their own end time which is not tracked here)."
+            ),
+        }
 
 
 class EVChargerPowerSensor(_BaseSensor):
@@ -306,6 +377,19 @@ class EVChargerPowerSensor(_BaseSensor):
         if state is None or state.ev_charger is None:
             return None
         return state.ev_charger.power_w
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        config = self.coordinator.config
+        state = self.coordinator.last_site_state
+        min_w = int(config.get(CONF_EV_MIN_ACTIVATION_W, DEFAULT_EV_MIN_ACTIVATION_W))
+        attrs: dict[str, Any] = {
+            "source_entity": config.get(CONF_EV_POWER_SENSOR),
+            "min_activation_w": min_w,
+        }
+        if state is not None and state.ev_charger is not None:
+            attrs["active"] = state.ev_charger.power_w >= min_w
+        return attrs
 
 
 class BaselineLoadSensor(_BaseSensor):

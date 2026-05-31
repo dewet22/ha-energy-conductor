@@ -14,9 +14,9 @@
       },
       "tariff": {
         "title": "Tariff",
-        "description": "Cheap-rate signals from your tariff provider integration.",
+        "description": "Off-peak rate signals from your tariff provider integration.",
         "data": {
-          "cheap_rate_sensor": "Cheap-rate (whole-house) binary sensor",
+          "off_peak_sensor": "Off-peak rate sensor (whole house; active during overnight off-peak window and intra-day dispatch slots)",
           "dispatching_sensor": "Smart dispatch active (optional; e.g. Octopus Intelligent)",
           "overnight_window_end_time": "Overnight window end (local time)"
         }

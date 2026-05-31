@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -12,7 +12,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_NAME, DOMAIN
+from .const import CONF_DEVICE_NAME, CONF_DISPATCHING_SENSOR, CONF_OFF_PEAK_SENSOR, DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -60,10 +60,13 @@ class _BaseBinarySensor(CoordinatorEntity["EnergyConductorCoordinator"], BinaryS
 
 
 class TariffCheapNowBinarySensor(_BaseBinarySensor):
-    _attr_translation_key = "tariff_cheap_now"
-    _attr_name = "Cheap window now"
+    _attr_translation_key = "tariff_off_peak_now"
+    _attr_name = "Cheap rate sensor active"
     # No device_class — HA's binary-sensor classes (POWER, RUNNING, PLUG, …)
     # all describe physical states and would be misleading for a tariff signal.
+    # Note: this mirrors the off-peak rate sensor broadly (overnight tariff AND any
+    # OI dispatch slots). See "Overnight window end" for the overnight planning
+    # boundary, which is independent of why this sensor is currently active.
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -72,7 +75,18 @@ class TariffCheapNowBinarySensor(_BaseBinarySensor):
     @property
     def is_on(self) -> bool | None:
         state = self.coordinator.last_site_state
-        return None if state is None else state.tariff.cheap_window_now
+        return None if state is None else state.tariff.off_peak_now
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "monitored_sensor": self.coordinator.config.get(CONF_OFF_PEAK_SENSOR),
+            "note": (
+                "True whenever the monitored sensor is on — covers both the overnight "
+                "off-peak rate window and intra-day dispatch slots (e.g. Octopus Intelligent). "
+                "Battery discharge is blocked to 0 W whenever this is active."
+            ),
+        }
 
 
 class TariffDispatchingNowBinarySensor(_BaseBinarySensor):
@@ -88,3 +102,18 @@ class TariffDispatchingNowBinarySensor(_BaseBinarySensor):
     def is_on(self) -> bool | None:
         state = self.coordinator.last_site_state
         return None if state is None else state.tariff.ev_dispatching_now
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        monitored = self.coordinator.config.get(CONF_DISPATCHING_SENSOR)
+        return {
+            "monitored_sensor": monitored,
+            "note": (
+                "True when the optional EV-dispatch sensor is on (e.g. Octopus Intelligent "
+                "smart-charge active). When True and the EV is drawing above its activation "
+                "threshold, the discharge guard caps battery output at the house baseline "
+                "rather than blocking discharge entirely."
+            )
+            if monitored
+            else "No EV dispatch sensor configured; always False.",
+        }

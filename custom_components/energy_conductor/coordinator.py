@@ -20,11 +20,11 @@ from .const import (
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_SOC_SENSOR,
-    CONF_CHEAP_RATE_SENSOR,
     CONF_DAILY_KWH_TARGET,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
     CONF_NOTIFY_TARGET,
+    CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_WRITE_MODE,
     COORDINATOR_TICK_SECONDS,
@@ -85,7 +85,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # State-change listeners
         watched = [
             self.config[CONF_BATTERY_SOC_SENSOR],
-            self.config[CONF_CHEAP_RATE_SENSOR],
+            self.config[CONF_OFF_PEAK_SENSOR],
         ]
         if self.config.get(CONF_DISPATCHING_SENSOR):
             watched.append(self.config[CONF_DISPATCHING_SENSOR])

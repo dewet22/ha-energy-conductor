@@ -72,14 +72,14 @@ class SolarForecast:
 
 @dataclass(frozen=True)
 class TariffState:
-    cheap_window_now: bool
+    off_peak_now: bool
     ev_dispatching_now: bool
-    cheap_window_end: datetime | None
-    next_cheap_window_start: datetime | None
+    off_peak_window_end: datetime | None
+    next_off_peak_window_start: datetime | None
 
     def __post_init__(self) -> None:
-        _require_aware("TariffState.cheap_window_end", self.cheap_window_end)
-        _require_aware("TariffState.next_cheap_window_start", self.next_cheap_window_start)
+        _require_aware("TariffState.off_peak_window_end", self.off_peak_window_end)
+        _require_aware("TariffState.next_off_peak_window_start", self.next_off_peak_window_start)
 
 
 @dataclass(frozen=True)

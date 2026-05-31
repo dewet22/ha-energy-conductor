@@ -2,7 +2,7 @@
 
 Each builder accepts keyword overrides; callers specify only what the
 test cares about. Defaults are summer solstice noon, mid-SOC, idle EV,
-no cheap rate, modest forecast — i.e. a 'do nothing' baseline.
+no off-peak rate, modest forecast — i.e. a 'do nothing' baseline.
 """
 
 from __future__ import annotations
@@ -44,10 +44,10 @@ def an_ev_charger(**overrides: Any) -> EVCharger:
 
 def a_tariff(**overrides: Any) -> TariffState:
     defaults: dict[str, Any] = dict(
-        cheap_window_now=False,
+        off_peak_now=False,
         ev_dispatching_now=False,
-        cheap_window_end=None,
-        next_cheap_window_start=None,
+        off_peak_window_end=None,
+        next_off_peak_window_start=None,
     )
     return TariffState(**(defaults | overrides))
 

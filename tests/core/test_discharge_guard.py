@@ -1,7 +1,7 @@
 """Tests for the three-regime discharge guard (spec §4.2).
 
 Regime table:
-  1. cheap_window_now              → limit 0W
+  1. off_peak_now              → limit 0W
   2. ev_dispatching_now AND EV drawing → limit baseline_load_w
   3. default                        → limit max_discharge_power_w
 """
@@ -26,14 +26,14 @@ class TestDischargeRegimes:
         assert decision.value == 3000
         assert "unconstrained" in decision.reason.lower()
 
-    def test_cheap_window_suppresses(self):
-        decision = _decide(tariff=a_tariff(cheap_window_now=True))
+    def test_off_peak_suppresses(self):
+        decision = _decide(tariff=a_tariff(off_peak_now=True))
         assert decision.value == 0
-        assert "cheap" in decision.reason.lower()
+        assert "off-peak" in decision.reason.lower()
 
-    def test_cheap_window_takes_priority_over_ev_dispatch(self):
+    def test_off_peak_takes_priority_over_ev_dispatch(self):
         decision = _decide(
-            tariff=a_tariff(cheap_window_now=True, ev_dispatching_now=True),
+            tariff=a_tariff(off_peak_now=True, ev_dispatching_now=True),
             ev_charger=an_ev_charger(power_w=2000.0),
         )
         assert decision.value == 0
@@ -106,5 +106,5 @@ class TestDedupeKeyBucketing:
 
     def test_regime_change_changes_key(self):
         d_default = _decide()
-        d_cheap = _decide(tariff=a_tariff(cheap_window_now=True))
-        assert d_default.dedupe_key != d_cheap.dedupe_key
+        d_off_peak = _decide(tariff=a_tariff(off_peak_now=True))
+        assert d_default.dedupe_key != d_off_peak.dedupe_key

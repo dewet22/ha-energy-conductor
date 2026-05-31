@@ -37,7 +37,6 @@ from .const import (
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
-    CONF_CHEAP_RATE_SENSOR,
     CONF_DAILY_KWH_TARGET,
     CONF_DEVICE_NAME,
     CONF_DISPATCHING_SENSOR,
@@ -49,6 +48,7 @@ from .const import (
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_NOTIFY_TARGET,
+    CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_SOLAR_GENERATION_SENSOR,
@@ -133,7 +133,7 @@ BATTERY_SCHEMA = vol.Schema(
 
 TARIFF_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_CHEAP_RATE_SENSOR): _binary_sensor_selector(),
+        vol.Required(CONF_OFF_PEAK_SENSOR): _binary_sensor_selector(),
         vol.Optional(CONF_DISPATCHING_SENSOR): _binary_sensor_selector(),
         vol.Required(
             CONF_OVERNIGHT_WINDOW_END_TIME,
@@ -207,7 +207,7 @@ BEHAVIOUR_SCHEMA = vol.Schema(
 
 
 class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}

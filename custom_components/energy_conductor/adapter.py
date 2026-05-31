@@ -29,7 +29,6 @@ from .const import (
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
-    CONF_CHEAP_RATE_SENSOR,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
@@ -38,6 +37,7 @@ from .const import (
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
+    CONF_OFF_PEAK_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
@@ -137,13 +137,13 @@ class Adapter:
         )
 
         # Tariff
-        cheap_now = _read_bool(self.hass, self.config[CONF_CHEAP_RATE_SENSOR])
+        off_peak_now = _read_bool(self.hass, self.config[CONF_OFF_PEAK_SENSOR])
         dispatching_now = _read_bool(self.hass, self.config.get(CONF_DISPATCHING_SENSOR))
         tariff = TariffState(
-            cheap_window_now=cheap_now,
+            off_peak_now=off_peak_now,
             ev_dispatching_now=dispatching_now,
-            cheap_window_end=self._cheap_window_end(now, cheap_now),
-            next_cheap_window_start=None,  # v1 does not compute this
+            off_peak_window_end=self._off_peak_window_end(now, off_peak_now),
+            next_off_peak_window_start=None,  # v1 does not compute this
         )
 
         # EV charger — optional.
@@ -193,8 +193,8 @@ class Adapter:
             baseline_qualifying_buckets=baseline_qualifying_buckets,
         )
 
-    def _cheap_window_end(self, now: datetime, cheap_now: bool) -> datetime | None:
-        """Best-effort: derive the upcoming cheap-window end from config.
+    def _off_peak_window_end(self, now: datetime, off_peak_now: bool) -> datetime | None:
+        """Best-effort: derive the upcoming off-peak window end from config.
 
         v1 uses the configured `overnight_window_end_time` (local) and projects it onto
         today or tomorrow depending on whether it's already passed.

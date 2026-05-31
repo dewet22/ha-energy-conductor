@@ -15,9 +15,11 @@ CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
 CONF_BATTERY_RESERVE_PERCENT = "battery_reserve_percent"
 
 # Config keys — tariff
-CONF_CHEAP_RATE_SENSOR = "cheap_rate_sensor"
+CONF_OFF_PEAK_SENSOR = "off_peak_sensor"
 CONF_DISPATCHING_SENSOR = "dispatching_sensor"
 CONF_OVERNIGHT_WINDOW_END_TIME = "overnight_window_end_time"
+# Legacy key kept only for the v1→v2 config-entry migration; do not use elsewhere.
+_LEGACY_CONF_CHEAP_RATE_SENSOR = "cheap_rate_sensor"
 
 # Config keys — solar forecast
 CONF_FORECAST_SOURCE = "forecast_source"
@@ -54,6 +56,7 @@ WRITE_MODE_LIVE = "live"
 # Defaults
 DEFAULT_RESERVE_PERCENT = 10
 DEFAULT_EV_MIN_ACTIVATION_W = 1400
+DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribute
 DEFAULT_WINTER_MIN_KWH = 0.0
 DEFAULT_SUMMER_MAX_KWH = 8.0
 DEFAULT_DAILY_KWH_TARGET = 10.0

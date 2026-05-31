@@ -1,7 +1,7 @@
 """Tests for plan_overnight covering every algorithm branch.
 
 Algorithm recap (spec §4.1):
-  morning_gap_hours = clamp(0, hours(cheap_window_end → first_solar), 6)
+  morning_gap_hours = clamp(0, hours(off_peak_window_end → first_solar), 6)
                       where first_solar = first slot with energy >= 0.25 kWh (≈500W half-hour)
                       defaults to MISSING_FORECAST_GAP_H (4) when no slots
   morning_gap_kwh   = baseline_load_w * morning_gap_hours / 1000
@@ -36,7 +36,7 @@ def _state(**overrides):
         now=utc(2026, 6, 1, 21, 0),  # 21:00 planning time
         battery=a_battery(soc_percent=20.0, capacity_kwh=10.0),
         tariff=a_tariff(
-            cheap_window_end=utc(2026, 6, 2, 5, 30),  # Intelligent Go: 23:30-05:30
+            off_peak_window_end=utc(2026, 6, 2, 5, 30),  # Intelligent Go: 23:30-05:30
         ),
         baseline_load_w=400.0,
     )
