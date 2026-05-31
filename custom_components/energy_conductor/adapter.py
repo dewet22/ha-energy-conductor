@@ -41,7 +41,6 @@ from .const import (
     FORECAST_SOURCE_NONE,
     FORECAST_SOURCE_SOLCAST,
     STALE_FORECAST_SECONDS,
-    STALE_POWER_SECONDS,
     STATS_CALENDAR_WINDOW_DAYS,
     STATS_LOOKBACK_DAYS,
     STATS_MIN_DATA_POINTS,
@@ -139,21 +138,35 @@ class Adapter:
             next_cheap_window_start=None,  # v1 does not compute this
         )
 
-        # EV charger — optional
+        # EV charger — optional.
+        # Deliberately avoid the time-based staleness check here: some EV integrations
+        # (e.g. myenergi) only write state when the value changes, so last_updated can be
+        # many minutes old even during active charging.  HA's own unavailable/unknown
+        # states are sufficient to detect a device going offline.
         ev_sensor = self.config.get(CONF_EV_POWER_SENSOR)
         ev_charger: EVCharger | None = None
         if ev_sensor:
-            try:
-                ev_power = _read_float(self.hass, ev_sensor, max_age_seconds=STALE_POWER_SECONDS)
-                ev_charger = EVCharger(
-                    power_w=ev_power,
-                    min_activation_power_w=int(
-                        self.config.get(CONF_EV_MIN_ACTIVATION_W, DEFAULT_EV_MIN_ACTIVATION_W)
-                    ),
-                    is_plugged_in=None,
-                )
-            except EntityProblem as exc:
-                _LOGGER.warning("EV charger sensor unavailable: %s", exc)
+            ev_state = self.hass.states.get(ev_sensor)
+            if ev_state is not None and ev_state.state not in (
+                STATE_UNAVAILABLE,
+                STATE_UNKNOWN,
+                None,
+                "",
+            ):
+                try:
+                    ev_charger = EVCharger(
+                        power_w=float(ev_state.state),
+                        min_activation_power_w=int(
+                            self.config.get(CONF_EV_MIN_ACTIVATION_W, DEFAULT_EV_MIN_ACTIVATION_W)
+                        ),
+                        is_plugged_in=None,
+                    )
+                except (TypeError, ValueError) as exc:
+                    _LOGGER.warning("EV charger sensor unreadable (%s): %s", ev_sensor, exc)
+            elif ev_state is None:
+                _LOGGER.warning("EV charger sensor not found: %s", ev_sensor)
+            else:
+                _LOGGER.debug("EV charger sensor offline: %s (state=%r)", ev_sensor, ev_state.state)
 
         # Solar forecast
         solar_forecast = await self._build_forecast(now)
@@ -244,7 +257,7 @@ class Adapter:
         gen_sensor = self.config.get(CONF_SOLAR_GENERATION_SENSOR)
         if gen_sensor:
             try:
-                value = await self._stats_based_fallback(now, gen_sensor)
+                value = self._stats_based_fallback(now, gen_sensor)
                 if value is not None:
                     return value, "stats"
             except Exception:  # recorder failures must not crash the integration
@@ -257,10 +270,10 @@ class Adapter:
         )
         return seasonal, "seasonal"
 
-    async def _stats_based_fallback(self, now: datetime, generation_entity: str) -> float | None:
+    def _stats_based_fallback(self, now: datetime, generation_entity: str) -> float | None:
         start_period = now - timedelta(days=STATS_LOOKBACK_DAYS)
-        # statistics_during_period is async in HA 2024+
-        stats = await statistics_during_period(
+        # statistics_during_period is synchronous in HA 2026.5+ (returns a defaultdict directly).
+        stats = statistics_during_period(
             self.hass,
             start_period,
             now,

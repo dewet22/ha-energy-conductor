@@ -130,8 +130,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
     @callback
     def _on_state_change(self, event) -> None:
-        # async_request_refresh is itself a @callback — call directly, don't wrap in a task
-        self.async_request_refresh()
+        # In HA 2026.5+, async_request_refresh is a coroutine (not a @callback).
+        # Schedule it as a task so it actually runs instead of being silently discarded.
+        self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_update_data(self) -> None:
         self.ticks_total += 1

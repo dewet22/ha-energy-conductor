@@ -167,9 +167,8 @@ class BatteryUsableEnergySensor(_BaseSensor):
     _attr_translation_key = "battery_usable_energy"
     _attr_name = "Battery usable energy"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
-    # Point-in-time stored energy (not cumulative), so MEASUREMENT — not
-    # TOTAL_INCREASING which ENERGY would otherwise imply.
+    # Point-in-time stored energy (not cumulative). ENERGY device class requires
+    # total/total_increasing state_class; omit it so MEASUREMENT stays valid.
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -225,9 +224,9 @@ class SolarForecastSensor(_BaseSensor):
     _attr_translation_key = "solar_forecast"
     _attr_name = "Solar forecast today"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
-    # Daily forecast total is a point-in-time prediction (changes as the
-    # forecast model updates), not a cumulative meter — MEASUREMENT.
+    # Daily forecast total is a point-in-time prediction (changes as the forecast
+    # model updates), not a cumulative meter — MEASUREMENT.  ENERGY device class
+    # requires total/total_increasing state_class; omit it so MEASUREMENT stays valid.
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
