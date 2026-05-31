@@ -333,7 +333,7 @@ class SolarForecastSensor(_BaseSensor):
 
 class CheapWindowEndSensor(_BaseSensor):
     _attr_translation_key = "off_peak_window_end"
-    _attr_name = "Overnight window end"
+    _attr_name = "Overnight off-peak tariff end"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 

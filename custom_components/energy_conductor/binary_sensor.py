@@ -61,11 +61,11 @@ class _BaseBinarySensor(CoordinatorEntity["EnergyConductorCoordinator"], BinaryS
 
 class TariffCheapNowBinarySensor(_BaseBinarySensor):
     _attr_translation_key = "tariff_off_peak_now"
-    _attr_name = "Cheap rate sensor active"
+    _attr_name = "Off-peak rate sensor active"
     # No device_class — HA's binary-sensor classes (POWER, RUNNING, PLUG, …)
     # all describe physical states and would be misleading for a tariff signal.
     # Note: this mirrors the off-peak rate sensor broadly (overnight tariff AND any
-    # OI dispatch slots). See "Overnight window end" for the overnight planning
+    # OI dispatch slots). See "Overnight off-peak tariff end" for the overnight planning
     # boundary, which is independent of why this sensor is currently active.
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
