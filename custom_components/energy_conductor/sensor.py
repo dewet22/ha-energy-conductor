@@ -322,6 +322,9 @@ class LastSiteStateAtSensor(_BaseSensor):
     _attr_name = "Last state read at"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # Disabled by default: updates every coordinator tick (30 s), creating ~2 880
+    # recorder entries/day. Enable manually for debugging tick-timing issues only.
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
