@@ -27,6 +27,7 @@ dev = [
     "hypothesis>=6.112",
     "ruff>=0.7",
     "coverage[toml]>=7.6",
+    "pytest-homeassistant-custom-component>=0.13.316",
 ]
 
 [tool.ruff]
@@ -46,19 +47,20 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "TID", "DTZ"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests/core"]
+testpaths = ["tests/core", "tests/integration"]
 addopts = "--strict-markers"
 pythonpath = ["custom_components"]
 
 [tool.coverage.run]
 source = ["custom_components/energy_conductor"]
 omit = [
+    # HA-glue modules without (yet) thorough coverage. Modules graduate out of
+    # this list once their tests in tests/integration cover them adequately.
     "custom_components/energy_conductor/__init__.py",
     "custom_components/energy_conductor/adapter.py",
     "custom_components/energy_conductor/binary_sensor.py",
     "custom_components/energy_conductor/config_flow.py",
     "custom_components/energy_conductor/coordinator.py",
-    "custom_components/energy_conductor/notifier.py",
     "custom_components/energy_conductor/sensor.py",
     "custom_components/energy_conductor/writer.py",
     "custom_components/energy_conductor/const.py",
