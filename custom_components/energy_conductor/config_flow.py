@@ -46,6 +46,8 @@ from .const import (
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_HOME_LOAD_SENSOR,
+    CONF_MANAGED_LOAD_SENSORS,
     CONF_NOTIFY_TARGET,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
@@ -144,6 +146,10 @@ TARIFF_SCHEMA = vol.Schema(
 def _forecast_schema(source: str) -> vol.Schema:
     base: dict = {
         vol.Optional(CONF_SOLAR_GENERATION_SENSOR): _sensor_selector(),
+        vol.Optional(CONF_HOME_LOAD_SENSOR): _sensor_selector(device_class="power"),
+        vol.Optional(CONF_MANAGED_LOAD_SENSORS): EntitySelector(
+            EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
+        ),
         vol.Required(CONF_WINTER_MIN_KWH, default=DEFAULT_WINTER_MIN_KWH): _kwh_selector(
             max_value=20
         ),
@@ -304,6 +310,18 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         CONF_DEVICE_NAME,
                         description={"suggested_value": self._defaults.get(CONF_DEVICE_NAME, "")},
                     ): TextSelector(TextSelectorConfig()),
+                    vol.Optional(
+                        CONF_HOME_LOAD_SENSOR,
+                        description={"suggested_value": self._defaults.get(CONF_HOME_LOAD_SENSOR)},
+                    ): _sensor_selector(device_class="power"),
+                    vol.Optional(
+                        CONF_MANAGED_LOAD_SENSORS,
+                        description={
+                            "suggested_value": self._defaults.get(CONF_MANAGED_LOAD_SENSORS)
+                        },
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
+                    ),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
@@ -316,5 +334,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
                 CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
                 CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
+                CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
+                CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],
             },
         )

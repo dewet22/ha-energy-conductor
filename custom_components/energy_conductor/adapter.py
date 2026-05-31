@@ -18,7 +18,12 @@ from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .baseline import idle_floor_samples, learned_baseline_w
 from .const import (
+    BASELINE_IDLE_THRESHOLD_W,
+    BASELINE_LOOKBACK_DAYS,
+    BASELINE_MIN_SAMPLES,
+    BASELINE_PERCENTILE,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
@@ -31,10 +36,13 @@ from .const import (
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_HOME_LOAD_SENSOR,
+    CONF_MANAGED_LOAD_SENSORS,
     CONF_SOLAR_GENERATION_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
     CONF_WINTER_MIN_KWH,
+    DEFAULT_BASELINE_LOAD_W,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
     FORECAST_SOURCE_DAILY,
@@ -171,8 +179,8 @@ class Adapter:
         # Solar forecast
         solar_forecast = await self._build_forecast(now)
 
-        # Baseline load — v1 placeholder; v2 will read this from recorder stats
-        baseline_load_w = 400.0
+        # Baseline load — learned from the home-load sensor's idle-floor history.
+        baseline_load_w, baseline_source = self._compute_baseline(now)
 
         return SiteState(
             now=now,
@@ -181,6 +189,7 @@ class Adapter:
             solar_forecast=solar_forecast,
             tariff=tariff,
             baseline_load_w=baseline_load_w,
+            baseline_source=baseline_source,
         )
 
     def _cheap_window_end(self, now: datetime, cheap_now: bool) -> datetime | None:
@@ -313,3 +322,53 @@ class Adapter:
         if len(window_values) < STATS_MIN_DATA_POINTS:
             return None
         return statistics.quantiles(window_values, n=100)[int(STATS_PERCENTILE * 100) - 1]
+
+    def _compute_baseline(self, now: datetime) -> tuple[float, str]:
+        """Return (baseline_w, source) for the uncontrolled house floor.
+
+        Learns from the home-load sensor's idle-floor history when configured;
+        otherwise (or on insufficient data / recorder failure) returns the
+        static default. `source` is "stats" or "default".
+        """
+        home_sensor = self.config.get(CONF_HOME_LOAD_SENSOR)
+        if home_sensor:
+            try:
+                value = self._stats_based_baseline(now, home_sensor)
+                if value is not None:
+                    return value, "stats"
+            except Exception:  # recorder failures must not crash the integration
+                _LOGGER.exception("Stats-based baseline failed; using default")
+        return DEFAULT_BASELINE_LOAD_W, "default"
+
+    def _stats_based_baseline(self, now: datetime, home_entity: str) -> float | None:
+        managed_entities = list(self.config.get(CONF_MANAGED_LOAD_SENSORS) or [])
+        entities = {home_entity, *managed_entities}
+        start_period = now - timedelta(days=BASELINE_LOOKBACK_DAYS)
+        # statistics_during_period is synchronous in HA 2026.5+ (returns a defaultdict).
+        # The home-load sensor is instantaneous power (state_class=measurement), so we
+        # query the hourly "mean" directly — no delta computation.
+        stats = statistics_during_period(
+            self.hass, start_period, now, entities, "hour", None, {"mean"}
+        )
+
+        def _by_bucket(entity_id: str) -> dict[int, float]:
+            buckets: dict[int, float] = {}
+            for row in stats.get(entity_id, []):
+                start = row.get("start")
+                mean = row.get("mean")
+                if start is None or mean is None:
+                    continue
+                # Normalise the bucket key to an int second-resolution timestamp.
+                key = int(start.timestamp()) if isinstance(start, datetime) else int(start)
+                buckets[key] = float(mean)
+            return buckets
+
+        home_by_bucket = _by_bucket(home_entity)
+        managed_by_bucket = [_by_bucket(e) for e in managed_entities]
+        # Idle-filter + missing-managed-data exclusion live in the pure helper.
+        samples = idle_floor_samples(
+            home_by_bucket, managed_by_bucket, idle_threshold_w=BASELINE_IDLE_THRESHOLD_W
+        )
+        return learned_baseline_w(
+            samples, percentile=BASELINE_PERCENTILE, min_samples=BASELINE_MIN_SAMPLES
+        )

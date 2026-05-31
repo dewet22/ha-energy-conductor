@@ -90,6 +90,7 @@ class SiteState:
     solar_forecast: SolarForecast
     tariff: TariffState
     baseline_load_w: float
+    baseline_source: str | None = None  # "stats" | "default"; how baseline_load_w was derived
 
     def __post_init__(self) -> None:
         _require_aware("SiteState.now", self.now)

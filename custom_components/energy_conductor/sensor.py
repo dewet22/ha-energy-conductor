@@ -311,6 +311,11 @@ class BaselineLoadSensor(_BaseSensor):
         state = self.coordinator.last_site_state
         return None if state is None else state.baseline_load_w
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        return {} if state is None else {"source": state.baseline_source}
+
 
 class LastSiteStateAtSensor(_BaseSensor):
     _attr_translation_key = "last_state_read_at"

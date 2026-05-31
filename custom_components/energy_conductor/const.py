@@ -32,6 +32,10 @@ CONF_SOUTHERN_HEMISPHERE = "southern_hemisphere"
 CONF_EV_POWER_SENSOR = "ev_power_sensor"
 CONF_EV_MIN_ACTIVATION_W = "ev_min_activation_power_w"
 
+# Config keys — house load / managed loads
+CONF_HOME_LOAD_SENSOR = "home_load_sensor"  # home-load power sensor (any semantics)
+CONF_MANAGED_LOAD_SENSORS = "managed_load_sensors"  # list[str]; loads baked in, to net out
+
 # Config keys — behaviour
 CONF_WRITE_MODE = "write_mode"
 CONF_NOTIFY_TARGET = "notify_target"
@@ -61,6 +65,13 @@ STATS_LOOKBACK_DAYS = 365
 STATS_CALENDAR_WINDOW_DAYS = 14
 STATS_MIN_DATA_POINTS = 7
 STATS_PERCENTILE = 0.25
+
+# Baseline-load learning (filter-to-idle over a short trailing window)
+DEFAULT_BASELINE_LOAD_W = 400.0  # used when no home-load sensor or insufficient data
+BASELINE_LOOKBACK_DAYS = 14
+BASELINE_MIN_SAMPLES = 48  # ~2 days of hourly buckets; sanity floor, not a warmup gate
+BASELINE_PERCENTILE = 0.50  # p50 of idle-floor samples; biased up (see baseline.py)
+BASELINE_IDLE_THRESHOLD_W = 50.0  # managed load <= this counts as "off" for a bucket
 
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes
