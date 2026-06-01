@@ -326,6 +326,10 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                     ): EntitySelector(
                         EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
                     ),
+                    vol.Optional(
+                        CONF_FORECAST_SOLCAST_SENSOR,
+                        description={"suggested_value": defaults.get(CONF_FORECAST_SOLCAST_SENSOR)},
+                    ): _sensor_selector(),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
@@ -340,5 +344,6 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
                 CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
                 CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],
+                CONF_FORECAST_SOLCAST_SENSOR: user_input.get(CONF_FORECAST_SOLCAST_SENSOR) or None,
             },
         )
