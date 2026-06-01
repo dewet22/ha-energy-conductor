@@ -1,0 +1,134 @@
+# Integration compatibility notes
+
+Runtime discoveries from running Energy Conductor in production. Not design
+intent — things you only find out by doing it.
+
+---
+
+## Solar forecast
+
+### Solcast (recommended for slot-based planning)
+
+**Integration:** [HACS — Solcast PV Solar](https://github.com/BJReplay/ha-solcastpv-solar-forecast)
+
+The Solcast integration exposes per-day sensors, each with a `detailedForecast`
+attribute containing 48 half-hourly slots. EC reads this to derive the morning gap
+(first meaningful solar after the off-peak window end) as well as the daily total.
+
+**Required sensor:** `sensor.solcast_pv_forecast_forecast_tomorrow`
+
+Configure EC's Solcast sensor to the **Forecast Tomorrow** sensor, **not**:
+- `Forecast Today` — contains today's slots; at planning time (~21:00) these are
+  mostly past-midnight hours with near-zero PV, and the morning-gap calculation
+  breaks (first slot predates tomorrow's window end, gap = 0).
+- `Forecast Next X Hours` / `Blithe` / aggregate sensors — no `detailedForecast`
+  attribute; EC silently falls back to seasonal.
+
+**Attribute format** (as of Solcast HA integration 4.x):
+```python
+detailedForecast = [
+    {
+        "period_start": datetime(2026, 6, 2, 1, 0, tzinfo=Europe/London),  # local tz
+        "pv_estimate": 0.512,    # kWh for this 30-min period (median)
+        "pv_estimate10": 0.31,   # pessimistic
+        "pv_estimate90": 0.74,   # optimistic
+    },
+    ...  # 48 entries, covering the full day in local time
+]
+```
+
+Slot timestamps are in the HA instance's local timezone (e.g. BST/Europe/London),
+**not UTC**. EC converts them to UTC on read.
+
+**Accuracy vs forecast.solar:** In production, Solcast and forecast.solar typically
+agree within 10–15% on daily totals. Solcast is preferred when available because
+the slot data allows a derived morning gap; forecast.solar currently only exposes
+a scalar daily total.
+
+---
+
+### Forecast.Solar (scalar daily total)
+
+**Integration:** [HACS — Forecast.Solar](https://github.com/home-assistant/core/tree/dev/homeassistant/components/forecast_solar)
+
+**Available sensor:** `sensor.energy_production_tomorrow` — scalar kWh total for
+tomorrow, no per-slot breakdown.
+
+Configure as `daily_total_sensor` forecast source and point at this sensor.
+EC uses it as the day's kWh estimate with a **fixed 4-hour morning gap assumption**
+(no slot data to derive it from).
+
+The `power_production_next_12hours` sensor (average watts over the next 12 h)
+could theoretically indicate whether meaningful solar arrives before 09:00, but
+it is an average over the window rather than a transition point and is not
+precise enough to derive a gap reliably.
+
+**Upgrading to slot-based:** The forecast.solar integration computes hourly estimates
+internally but does not currently expose them as a sensor attribute. A `detailedForecast`
+attribute equivalent would make it a first-class alternative to Solcast for EC's
+slot-based path.
+
+---
+
+## EV charger
+
+### myenergi Zappi
+
+**Integration:** [HACS — ha-myenergi](https://github.com/CJNE/ha-myenergi)
+
+**Sensor for EC:** `sensor.myenergi_zappi_ev_internal_load_ct1` (Zappi EV Charge Power)
+
+**Polling behaviour:** The myenergi integration polls the cloud relay on every
+coordinator tick. At fast `scan_interval` values (≤ ~15 s), the volume of history
+fetches (24-point hourly history on every tick) can trip the myenergi cloud relay's
+rate limit, stranding all entities as `unavailable` — including after HA restarts
+(the first refresh hits the same block). The [upstream issue is a patched local
+copy](../README.md); a PR to decouple history from live refresh has been opened.
+
+**`scan_interval` changes:** The integration's live options-change reload path is
+broken upstream (leaked listener + hand-rolled unload/setup race). Changing
+`scan_interval` via Configure requires an **HA restart** to take effect; the
+integration will appear `loaded` but entities will strand unavailable otherwise.
+
+**`last_updated` staleness:** The Zappi sensor only writes state on value change.
+When charging at a steady rate, `last_updated` may be many minutes old even though
+the device is active and the reading is valid. EC's EV sensor read deliberately
+skips the time-based staleness check and relies solely on the `unavailable`/`unknown`
+state for offline detection.
+
+---
+
+## Battery / inverter
+
+### GivEnergy (via givenergy-local)
+
+**Authoritative integration:** `givenergy_local` (local polling, not GivTCP cloud).
+Use `sensor.givenergy_inverter_*` entities.
+
+**GivTCP note:** GivTCP also exposes similar sensors (e.g. `givtcp_*`). Both are
+present on this install; `givenergy_local` is preferred as the long-term stable
+integration.
+
+**Load power sensor:** `sensor.givenergy_inverter_sa2114g047_load_power` measures
+**whole-house consumption including EV and Eddi** — GivEnergy cannot distinguish
+managed loads from baseline. EC's baseline calculation accounts for this via the
+managed-loads filter (idle-floor method).
+
+---
+
+## Hot water diverter
+
+### myenergi Eddi
+
+**Sensor for managed-loads exclusion:** `sensor.myenergi_eddi_hwc_internal_load_ct1`
+
+**Seasonal behaviour:**
+- Summer: diverts excess PV after battery charging capacity is exceeded; runs
+  midday, self-funded. Does not affect baseline because baseline is computed from
+  overnight/idle hours where Eddi is typically off.
+- Winter: draws from overnight off-peak tariff when insufficient PV. Runs during
+  the off-peak window, so the discharge guard (limit = 0 W) is active during the
+  same period — battery does not discharge to cover Eddi's draw.
+
+The filter-to-idle baseline method (exclude buckets where Eddi > 50 W) handles
+both seasons correctly without seasonal logic.
