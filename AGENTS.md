@@ -31,6 +31,19 @@ as the canonical example of this pattern.
 
 ---
 
+### Coordination inbox protocol
+
+- **Shared directory:** `/tmp/givenergy-coordination`
+- **Filename format:** `<unix-epoch>-<recipient>-<description>.md`
+  - `recipient` is one of `cli`, `modbus`, or `hass`
+  - `description` is a brief slug, optionally referencing an issue (e.g. `mock-pdu-logging-#42`)
+  - Example: `1780409632-modbus-mock-pdu-logging.md`
+- **Writing a message:** create a new file; never mutate an existing one
+- **Replying:** create a new file with the current epoch, the original sender as addressee, and a description prefixed with `re-`. Only reply if actionable, save on pleasantries.
+- **Content:** describe the expected outcome at the API boundary — not how to implement it; include enough context to act without this conversation's history. It does not need to be overly verbose since agents share a lot of common knowledge across these repos.
+
+---
+
 ## Test layout
 
 ```

@@ -33,3 +33,16 @@ def seasonal_fallback_kwh(
     phase = math.cos(2 * math.pi * (day_of_year - peak_day) / 365)  # -1..+1
     normalised = (phase + 1) / 2  # 0..1
     return winter_min + (summer_max - winter_min) * normalised
+
+
+def forecast_implausible(total_kwh: float, summer_max_kwh: float, *, margin: float) -> bool:
+    """True if a forecast total exceeds the physical-plausibility ceiling.
+
+    The ceiling is the configured summer-max generation times a margin (headroom
+    for an exceptional clear day). Exceeding it almost certainly indicates a unit
+    error in the forecast source (e.g. kW interpreted as kWh) rather than real
+    generation. A summer_max of 0 disables the check (returns False).
+    """
+    if summer_max_kwh <= 0:
+        return False
+    return total_kwh > summer_max_kwh * margin

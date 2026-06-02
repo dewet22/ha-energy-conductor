@@ -13,6 +13,10 @@ CONF_BATTERY_CHARGE_CONTROL = "battery_charge_control"
 CONF_BATTERY_DISCHARGE_LIMIT = "battery_discharge_limit"
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
 CONF_BATTERY_RESERVE_PERCENT = "battery_reserve_percent"
+# Optional: read the live minimum-SoC floor from an entity (e.g. GivEnergy
+# battery_soc_reserve) instead of the static reserve percent above. May be a
+# `number` or `sensor` entity. Falls back to CONF_BATTERY_RESERVE_PERCENT when unset.
+CONF_RESERVE_SOC_SENSOR = "reserve_soc_sensor"
 
 # Config keys — tariff
 CONF_OFF_PEAK_SENSOR = "off_peak_sensor"
@@ -62,6 +66,15 @@ DEFAULT_SUMMER_MAX_KWH = 8.0
 DEFAULT_DAILY_KWH_TARGET = 10.0
 DEFAULT_OVERNIGHT_PLAN_TIME = time(21, 0)
 DEFAULT_OVERNIGHT_WINDOW_END_TIME = time(5, 30)
+
+# Solar forecast
+# Solcast detailedForecast `pv_estimate` is AVERAGE POWER (kW) over each slot, not
+# energy. Slots are 30 minutes, so energy_kwh = pv_estimate * 0.5h.
+SOLCAST_SLOT_HOURS = 0.5
+# Plausibility ceiling: warn if any forecast total exceeds the configured summer
+# max by this margin (catches unit bugs like the kW-as-kWh 2x error). Headroom
+# above the typical summer max for an exceptional clear day without false alarms.
+FORECAST_PLAUSIBILITY_MARGIN = 1.5
 
 # Stats fallback
 STATS_LOOKBACK_DAYS = 365

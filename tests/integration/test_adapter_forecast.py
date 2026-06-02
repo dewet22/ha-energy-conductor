@@ -35,8 +35,10 @@ def _adapter(hass, config: dict) -> Adapter:
     return Adapter(hass, config)
 
 
-def _solcast_slot(dt_local: datetime, kwh: float) -> dict:
-    return {"period_start": dt_local, "pv_estimate": kwh}
+def _solcast_slot(dt_local: datetime, pv_estimate_kw: float) -> dict:
+    # pv_estimate is AVERAGE POWER (kW) over the 30-min slot, not energy.
+    # The adapter multiplies by SOLCAST_SLOT_HOURS (0.5) to get kWh.
+    return {"period_start": dt_local, "pv_estimate": pv_estimate_kw}
 
 
 @pytest.fixture
@@ -80,6 +82,29 @@ async def test_solcast_utc_conversion_bug_fixed(hass, mock_config_entry, now_utc
     assert slots[0].start == datetime(2026, 6, 2, 0, 0, tzinfo=UTC)
 
 
+async def test_solcast_pv_estimate_is_power_not_energy(hass, mock_config_entry, now_utc):
+    """Bug 3: pv_estimate is average kW over the 30-min slot, not kWh.
+
+    Energy = power x 0.5h. A constant 2.0 kW across 48 half-hourly slots = 48 kWh
+    over the day (2.0 x 0.5 x 48), NOT 96 kWh (the pre-fix 2x over-count summed
+    pv_estimate directly). Each slot must be 1.0 kWh (2.0 kW x 0.5h).
+    """
+    base = datetime(2026, 6, 2, 0, 0, tzinfo=BST)
+    slots_bst = [_solcast_slot(base + timedelta(minutes=30 * i), 2.0) for i in range(48)]
+    hass.states.async_set(SOLCAST, "48.0", {"detailedForecast": slots_bst})
+    await hass.async_block_till_done()
+
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(hass, {})
+
+    slots = adapter._slots_from_solcast(SOLCAST, now_utc)
+    total = sum(s.energy_kwh for s in slots)
+
+    assert len(slots) == 48
+    assert all(s.energy_kwh == pytest.approx(1.0) for s in slots), "2.0 kW x 0.5h = 1.0 kWh"
+    assert total == pytest.approx(48.0), "summed pv_estimate would be 96; correct energy is 48"
+
+
 async def test_solcast_tomorrow_filter(hass, mock_config_entry, now_utc):
     """Bug 2 (defence): today's slots are dropped; only tomorrow's are kept.
 
@@ -107,7 +132,8 @@ async def test_solcast_tomorrow_filter(hass, mock_config_entry, now_utc):
     slots = adapter._slots_from_solcast(SOLCAST, now_utc)
 
     assert len(slots) == 1
-    assert abs(slots[0].energy_kwh - 1.5) < 0.001
+    # 1.5 kW average over a 30-min slot = 0.75 kWh.
+    assert abs(slots[0].energy_kwh - 0.75) < 0.001
 
 
 async def test_daily_sensor_uses_fallback_kwh_not_synthetic_slot(hass, mock_config_entry, now_utc):

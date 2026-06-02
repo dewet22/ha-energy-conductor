@@ -28,6 +28,7 @@ from .const import (
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_RESERVE_SOC_SENSOR,
     DEFAULT_BATTERY_MAX_POWER_W,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
@@ -193,10 +194,14 @@ class BatteryReservePercentSensor(_BaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        config = self.coordinator.config
+        reserve_sensor = config.get(CONF_RESERVE_SOC_SENSOR)
         return {
-            "configured_value_pct": self.coordinator.config.get(
+            "source": "sensor" if reserve_sensor else "config",
+            "source_entity": reserve_sensor,
+            "configured_value_pct": config.get(
                 CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT
-            )
+            ),
         }
 
 

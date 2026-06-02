@@ -38,6 +38,7 @@ from .const import (
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OFF_PEAK_SENSOR,
+    CONF_RESERVE_SOC_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
@@ -45,16 +46,19 @@ from .const import (
     DEFAULT_BASELINE_LOAD_W,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
+    DEFAULT_SUMMER_MAX_KWH,
+    FORECAST_PLAUSIBILITY_MARGIN,
     FORECAST_SOURCE_DAILY,
     FORECAST_SOURCE_NONE,
     FORECAST_SOURCE_SOLCAST,
+    SOLCAST_SLOT_HOURS,
     STALE_FORECAST_SECONDS,
     STATS_CALENDAR_WINDOW_DAYS,
     STATS_LOOKBACK_DAYS,
     STATS_MIN_DATA_POINTS,
     STATS_PERCENTILE,
 )
-from .fallback import seasonal_fallback_kwh
+from .fallback import forecast_implausible, seasonal_fallback_kwh
 from .model import (
     Battery,
     EVCharger,
@@ -131,9 +135,7 @@ class Adapter:
             capacity_kwh=float(self.config[CONF_BATTERY_CAPACITY_KWH]),
             max_charge_power_w=max_charge,
             max_discharge_power_w=max_discharge,
-            reserve_percent=float(
-                self.config.get(CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT)
-            ),
+            reserve_percent=self._reserve_percent(),
         )
 
         # Tariff
@@ -193,6 +195,21 @@ class Adapter:
             baseline_qualifying_buckets=baseline_qualifying_buckets,
         )
 
+    def _reserve_percent(self) -> float:
+        """Minimum-SoC reserve floor.
+
+        Prefer a live reserve sensor (e.g. GivEnergy battery_soc_reserve) when one
+        is configured, so EC tracks the inverter's actual floor. Fall back to the
+        static configured reserve percent if the sensor is unset or unreadable.
+        """
+        sensor = self.config.get(CONF_RESERVE_SOC_SENSOR)
+        if sensor:
+            try:
+                return _read_float(self.hass, sensor, max_age_seconds=STALE_FORECAST_SECONDS)
+            except EntityProblem as exc:
+                _LOGGER.warning("Reserve SoC sensor unreadable (%s); using config value", exc)
+        return float(self.config.get(CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT))
+
     def _off_peak_window_end(self, now: datetime, off_peak_now: bool) -> datetime | None:
         """Best-effort: derive the upcoming off-peak window end from config.
 
@@ -224,7 +241,6 @@ class Adapter:
             if sensor_id:
                 slots = self._slots_from_solcast(sensor_id, now)
         elif source == FORECAST_SOURCE_DAILY:
-            # Daily-total sensor: synthesise a single slot covering today
             sensor_id = self.config.get(CONF_FORECAST_DAILY_SENSOR)
             if sensor_id:
                 try:
@@ -235,15 +251,41 @@ class Adapter:
                     # return 0 (the slot predates tomorrow's window end), so the plan
                     # never provisioned a morning gap. Treating it as fallback_kwh
                     # preserves the MISSING_FORECAST_GAP_H default gap assumption.
-                    return SolarForecast(slots=[], fallback_kwh=kwh, fallback_source="daily_sensor")
+                    return self._checked_forecast(
+                        SolarForecast(slots=[], fallback_kwh=kwh, fallback_source="daily_sensor")
+                    )
                 except EntityProblem as exc:
                     _LOGGER.warning("Daily forecast sensor unavailable: %s", exc)
 
         if slots:
-            return SolarForecast(slots=slots, fallback_kwh=None, fallback_source=None)
+            return self._checked_forecast(
+                SolarForecast(slots=slots, fallback_kwh=None, fallback_source=None)
+            )
 
         fallback_kwh, fallback_source = await self._compute_fallback(now)
         return SolarForecast(slots=[], fallback_kwh=fallback_kwh, fallback_source=fallback_source)
+
+    def _checked_forecast(self, forecast: SolarForecast) -> SolarForecast:
+        """Log a warning if the forecast total is physically implausible.
+
+        Guards against unit bugs (e.g. kW read as kWh) by comparing against the
+        configured summer-max ceiling. Does not clamp — the data is preserved for
+        inspection; the warning makes the anomaly visible. Only checked for real
+        forecast sources (Solcast slots, daily sensor); the seasonal/stats fallback
+        is bounded by summer_max by construction.
+        """
+        total = forecast.total_kwh_forecast
+        summer_max = float(self.config.get(CONF_SUMMER_MAX_KWH, DEFAULT_SUMMER_MAX_KWH))
+        if forecast_implausible(total, summer_max, margin=FORECAST_PLAUSIBILITY_MARGIN):
+            _LOGGER.warning(
+                "Solar forecast %.1f kWh (source=%s) exceeds plausibility ceiling "
+                "(summer_max %.1f kWh x %.1f). Possible unit error in the forecast source.",
+                total,
+                forecast.fallback_source or "slots",
+                summer_max,
+                FORECAST_PLAUSIBILITY_MARGIN,
+            )
+        return forecast
 
     def _slots_from_solcast(self, sensor_id: str, now: datetime) -> list[ForecastSlot]:
         state = self.hass.states.get(sensor_id)
@@ -277,7 +319,9 @@ class Adapter:
                 # or aggregate sensor instead of the dedicated "forecast tomorrow" sensor.
                 if dt_util.as_local(start_utc).date() != tomorrow_local:
                     continue
-                kwh = float(item.get("pv_estimate", 0.0))
+                # pv_estimate is AVERAGE POWER (kW) over the 30-min slot, NOT energy.
+                # Energy for the slot = power * slot duration (0.5h).
+                kwh = float(item.get("pv_estimate", 0.0)) * SOLCAST_SLOT_HOURS
                 slots.append(ForecastSlot(start=start_utc, energy_kwh=kwh))
             except KeyError, TypeError, ValueError:
                 continue

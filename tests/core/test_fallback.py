@@ -1,6 +1,6 @@
 import pytest
 
-from energy_conductor.fallback import seasonal_fallback_kwh
+from energy_conductor.fallback import forecast_implausible, seasonal_fallback_kwh
 
 from .conftest import utc
 
@@ -34,3 +34,24 @@ class TestSeasonalFallback:
         for month in range(1, 13):
             result = seasonal_fallback_kwh(utc(2026, month, 15), winter_min=2.0, summer_max=8.0)
             assert 2.0 - 0.01 <= result <= 8.0 + 0.01
+
+
+class TestForecastImplausible:
+    def test_within_ceiling_is_plausible(self):
+        # 20 kWh vs summer_max 22, margin 1.5 → ceiling 33; well within
+        assert forecast_implausible(20.0, 22.0, margin=1.5) is False
+
+    def test_at_typical_summer_max_is_plausible(self):
+        assert forecast_implausible(22.0, 22.0, margin=1.5) is False
+
+    def test_exceeds_ceiling_is_implausible(self):
+        # The 2x-bug case: 44.78 vs summer_max 22 → ceiling 33; flagged
+        assert forecast_implausible(44.78, 22.0, margin=1.5) is True
+
+    def test_boundary_exactly_at_ceiling_is_plausible(self):
+        # 33 == 22 * 1.5; strictly-greater means the boundary is NOT implausible
+        assert forecast_implausible(33.0, 22.0, margin=1.5) is False
+
+    def test_zero_summer_max_disables_check(self):
+        # No configured ceiling → never flag (avoids false positives when unset)
+        assert forecast_implausible(1000.0, 0.0, margin=1.5) is False

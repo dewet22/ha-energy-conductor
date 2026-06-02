@@ -9,7 +9,8 @@
           "battery_charge_control": "Charge power control (number entity)",
           "battery_discharge_limit": "Discharge power limit (number entity)",
           "battery_capacity_kwh": "Battery capacity (kWh)",
-          "battery_reserve_percent": "Reserve SoC floor (%)"
+          "battery_reserve_percent": "Reserve SoC floor (%)",
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; reads the live minimum-SoC entity, e.g. GivEnergy battery_soc_reserve)"
         }
       },
       "tariff": {
@@ -77,7 +78,11 @@
           "device_name": "Device name (overrides Home Assistant location)",
           "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
           "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
-          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor)"
+          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor)",
+          "battery_capacity_kwh": "Battery capacity (kWh) — correct post-setup",
+          "battery_charge_control": "Charge target control (number entity, e.g. charge_target_soc)",
+          "battery_discharge_limit": "Discharge power limit (number entity)",
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)"
         }
       }
     }

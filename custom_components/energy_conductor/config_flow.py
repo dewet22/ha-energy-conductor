@@ -51,6 +51,7 @@ from .const import (
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_RESERVE_SOC_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
@@ -81,6 +82,12 @@ def _sensor_selector(device_class: str | None = None) -> EntitySelector:
 
 def _number_entity_selector() -> EntitySelector:
     return EntitySelector(EntitySelectorConfig(domain="number"))
+
+
+def _soc_floor_selector() -> EntitySelector:
+    # The minimum-SoC floor may be exposed as a `number` (GivEnergy battery_soc_reserve)
+    # or a `sensor`, depending on the integration. Accept either.
+    return EntitySelector(EntitySelectorConfig(domain=["sensor", "number"]))
 
 
 def _binary_sensor_selector() -> EntitySelector:
@@ -128,6 +135,7 @@ BATTERY_SCHEMA = vol.Schema(
         vol.Required(
             CONF_BATTERY_RESERVE_PERCENT, default=DEFAULT_RESERVE_PERCENT
         ): _percent_selector(),
+        vol.Optional(CONF_RESERVE_SOC_SENSOR): _soc_floor_selector(),
     }
 )
 
@@ -330,20 +338,45 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         CONF_FORECAST_SOLCAST_SENSOR,
                         description={"suggested_value": defaults.get(CONF_FORECAST_SOLCAST_SENSOR)},
                     ): _sensor_selector(),
+                    # Battery entities/values are set in the initial flow (entry.data),
+                    # but surfaced here too so they can be corrected post-setup without
+                    # remove/re-add. Options override data in the coordinator's merged config.
+                    vol.Optional(
+                        CONF_BATTERY_CAPACITY_KWH,
+                        description={"suggested_value": defaults.get(CONF_BATTERY_CAPACITY_KWH)},
+                    ): _kwh_selector(min_value=0.5, max_value=100),
+                    vol.Optional(
+                        CONF_BATTERY_CHARGE_CONTROL,
+                        description={"suggested_value": defaults.get(CONF_BATTERY_CHARGE_CONTROL)},
+                    ): _number_entity_selector(),
+                    vol.Optional(
+                        CONF_BATTERY_DISCHARGE_LIMIT,
+                        description={"suggested_value": defaults.get(CONF_BATTERY_DISCHARGE_LIMIT)},
+                    ): _number_entity_selector(),
+                    vol.Optional(
+                        CONF_RESERVE_SOC_SENSOR,
+                        description={"suggested_value": defaults.get(CONF_RESERVE_SOC_SENSOR)},
+                    ): _soc_floor_selector(),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
-        # Only persist the behaviour-level keys into entry.options,
-        # not the full config snapshot (which lives in entry.data).
-        return self.async_create_entry(
-            title="",
-            data={
-                CONF_WRITE_MODE: user_input[CONF_WRITE_MODE],
-                CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
-                CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
-                CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
-                CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
-                CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],
-                CONF_FORECAST_SOLCAST_SENSOR: user_input.get(CONF_FORECAST_SOLCAST_SENSOR) or None,
-            },
-        )
+        # Persist behaviour keys plus any battery corrections. Battery fields are
+        # only written when supplied (preserving entry.data when left blank).
+        persisted: dict[str, Any] = {
+            CONF_WRITE_MODE: user_input[CONF_WRITE_MODE],
+            CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
+            CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
+            CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
+            CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
+            CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],
+            CONF_FORECAST_SOLCAST_SENSOR: user_input.get(CONF_FORECAST_SOLCAST_SENSOR) or None,
+            CONF_RESERVE_SOC_SENSOR: user_input.get(CONF_RESERVE_SOC_SENSOR) or None,
+        }
+        for key in (
+            CONF_BATTERY_CAPACITY_KWH,
+            CONF_BATTERY_CHARGE_CONTROL,
+            CONF_BATTERY_DISCHARGE_LIMIT,
+        ):
+            if user_input.get(key) is not None:
+                persisted[key] = user_input[key]
+        return self.async_create_entry(title="", data=persisted)

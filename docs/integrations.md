@@ -29,13 +29,19 @@ Configure EC's Solcast sensor to the **Forecast Tomorrow** sensor, **not**:
 detailedForecast = [
     {
         "period_start": datetime(2026, 6, 2, 1, 0, tzinfo=Europe/London),  # local tz
-        "pv_estimate": 0.512,    # kWh for this 30-min period (median)
-        "pv_estimate10": 0.31,   # pessimistic
-        "pv_estimate90": 0.74,   # optimistic
+        "pv_estimate": 2.594,    # AVERAGE POWER (kW) over the slot (median) — NOT kWh
+        "pv_estimate10": 1.9,    # pessimistic
+        "pv_estimate90": 3.1,    # optimistic
     },
     ...  # 48 entries, covering the full day in local time
 ]
 ```
+
+**`pv_estimate` is average power in kW, not energy.** Energy for a slot =
+`pv_estimate * 0.5h`. Summing `pv_estimate` directly double-counts (the slot is
+30 min, not 1 h). Confirmed against Solcast's own `peak_forecast_tomorrow` sensor:
+it equals the highest single-slot `pv_estimate` to 4 sig figs, proving the value is
+power, not energy. EC applies the `* 0.5` conversion in `_slots_from_solcast`.
 
 Slot timestamps are in the HA instance's local timezone (e.g. BST/Europe/London),
 **not UTC**. EC converts them to UTC on read.
@@ -113,6 +119,33 @@ integration.
 **whole-house consumption including EV and Eddi** — GivEnergy cannot distinguish
 managed loads from baseline. EC's baseline calculation accounts for this via the
 managed-loads filter (idle-floor method).
+
+**Number entities — the control surface (all SoC-% or power-%, no watts):**
+
+| Entity | Range | Meaning | EC wiring |
+|---|---|---|---|
+| `charge_target_soc` | 4–100 % | **Overnight SoC target** | overnight planner writes here |
+| `battery_soc_reserve` | 4–100 % | **Minimum SoC floor** | optional reserve sensor reads here |
+| `battery_charge_limit` | 0–50 % | Charge *power rate* (% of max) | not used |
+| `battery_discharge_limit` | 0–50 % | Discharge *power rate* (% of max) | discharge guard — see below |
+| `battery_discharge_min_power_reserve` | 4–100 % | Dynamic discharge reserve | not used |
+| `inverter_max_output_active_power` | 0–100 % | Inverter output cap (%) | not used |
+
+**True battery capacity:** `sensor…battery_nominal_capacity` (e.g. 17.7 kWh) — use
+this for `CONF_BATTERY_CAPACITY_KWH`, not a guessed round number. A wrong capacity
+scales every SoC%↔kWh conversion in the overnight planner.
+
+**Discharge guard live write is BLOCKED.** EC's discharge guard reasons in **watts**
+(hardware-agnostic), but `givenergy_local` exposes only a 0–50 % power-*rate* knob
+with no documented watt reference. There is no watt-valued discharge entity to write
+to, so the discharge-guard live write is deferred. In dry-run the guard still
+produces correct watt decisions for notification/inspection. Unblocking requires
+`givenergy_local` to expose battery discharge (and charge) power limits as
+watt-valued `number` entities — the Modbus registers are watt-valued, so the data
+exists. (Cross-agent request dispatched via the givenergy-coordination inbox.)
+
+The overnight charge-target path is **not** blocked: `charge_target_soc` is a % SoC
+target that matches what the planner outputs.
 
 ---
 
