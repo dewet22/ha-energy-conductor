@@ -84,7 +84,9 @@
           "battery_capacity_kwh": "Battery capacity (kWh) — correct post-setup",
           "battery_charge_control": "Charge target control (number entity, e.g. charge_target_soc)",
           "battery_discharge_limit": "Discharge power limit (number entity)",
-          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)"
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)",
+          "summer_max_kwh": "Summer max daily generation (kWh) — also the Solcast plausibility ceiling",
+          "winter_min_kwh": "Winter min daily generation (kWh) — seasonal fallback lower bound"
         }
       }
     }

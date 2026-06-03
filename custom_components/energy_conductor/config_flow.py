@@ -368,6 +368,18 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         CONF_RESERVE_SOC_SENSOR,
                         description={"suggested_value": defaults.get(CONF_RESERVE_SOC_SENSOR)},
                     ): _soc_floor_selector(),
+                    # Forecast seasonal-fallback bounds — also act as the plausibility
+                    # ceiling for Solcast (summer_max x 1.5). The initial flow sets 8.0
+                    # as the default; expose here so the user can correct it post-setup
+                    # without knowing to re-run the full wizard.
+                    vol.Optional(
+                        CONF_SUMMER_MAX_KWH,
+                        description={"suggested_value": defaults.get(CONF_SUMMER_MAX_KWH)},
+                    ): _kwh_selector(max_value=100),
+                    vol.Optional(
+                        CONF_WINTER_MIN_KWH,
+                        description={"suggested_value": defaults.get(CONF_WINTER_MIN_KWH)},
+                    ): _kwh_selector(max_value=50),
                 }
             )
             return self.async_show_form(step_id="behaviour", data_schema=schema)
@@ -388,6 +400,8 @@ class EnergyConductorOptionsFlow(OptionsFlow):
             CONF_BATTERY_CAPACITY_KWH,
             CONF_BATTERY_CHARGE_CONTROL,
             CONF_BATTERY_DISCHARGE_LIMIT,
+            CONF_SUMMER_MAX_KWH,
+            CONF_WINTER_MIN_KWH,
         ):
             if user_input.get(key) is not None:
                 persisted[key] = user_input[key]
