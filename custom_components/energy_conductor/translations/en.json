@@ -77,7 +77,7 @@
           "notify_target": "Notification target",
           "daily_kwh_target": "Daily kWh target",
           "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
-          "device_name": "Device name (overrides Home Assistant location)",
+          "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')",
           "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
           "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
           "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor)",

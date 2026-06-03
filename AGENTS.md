@@ -119,9 +119,10 @@ Python modules. A full HA restart is required for any code change to take effect
 
 ## Sensor naming conventions
 
-The EC device is named after `hass.config.location_name` ("Blithe") unless
-`CONF_DEVICE_NAME` is set. Entity IDs therefore have a `blithe_` prefix in the
-live instance, e.g. `sensor.blithe_baseline_load`.
+The EC device is named `"Energy Conductor {site}"` where `site` = `CONF_DEVICE_NAME`
+(if set) or `hass.config.location_name` (e.g. "Blithe") or "Home". Entity IDs
+follow `sensor.energy_conductor_<site>_<slug>`, e.g.
+`sensor.energy_conductor_blithe_calculated_baseline_load`.
 
 Display names use plain English without device prefix (the device name provides
 context). Examples:

@@ -71,14 +71,18 @@ class _BaseSensor(CoordinatorEntity[EnergyConductorCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        device_name = (
+        # CONF_DEVICE_NAME overrides the *site* part only; "Energy Conductor" is
+        # always the integration prefix so entity IDs follow the pattern
+        # sensor.energy_conductor_<site>_<slug> — analogous to how GivEnergy exposes
+        # sensor.givenergy_inverter_<model>_<slug>.
+        site = (
             self.coordinator.config.get(CONF_DEVICE_NAME)
             or self.coordinator.hass.config.location_name
-            or "Energy Conductor"
+            or "Home"
         )
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
-            name=device_name,
+            name=f"Energy Conductor {site}",
             manufacturer="Energy Conductor",
             model="v1",
         )
