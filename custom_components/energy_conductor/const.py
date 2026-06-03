@@ -48,6 +48,11 @@ CONF_NOTIFY_TARGET = "notify_target"
 CONF_OVERNIGHT_PLAN_TIME = "overnight_plan_time"
 CONF_DAILY_KWH_TARGET = "daily_kwh_target"
 CONF_DEVICE_NAME = "device_name"
+# Absolute floor the overnight SoC target must never fall below. Acts as the safety
+# margin against forecast/baseline error AND BMS SoC unreliability near empty (the
+# inverter can cut out above the nominal reserve, and the SoC reading is least
+# trustworthy at the bottom). Set above the BMS reserve floor.
+CONF_MIN_TARGET_SOC_PERCENT = "min_target_soc_percent"
 
 # Enum values
 FORECAST_SOURCE_SOLCAST = "solcast"
@@ -59,6 +64,7 @@ WRITE_MODE_LIVE = "live"
 
 # Defaults
 DEFAULT_RESERVE_PERCENT = 10
+DEFAULT_MIN_TARGET_SOC_PERCENT = 10  # conservative floor; safe above typical BMS reserves
 DEFAULT_EV_MIN_ACTIVATION_W = 1400
 DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribute
 DEFAULT_WINTER_MIN_KWH = 0.0

@@ -36,28 +36,57 @@ def plan_overnight(
     *,
     target_entity: str,
     daily_kwh_target: float,
+    min_target_soc_percent: float,
 ) -> Decision:
-    """Compute the overnight battery charge target."""
+    """Compute the overnight battery charge target.
+
+    The energy the battery must hold by morning (`target_kwh`) is *usable* energy:
+    it sits ABOVE the reserve floor, because everything at or below the reserve is
+    unavailable to the load. So the SoC target is `reserve + target_kwh/capacity`,
+    not just `target_kwh/capacity` — the earlier formula under-provisioned by the
+    reserve band (e.g. a 6% target left only 2% usable above a 4% floor).
+
+    `min_target_soc_percent` is an absolute floor that doubles as the safety margin:
+    it guards against forecast/baseline error and against BMS SoC unreliability near
+    empty (the inverter can cut out above the nominal reserve, and the SoC reading is
+    least trustworthy at the bottom). The final target is clamped up to the highest of
+    {min target, reserve, computed}.
+    """
     morning_gap_hours = _morning_gap_hours(state)
     morning_gap_kwh = state.baseline_load_w * morning_gap_hours / 1000.0
 
     forecast_kwh = state.solar_forecast.total_kwh_forecast
     forecast_deficit = max(0.0, daily_kwh_target - forecast_kwh)
 
-    target_kwh = morning_gap_kwh + forecast_deficit
-    raw_percent = round(target_kwh / state.battery.capacity_kwh * 100)
-    target_percent = max(int(state.battery.reserve_percent), min(raw_percent, 100))
+    reserve_percent = float(state.battery.reserve_percent)
+    # Usable energy needed, expressed as a percentage band ABOVE the reserve floor.
+    usable_kwh = morning_gap_kwh + forecast_deficit
+    usable_percent = usable_kwh / state.battery.capacity_kwh * 100
+    computed_percent = reserve_percent + usable_percent
+
+    target_percent = round(
+        min(100.0, max(min_target_soc_percent, reserve_percent, computed_percent))
+    )
+
+    # Safety check: if the live BMS reserve floor sits above the user's intended
+    # minimum target, the inverter will not supply down to where we planned — the
+    # intent is misconfigured. Surface it (the math already clamps up correctly).
+    bms_floor_note = ""
+    if reserve_percent > min_target_soc_percent:
+        bms_floor_note = (
+            f"; WARNING BMS reserve {reserve_percent:.0f}% exceeds min-target "
+            f"{min_target_soc_percent:.0f}% (raise min-target or lower BMS reserve)"
+        )
 
     is_fallback = not state.solar_forecast.slots
-    if is_fallback:
-        source_label = state.solar_forecast.fallback_source or "unknown"
-        fallback_note = f", fallback {source_label}"
-    else:
-        fallback_note = ""
+    fallback_note = (
+        f", fallback {state.solar_forecast.fallback_source or 'unknown'}" if is_fallback else ""
+    )
     reason = (
         f"Morning gap {morning_gap_hours:.1f}h x {state.baseline_load_w:.0f}W "
         f"= {morning_gap_kwh:.1f} kWh; forecast {forecast_kwh:.1f} kWh; "
-        f"target {target_percent}%{fallback_note}"
+        f"reserve {reserve_percent:.0f}% + usable {usable_percent:.0f}% "
+        f"-> target {target_percent}%{fallback_note}{bms_floor_note}"
     )
 
     plan_date = state.now.date().isoformat()

@@ -47,6 +47,7 @@ from .const import (
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
+    CONF_MIN_TARGET_SOC_PERCENT,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
@@ -59,6 +60,7 @@ from .const import (
     CONF_WRITE_MODE,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
+    DEFAULT_MIN_TARGET_SOC_PERCENT,
     DEFAULT_OVERNIGHT_PLAN_TIME,
     DEFAULT_OVERNIGHT_WINDOW_END_TIME,
     DEFAULT_RESERVE_PERCENT,
@@ -210,6 +212,9 @@ BEHAVIOUR_SCHEMA = vol.Schema(
         vol.Required(CONF_DAILY_KWH_TARGET, default=DEFAULT_DAILY_KWH_TARGET): _kwh_selector(
             max_value=200
         ),
+        vol.Required(
+            CONF_MIN_TARGET_SOC_PERCENT, default=DEFAULT_MIN_TARGET_SOC_PERCENT
+        ): _percent_selector(),
     }
 )
 
@@ -320,6 +325,12 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         CONF_DAILY_KWH_TARGET,
                         default=defaults.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET),
                     ): _kwh_selector(max_value=200),
+                    vol.Required(
+                        CONF_MIN_TARGET_SOC_PERCENT,
+                        default=defaults.get(
+                            CONF_MIN_TARGET_SOC_PERCENT, DEFAULT_MIN_TARGET_SOC_PERCENT
+                        ),
+                    ): _percent_selector(),
                     vol.Optional(
                         CONF_DEVICE_NAME,
                         description={"suggested_value": defaults.get(CONF_DEVICE_NAME, "")},
@@ -366,6 +377,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
             CONF_WRITE_MODE: user_input[CONF_WRITE_MODE],
             CONF_NOTIFY_TARGET: user_input[CONF_NOTIFY_TARGET],
             CONF_DAILY_KWH_TARGET: user_input[CONF_DAILY_KWH_TARGET],
+            CONF_MIN_TARGET_SOC_PERCENT: user_input[CONF_MIN_TARGET_SOC_PERCENT],
             CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
             CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
             CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],

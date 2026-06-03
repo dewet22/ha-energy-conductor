@@ -58,7 +58,8 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "daily_kwh_target": "Daily kWh target (v1 constant)"
+          "daily_kwh_target": "Daily kWh target (v1 constant)",
+          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve"
         }
       }
     },
@@ -75,6 +76,7 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "daily_kwh_target": "Daily kWh target",
+          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
           "device_name": "Device name (overrides Home Assistant location)",
           "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
           "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",

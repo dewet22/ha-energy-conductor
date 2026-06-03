@@ -49,7 +49,13 @@ def test_overnight_target_within_reserve_and_100(
         baseline_load_w=load,
         now=datetime(2026, 6, 1, 21, 0, tzinfo=UTC),
     )
-    decision = plan_overnight(state, target_entity="number.charge_target", daily_kwh_target=daily)
+    decision = plan_overnight(
+        state,
+        target_entity="number.charge_target",
+        daily_kwh_target=daily,
+        min_target_soc_percent=0.0,
+    )
+    # Target never below the reserve floor, never above 100, regardless of inputs.
     assert int(reserve) <= decision.value <= 100
 
 
