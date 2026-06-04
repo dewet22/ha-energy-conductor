@@ -102,6 +102,20 @@ def _read_bool(hass: HomeAssistant, entity_id: str | None) -> bool:
     return state.state == STATE_ON
 
 
+def _read_off_peak_attr(hass: HomeAssistant, entity_id: str, attr: str) -> datetime | None:
+    """Read a timestamp attribute from the off-peak sensor, or None if absent/unparseable."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    raw = state.attributes.get(attr)
+    if raw is None:
+        return None
+    parsed = dt_util.parse_datetime(str(raw))
+    if parsed is None:
+        return None
+    return dt_util.as_utc(parsed)
+
+
 def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     state = hass.states.get(entity_id)
     if state is None:
@@ -148,11 +162,13 @@ class Adapter:
         # Tariff
         off_peak_now = _read_bool(self.hass, self.config[CONF_OFF_PEAK_SENSOR])
         dispatching_now = _read_bool(self.hass, self.config.get(CONF_DISPATCHING_SENSOR))
+        off_peak_sensor = self.config[CONF_OFF_PEAK_SENSOR]
+        next_off_peak_start = _read_off_peak_attr(self.hass, off_peak_sensor, "next_start")
         tariff = TariffState(
             off_peak_now=off_peak_now,
             ev_dispatching_now=dispatching_now,
             off_peak_window_end=self._off_peak_window_end(now, off_peak_now),
-            next_off_peak_window_start=None,  # v1 does not compute this
+            next_off_peak_window_start=next_off_peak_start,
         )
 
         # EV charger — optional.
@@ -226,12 +242,17 @@ class Adapter:
         return float(self.config.get(CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT))
 
     def _off_peak_window_end(self, now: datetime, off_peak_now: bool) -> datetime | None:
-        """Best-effort: derive the upcoming off-peak window end from config.
+        """Best-effort: derive the upcoming off-peak window end.
 
-        v1 uses the configured `overnight_window_end_time` (local) and projects it onto
-        today or tomorrow depending on whether it's already passed.
+        Prefers next_end/current_end attributes on the off-peak sensor (present in
+        integrations like Octopus Energy), falling back to the configured HH:MM time.
         """
         from .const import CONF_OVERNIGHT_WINDOW_END_TIME
+
+        attr = "current_end" if off_peak_now else "next_end"
+        ts = _read_off_peak_attr(self.hass, self.config[CONF_OFF_PEAK_SENSOR], attr)
+        if ts is not None:
+            return ts
 
         raw = self.config.get(CONF_OVERNIGHT_WINDOW_END_TIME)
         if raw is None:

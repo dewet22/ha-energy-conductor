@@ -1,15 +1,18 @@
-"""Tests for the three-regime discharge guard (spec §4.2).
+"""Tests for the four-regime discharge guard (spec §4.2).
 
 Regime table:
-  1. off_peak_now              → limit 0W
-  2. ev_dispatching_now AND EV drawing → limit baseline_load_w
-  3. default                        → limit max_discharge_power_w
+  1. off_peak_now                      → limit 0W
+  2. pre-off-peak hold window          → limit 0W
+  3. ev_dispatching_now AND EV drawing → limit baseline_load_w
+  4. default                           → limit max_discharge_power_w
 """
+
+from datetime import timedelta
 
 from energy_conductor.decisions import DecisionKind
 from energy_conductor.discharge_guard import discharge_limit
 
-from .builders import a_battery, a_site_state, a_tariff, an_ev_charger
+from .builders import DEFAULT_NOW, a_battery, a_site_state, a_tariff, an_ev_charger
 
 DISCHARGE_ENTITY = "number.inverter_discharge_power_limit"
 
@@ -108,3 +111,48 @@ class TestDedupeKeyBucketing:
         d_default = _decide()
         d_off_peak = _decide(tariff=a_tariff(off_peak_now=True))
         assert d_default.dedupe_key != d_off_peak.dedupe_key
+
+
+class TestPreOffPeakHold:
+    def test_holds_at_zero_when_within_hold_window(self):
+        decision = _decide(
+            tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=15)),
+        )
+        assert decision.value == 0
+        assert "pre-off-peak" in decision.reason.lower()
+
+    def test_off_peak_now_takes_priority_over_pre_hold(self):
+        decision = _decide(
+            tariff=a_tariff(
+                off_peak_now=True,
+                next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=15),
+            ),
+        )
+        assert decision.value == 0
+        assert "off-peak rate" in decision.reason.lower()
+
+    def test_pre_hold_takes_priority_over_ev_dispatch(self):
+        decision = _decide(
+            tariff=a_tariff(
+                ev_dispatching_now=True,
+                next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=15),
+            ),
+            ev_charger=an_ev_charger(power_w=2000.0),
+            baseline_load_w=480.0,
+        )
+        assert decision.value == 0
+        assert "pre-off-peak" in decision.reason.lower()
+
+    def test_beyond_hold_window_is_unconstrained(self):
+        decision = _decide(
+            tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=31)),
+            battery=a_battery(max_discharge_power_w=3000),
+        )
+        assert decision.value == 3000
+
+    def test_no_start_sensor_is_unconstrained(self):
+        decision = _decide(
+            tariff=a_tariff(next_off_peak_window_start=None),
+            battery=a_battery(max_discharge_power_w=3000),
+        )
+        assert decision.value == 3000

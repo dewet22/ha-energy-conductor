@@ -28,6 +28,7 @@ from .const import (
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
+    CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_RESERVE_SOC_SENSOR,
     DAILY_TARGET_LOOKBACK_DAYS,
@@ -36,6 +37,7 @@ from .const import (
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
     DOMAIN,
+    PRE_OFF_PEAK_HOLD_MINUTES,
 )
 from .coordinator import EnergyConductorCoordinator
 
@@ -58,6 +60,7 @@ async def async_setup_entry(
             BatteryMaxDischargeSensor(coordinator, entry),
             SolarForecastSensor(coordinator, entry),
             CheapWindowEndSensor(coordinator, entry),
+            NextOffPeakWindowStartSensor(coordinator, entry),
             EVChargerPowerSensor(coordinator, entry),
             BaselineLoadSensor(coordinator, entry),
             DailyKwhTargetSensor(coordinator, entry),
@@ -361,15 +364,39 @@ class CheapWindowEndSensor(_BaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        config = self.coordinator.config
         return {
-            "configured_end_time": self.coordinator.config.get(CONF_OVERNIGHT_WINDOW_END_TIME),
+            "configured_end_time": config.get(CONF_OVERNIGHT_WINDOW_END_TIME),
+            "source_sensor": config.get(CONF_OFF_PEAK_SENSOR),
             "note": (
                 "Planning boundary for overnight charge decisions. "
-                "Reflects the configured overnight window end time regardless of "
-                "why the off-peak rate sensor is currently active (e.g. OI dispatch slots "
-                "outside the overnight period share the same off-peak rate sensor but have "
-                "their own end time which is not tracked here)."
+                "Prefers next_end/current_end attributes on the off-peak sensor; "
+                "falls back to the configured HH:MM time."
             ),
+        }
+
+
+class NextOffPeakWindowStartSensor(_BaseSensor):
+    _attr_translation_key = "off_peak_window_start"
+    _attr_name = "Next off-peak window start"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-off-peak-window-start"
+
+    @property
+    def native_value(self) -> datetime | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.tariff.next_off_peak_window_start
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        config = self.coordinator.config
+        return {
+            "source_sensor": config.get(CONF_OFF_PEAK_SENSOR),
+            "hold_minutes": PRE_OFF_PEAK_HOLD_MINUTES,
         }
 
 

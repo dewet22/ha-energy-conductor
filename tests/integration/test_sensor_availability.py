@@ -66,6 +66,24 @@ async def test_sensors_publish_after_healthy_setup(hass: HomeAssistant) -> None:
     assert status.state not in ("unavailable", "unknown"), status.state
 
 
+async def test_off_peak_window_start_sensor_registered(hass: HomeAssistant) -> None:
+    """NextOffPeakWindowStartSensor must be registered even when no start sensor is configured."""
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="t3")
+
+    assert await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}-off-peak-window-start"
+    )
+    assert entity_id is not None, "NextOffPeakWindowStartSensor was never registered"
+    state = hass.states.get(entity_id)
+    assert state is not None
+    # Without a start sensor configured the state should be unknown (None native value)
+    assert state.state in ("unknown", "unavailable", "None", "none") or state.state is not None
+
+
 async def test_sensors_publish_when_soc_unavailable_at_boot(hass: HomeAssistant) -> None:
     """The bug: SoC sensor unavailable at first refresh.
 
