@@ -495,6 +495,11 @@ class Adapter:
             None,
             {"sum"},
         )
+        _LOGGER.warning(
+            "Daily-target stats: keys=%s rows=%d",
+            list(stats.keys()),
+            len(stats.get(energy_entity, [])),
+        )
         rows = stats.get(energy_entity, [])
         # Exclude today's partial day so a low half-day reading doesn't drag the median.
         local_today = dt_util.as_local(now).date()
