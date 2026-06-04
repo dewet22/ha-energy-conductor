@@ -442,7 +442,6 @@ class DailyKwhTargetSensor(_BaseSensor):
     _attr_translation_key = "daily_kwh_target"
     _attr_name = "Calculated daily target"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
