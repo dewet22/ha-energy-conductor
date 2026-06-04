@@ -41,6 +41,10 @@ CONF_EV_MIN_ACTIVATION_W = "ev_min_activation_power_w"
 # Config keys — house load / managed loads
 CONF_HOME_LOAD_SENSOR = "home_load_sensor"  # home-load power sensor (any semantics)
 CONF_MANAGED_LOAD_SENSORS = "managed_load_sensors"  # list[str]; loads baked in, to net out
+# Cumulative house-energy sensor (kWh, total_increasing). Optional; when set, the
+# integration learns daily_kwh_target from recorder daily sums instead of using the
+# static config value.
+CONF_DAILY_ENERGY_SENSOR = "daily_energy_sensor"
 
 # Config keys — behaviour
 CONF_WRITE_MODE = "write_mode"
@@ -94,6 +98,11 @@ BASELINE_LOOKBACK_DAYS = 14
 BASELINE_MIN_SAMPLES = 48  # ~2 days of hourly buckets; sanity floor, not a warmup gate
 BASELINE_PERCENTILE = 0.50  # p50 of idle-floor samples; biased up (see baseline.py)
 BASELINE_IDLE_THRESHOLD_W = 50.0  # managed load <= this counts as "off" for a bucket
+
+# Daily-energy-target learning (median of recent daily consumption)
+DAILY_TARGET_LOOKBACK_DAYS = 14
+DAILY_TARGET_MIN_SAMPLES = 7
+DAILY_TARGET_PERCENTILE = 0.50
 
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes

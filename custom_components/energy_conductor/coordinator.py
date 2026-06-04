@@ -20,7 +20,6 @@ from .const import (
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_SOC_SENSOR,
-    CONF_DAILY_KWH_TARGET,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
     CONF_MIN_TARGET_SOC_PERCENT,
@@ -29,7 +28,6 @@ from .const import (
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_WRITE_MODE,
     COORDINATOR_TICK_SECONDS,
-    DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_MIN_TARGET_SOC_PERCENT,
     DEFAULT_OVERNIGHT_PLAN_TIME,
     DOMAIN,
@@ -189,9 +187,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             decision = plan_overnight(
                 state,
                 target_entity=self.config[CONF_BATTERY_CHARGE_CONTROL],
-                daily_kwh_target=float(
-                    self.config.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET)
-                ),
+                daily_kwh_target=state.daily_kwh_target,
                 min_target_soc_percent=float(
                     self.config.get(CONF_MIN_TARGET_SOC_PERCENT, DEFAULT_MIN_TARGET_SOC_PERCENT)
                 ),

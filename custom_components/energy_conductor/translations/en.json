@@ -80,6 +80,7 @@
           "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')",
           "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
           "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
+          "daily_energy_sensor": "House energy sensor (optional; learns the daily kWh target from recorder history)",
           "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor)",
           "battery_capacity_kwh": "Battery capacity (kWh) — correct post-setup",
           "battery_charge_control": "Charge target control (number entity, e.g. charge_target_soc)",

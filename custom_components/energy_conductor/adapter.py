@@ -29,6 +29,8 @@ from .const import (
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_DAILY_ENERGY_SENSOR,
+    CONF_DAILY_KWH_TARGET,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
@@ -43,7 +45,11 @@ from .const import (
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
     CONF_WINTER_MIN_KWH,
+    DAILY_TARGET_LOOKBACK_DAYS,
+    DAILY_TARGET_MIN_SAMPLES,
+    DAILY_TARGET_PERCENTILE,
     DEFAULT_BASELINE_LOAD_W,
+    DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
     DEFAULT_SUMMER_MAX_KWH,
@@ -59,6 +65,7 @@ from .const import (
     STATS_PERCENTILE,
 )
 from .fallback import forecast_implausible, seasonal_fallback_kwh
+from .learn_daily_target import learned_daily_kwh
 from .model import (
     Battery,
     EVCharger,
@@ -184,6 +191,11 @@ class Adapter:
         # Baseline load — learned from the home-load sensor's idle-floor history.
         baseline_load_w, baseline_source, baseline_qualifying_buckets = self._compute_baseline(now)
 
+        # Daily kWh target — learned from house-energy history when configured.
+        daily_kwh_target, daily_target_source, daily_target_qualifying_days = (
+            self._compute_daily_target(now)
+        )
+
         return SiteState(
             now=now,
             battery=battery,
@@ -193,6 +205,9 @@ class Adapter:
             baseline_load_w=baseline_load_w,
             baseline_source=baseline_source,
             baseline_qualifying_buckets=baseline_qualifying_buckets,
+            daily_kwh_target=daily_kwh_target,
+            daily_kwh_target_source=daily_target_source,
+            daily_kwh_target_qualifying_days=daily_target_qualifying_days,
         )
 
     def _reserve_percent(self) -> float:
@@ -442,3 +457,70 @@ class Adapter:
         if value is None:
             return None
         return value, len(samples)
+
+    def _compute_daily_target(self, now: datetime) -> tuple[float, str, int | None]:
+        """Return (daily_kwh_target, source, qualifying_days) for the overnight planner.
+
+        Learns from a cumulative house-energy sensor's daily totals when configured;
+        otherwise (or on insufficient data / recorder failure) returns the static
+        configured value. `source` is "stats" or "default"; `qualifying_days` is the
+        number of daily totals that fed the percentile (None when falling back).
+        """
+        static_default = float(self.config.get(CONF_DAILY_KWH_TARGET, DEFAULT_DAILY_KWH_TARGET))
+        energy_sensor = self.config.get(CONF_DAILY_ENERGY_SENSOR)
+        if energy_sensor:
+            try:
+                result = self._stats_based_daily_target(now, energy_sensor)
+                if result is not None:
+                    value, n_days = result
+                    return value, "stats", n_days
+            except Exception:  # recorder failures must not crash the integration
+                _LOGGER.exception("Stats-based daily target failed; using static default")
+        return static_default, "default", None
+
+    def _stats_based_daily_target(
+        self, now: datetime, energy_entity: str
+    ) -> tuple[float, int] | None:
+        start_period = now - timedelta(days=DAILY_TARGET_LOOKBACK_DAYS + 1)
+        # statistics_during_period is synchronous in HA 2026.5+ (returns a defaultdict).
+        # The energy sensor is total_increasing; `sum` accumulates lifetime kWh and the
+        # recorder accounts for daily resets internally. Daily kWh = diff between
+        # consecutive daily-period rows (same pattern as `_stats_based_fallback`).
+        stats = statistics_during_period(
+            self.hass,
+            start_period,
+            now,
+            {energy_entity},
+            "day",
+            None,
+            {"sum"},
+        )
+        rows = stats.get(energy_entity, [])
+        # Exclude today's partial day so a low half-day reading doesn't drag the median.
+        local_today = dt_util.as_local(now).date()
+        daily_totals: list[float] = []
+        for i in range(1, len(rows)):
+            prev_sum = rows[i - 1].get("sum")
+            curr_sum = rows[i].get("sum")
+            if prev_sum is None or curr_sum is None:
+                continue
+            ts = rows[i].get("start")
+            if ts is None:
+                continue
+            ts_local = dt_util.as_local(
+                ts if isinstance(ts, datetime) else dt_util.utc_from_timestamp(ts)
+            )
+            if ts_local.date() >= local_today:
+                continue
+            daily_kwh = float(curr_sum) - float(prev_sum)
+            if daily_kwh < 0:
+                continue  # skip meter resets / counter rollover
+            daily_totals.append(daily_kwh)
+        value = learned_daily_kwh(
+            daily_totals,
+            percentile=DAILY_TARGET_PERCENTILE,
+            min_samples=DAILY_TARGET_MIN_SAMPLES,
+        )
+        if value is None:
+            return None
+        return value, len(daily_totals)

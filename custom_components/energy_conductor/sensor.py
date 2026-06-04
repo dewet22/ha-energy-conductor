@@ -21,6 +21,7 @@ from .const import (
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_DAILY_ENERGY_SENSOR,
     CONF_DEVICE_NAME,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
@@ -29,6 +30,8 @@ from .const import (
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_RESERVE_SOC_SENSOR,
+    DAILY_TARGET_LOOKBACK_DAYS,
+    DAILY_TARGET_PERCENTILE,
     DEFAULT_BATTERY_MAX_POWER_W,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
@@ -57,6 +60,7 @@ async def async_setup_entry(
             CheapWindowEndSensor(coordinator, entry),
             EVChargerPowerSensor(coordinator, entry),
             BaselineLoadSensor(coordinator, entry),
+            DailyKwhTargetSensor(coordinator, entry),
             LastSiteStateAtSensor(coordinator, entry),
         ]
     )
@@ -431,6 +435,38 @@ class BaselineLoadSensor(_BaseSensor):
         }
         if state is not None and state.baseline_qualifying_buckets is not None:
             attrs["qualifying_buckets"] = state.baseline_qualifying_buckets
+        return attrs
+
+
+class DailyKwhTargetSensor(_BaseSensor):
+    _attr_translation_key = "daily_kwh_target"
+    _attr_name = "Calculated daily target"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-daily-kwh-target"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        return None if state is None else state.daily_kwh_target
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        config = self.coordinator.config
+        attrs: dict[str, Any] = {
+            "source": state.daily_kwh_target_source if state is not None else None,
+            "daily_energy_sensor": config.get(CONF_DAILY_ENERGY_SENSOR),
+            "lookback_days": DAILY_TARGET_LOOKBACK_DAYS,
+            "percentile": f"p{int(DAILY_TARGET_PERCENTILE * 100)}",
+        }
+        if state is not None and state.daily_kwh_target_qualifying_days is not None:
+            attrs["qualifying_days"] = state.daily_kwh_target_qualifying_days
         return attrs
 
 

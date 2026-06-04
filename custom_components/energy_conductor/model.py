@@ -92,6 +92,9 @@ class SiteState:
     baseline_load_w: float
     baseline_source: str | None = None  # "stats" | "default"
     baseline_qualifying_buckets: int | None = None  # idle-floor buckets that fed the percentile
+    daily_kwh_target: float = 0.0  # learned or static; consumed by overnight planner
+    daily_kwh_target_source: str | None = None  # "stats" | "default"
+    daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
 
     def __post_init__(self) -> None:
         _require_aware("SiteState.now", self.now)

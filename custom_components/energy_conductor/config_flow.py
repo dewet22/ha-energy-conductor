@@ -37,6 +37,7 @@ from .const import (
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_DAILY_ENERGY_SENSOR,
     CONF_DAILY_KWH_TARGET,
     CONF_DEVICE_NAME,
     CONF_DISPATCHING_SENSOR,
@@ -346,6 +347,10 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                         EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
                     ),
                     vol.Optional(
+                        CONF_DAILY_ENERGY_SENSOR,
+                        description={"suggested_value": defaults.get(CONF_DAILY_ENERGY_SENSOR)},
+                    ): _sensor_selector(device_class="energy"),
+                    vol.Optional(
                         CONF_FORECAST_SOLCAST_SENSOR,
                         description={"suggested_value": defaults.get(CONF_FORECAST_SOLCAST_SENSOR)},
                     ): _sensor_selector(),
@@ -393,6 +398,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
             CONF_DEVICE_NAME: user_input.get(CONF_DEVICE_NAME) or None,
             CONF_HOME_LOAD_SENSOR: user_input.get(CONF_HOME_LOAD_SENSOR) or None,
             CONF_MANAGED_LOAD_SENSORS: user_input.get(CONF_MANAGED_LOAD_SENSORS) or [],
+            CONF_DAILY_ENERGY_SENSOR: user_input.get(CONF_DAILY_ENERGY_SENSOR) or None,
             CONF_FORECAST_SOLCAST_SENSOR: user_input.get(CONF_FORECAST_SOLCAST_SENSOR) or None,
             CONF_RESERVE_SOC_SENSOR: user_input.get(CONF_RESERVE_SOC_SENSOR) or None,
         }
