@@ -446,7 +446,7 @@ class BaselineLoadSensor(_BaseSensor):
     @property
     def native_value(self) -> float | None:
         state = self.coordinator.last_site_state
-        return None if state is None else state.baseline_load_w
+        return None if state is None else round(state.baseline_load_w, 1)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -479,7 +479,7 @@ class DailyKwhTargetSensor(_BaseSensor):
     @property
     def native_value(self) -> float | None:
         state = self.coordinator.last_site_state
-        return None if state is None else state.daily_kwh_target
+        return None if state is None else round(state.daily_kwh_target, 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
