@@ -82,11 +82,22 @@ def plan_overnight(
     fallback_note = (
         f", fallback {state.solar_forecast.fallback_source or 'unknown'}" if is_fallback else ""
     )
+
+    dawn_note = ""
+    if state.tariff.off_peak_window_end is not None:
+        hours_until_dawn = max(
+            0.0, (state.tariff.off_peak_window_end - state.now).total_seconds() / 3600
+        )
+        discharge_pct = state.baseline_load_w * hours_until_dawn / state.battery.capacity_kwh / 10
+        expected_soc = round(state.battery.soc_percent - discharge_pct)
+        if expected_soc > target_percent:
+            dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"
+
     reason = (
         f"Morning gap {morning_gap_hours:.1f}h x {state.baseline_load_w:.0f}W "
         f"= {morning_gap_kwh:.1f} kWh; forecast {forecast_kwh:.1f} kWh; "
         f"reserve {reserve_percent:.0f}% + usable {usable_percent:.0f}% "
-        f"-> target {target_percent}%{fallback_note}{bms_floor_note}"
+        f"-> target {target_percent}%{fallback_note}{bms_floor_note}{dawn_note}"
     )
 
     plan_date = state.now.date().isoformat()

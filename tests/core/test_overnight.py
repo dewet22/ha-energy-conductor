@@ -177,6 +177,41 @@ class TestOvernightAlgorithm:
         assert "reserve" in decision.reason.lower()
 
 
+class TestDawnProjectionNote:
+    def test_note_present_when_battery_on_track(self):
+        # 86% SoC, 17.7 kWh capacity, 709W baseline, 8.5h until dawn
+        # discharge ≈ 34% → expected ~52% > target → note appears
+        state = _state(
+            battery=a_battery(soc_percent=86.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=709.0,
+            solar_forecast=a_forecast_with_slots(
+                first_slot_at=utc(2026, 6, 2, 9, 30),
+                slot_count=20,
+                kwh_per_slot=0.5,
+            ),
+        )
+        decision = _plan(state, daily_kwh_target=10.0, min_target=10.0)
+        assert "no charge needed" in decision.reason
+        assert "at dawn" in decision.reason
+
+    def test_note_absent_when_battery_will_fall_below_target(self):
+        # 25% SoC, 10 kWh capacity, 400W baseline, 8.5h until dawn
+        # discharge ≈ 34% → expected ≈ -9% < target → no note
+        state = _state(
+            battery=a_battery(soc_percent=25.0, capacity_kwh=10.0, reserve_percent=10.0),
+        )
+        decision = _plan(state)
+        assert "no charge needed" not in decision.reason
+
+    def test_note_absent_when_off_peak_end_unknown(self):
+        state = _state(
+            battery=a_battery(soc_percent=90.0, capacity_kwh=10.0, reserve_percent=10.0),
+            tariff=a_tariff(off_peak_window_end=None),
+        )
+        decision = _plan(state)
+        assert "no charge needed" not in decision.reason
+
+
 class TestNamedConstants:
     def test_meaningful_slot_kwh_is_reasonable(self):
         # 500W average over a 30min slot = 0.25 kWh
