@@ -46,6 +46,7 @@ from .const import (
     CONF_SUMMER_MAX_KWH,
     CONF_WINTER_MIN_KWH,
     DAILY_TARGET_LOOKBACK_DAYS,
+    DAILY_TARGET_MAX_KWH,
     DAILY_TARGET_MIN_SAMPLES,
     DAILY_TARGET_PERCENTILE,
     DEFAULT_BASELINE_LOAD_W,
@@ -534,8 +535,8 @@ class Adapter:
             if ts_local.date() >= local_today:
                 continue
             daily_kwh = float(curr_sum) - float(prev_sum)
-            if daily_kwh < 0:
-                continue  # skip meter resets / counter rollover
+            if not (0 < daily_kwh <= DAILY_TARGET_MAX_KWH):
+                continue  # skip resets, rollover, and strategy-change outliers
             daily_totals.append(daily_kwh)
         value = learned_daily_kwh(
             daily_totals,

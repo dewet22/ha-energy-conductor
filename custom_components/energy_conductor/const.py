@@ -109,6 +109,7 @@ BASELINE_IDLE_THRESHOLD_W = 50.0  # managed load <= this counts as "off" for a b
 DAILY_TARGET_LOOKBACK_DAYS = 14
 DAILY_TARGET_MIN_SAMPLES = 7
 DAILY_TARGET_PERCENTILE = 0.50
+DAILY_TARGET_MAX_KWH = 50.0  # reject outliers from sensor strategy changes or meter glitches
 
 # Pre-off-peak discharge hold: stop discharging this many minutes before the
 # overnight window opens so the battery enters the cheap period with more charge.
