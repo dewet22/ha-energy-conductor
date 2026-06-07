@@ -46,6 +46,12 @@ CONF_MANAGED_LOAD_SENSORS = "managed_load_sensors"  # list[str]; loads baked in,
 # static config value.
 CONF_DAILY_ENERGY_SENSOR = "daily_energy_sensor"
 
+# Internal: per-reference {platform, unique_id} anchors captured for every entity the
+# config points at, so a referenced entity that is re-created with a new entity_id (e.g. the
+# HA 2026.6 area-prefix convention, core #170560) is resolved back via its stable unique_id.
+# Not user-facing; populated by the wizard on create and by the v2→v3 migration. See entity_ref.py.
+CONF_ENTITY_REFS = "entity_refs"
+
 # Config keys — behaviour
 CONF_WRITE_MODE = "write_mode"
 CONF_NOTIFY_TARGET = "notify_target"

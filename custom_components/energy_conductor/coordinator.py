@@ -38,6 +38,7 @@ from .const import (
 )
 from .decisions import Decision
 from .discharge_guard import discharge_limit
+from .entity_ref import resolve_config
 from .jitter import hourly_jitter_offset
 from .model import SiteState
 from .notifier import Notifier
@@ -56,7 +57,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             update_interval=timedelta(seconds=COORDINATOR_TICK_SECONDS),
         )
         self.entry = entry
-        self.config: dict[str, Any] = {**entry.data, **entry.options}
+        # Resolve every entity reference to its current entity_id via the stored unique_id
+        # anchors, so re-created/area-prefixed entities are found automatically. No-ops for
+        # entries without anchors (pre-migration / tests). Touches only entity-id strings —
+        # write_mode, Writer and Notifier are untouched, so dry-run behaviour is unchanged.
+        self.config: dict[str, Any] = resolve_config(hass, {**entry.data, **entry.options})
         self.adapter = Adapter(hass, self.config)
         self.notifier = Notifier(
             hass,

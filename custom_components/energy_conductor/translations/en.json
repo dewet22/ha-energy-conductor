@@ -36,11 +36,19 @@
           "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor for overnight planning)",
           "forecast_daily_sensor": "Daily-total kWh sensor",
           "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
-          "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
-          "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
           "winter_min_kwh": "Winter minimum fallback (kWh)",
           "summer_max_kwh": "Summer maximum fallback (kWh)",
           "southern_hemisphere": "Southern hemisphere"
+        }
+      },
+      "loads": {
+        "title": "Loads & learning",
+        "description": "Optional inputs for baseline-load and daily-target learning.",
+        "data": {
+          "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
+          "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
+          "daily_energy_sensor": "House energy sensor (optional; learns the daily kWh target from recorder history)",
+          "daily_kwh_target": "Daily kWh target (fallback constant when not learned)"
         }
       },
       "ev": {
@@ -53,13 +61,13 @@
       },
       "behaviour": {
         "title": "Behaviour",
-        "description": "Write mode and notification target.",
+        "description": "Write mode, notification target and planning schedule.",
         "data": {
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "daily_kwh_target": "Daily kWh target (v1 constant)",
-          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve"
+          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
+          "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }
     },
@@ -70,24 +78,78 @@
   },
   "options": {
     "step": {
+      "init": {
+        "title": "Edit configuration",
+        "description": "Choose a group of settings to edit.",
+        "menu_options": {
+          "battery": "Battery",
+          "tariff": "Tariff",
+          "solar": "Solar forecast",
+          "loads": "Loads & learning",
+          "ev": "EV charger",
+          "behaviour": "Behaviour"
+        }
+      },
+      "battery": {
+        "title": "Battery",
+        "data": {
+          "battery_soc_sensor": "Battery SoC sensor",
+          "battery_charge_control": "Charge power control (number entity)",
+          "battery_discharge_limit": "Discharge power limit (number entity)",
+          "battery_capacity_kwh": "Battery capacity (kWh)",
+          "battery_reserve_percent": "Reserve SoC floor (%)",
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)"
+        }
+      },
+      "tariff": {
+        "title": "Tariff",
+        "data": {
+          "off_peak_sensor": "Off-peak rate sensor (whole house; active during overnight off-peak window and intra-day dispatch slots)",
+          "dispatching_sensor": "Smart dispatch active (optional; e.g. Octopus Intelligent)",
+          "overnight_window_end_time": "Overnight window end (local time)"
+        }
+      },
+      "solar": {
+        "title": "Solar forecast — source",
+        "data": {
+          "forecast_source": "Source"
+        }
+      },
+      "solar_details": {
+        "title": "Solar forecast — details",
+        "data": {
+          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor for overnight planning)",
+          "forecast_daily_sensor": "Daily-total kWh sensor",
+          "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
+          "winter_min_kwh": "Winter min daily generation (kWh) — seasonal fallback lower bound",
+          "summer_max_kwh": "Summer max daily generation (kWh) — also the Solcast plausibility ceiling",
+          "southern_hemisphere": "Southern hemisphere"
+        }
+      },
+      "loads": {
+        "title": "Loads & learning",
+        "data": {
+          "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
+          "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
+          "daily_energy_sensor": "House energy sensor (optional; learns the daily kWh target from recorder history)",
+          "daily_kwh_target": "Daily kWh target (fallback constant when not learned)"
+        }
+      },
+      "ev": {
+        "title": "EV charger",
+        "data": {
+          "ev_power_sensor": "EV charger power sensor",
+          "ev_min_activation_power_w": "Minimum activation power (W)"
+        }
+      },
       "behaviour": {
         "title": "Behaviour",
         "data": {
           "write_mode": "Write mode",
           "notify_target": "Notification target",
-          "daily_kwh_target": "Daily kWh target",
+          "overnight_plan_time": "Overnight plan time (local)",
           "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
-          "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')",
-          "home_load_sensor": "Home load power sensor (optional; learns the calculated baseline)",
-          "managed_load_sensors": "Managed loads to exclude from baseline (EV, hot-water diverter, …)",
-          "daily_energy_sensor": "House energy sensor (optional; learns the daily kWh target from recorder history)",
-          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor)",
-          "battery_capacity_kwh": "Battery capacity (kWh) — correct post-setup",
-          "battery_charge_control": "Charge target control (number entity, e.g. charge_target_soc)",
-          "battery_discharge_limit": "Discharge power limit (number entity)",
-          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)",
-          "summer_max_kwh": "Summer max daily generation (kWh) — also the Solcast plausibility ceiling",
-          "winter_min_kwh": "Winter min daily generation (kWh) — seasonal fallback lower bound"
+          "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }
     }
