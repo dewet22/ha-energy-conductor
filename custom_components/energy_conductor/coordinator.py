@@ -36,7 +36,7 @@ from .const import (
     STATUS_OK,
     WRITE_MODE_DRY_RUN,
 )
-from .decisions import Decision
+from .decisions import Decision, DecisionKind
 from .discharge_guard import discharge_limit
 from .entity_ref import resolve_config
 from .jitter import hourly_jitter_offset
@@ -46,6 +46,37 @@ from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _hot_water_decision(state: SiteState) -> Decision | None:
+    """Build a notify-only hot-water boost prompt from the SiteState, or None.
+
+    Returns None when the diverter isn't configured or no boost is recommended.
+    Dedupe is keyed per day + suggested hours so it prompts once a day and re-prompts
+    only if the recommendation changes.
+    """
+    hw = state.hot_water
+    if hw is None or not hw.boost_recommended:
+        return None
+    if hw.last_full_at is None:
+        last_full = "no full reading in lookback"
+    else:
+        hours = (state.now - hw.last_full_at).total_seconds() / 3600.0
+        last_full = f"last full {hours:.0f}h ago"
+    forecast_kwh = state.solar_forecast.total_kwh_forecast
+    reason = (
+        f"Hot water reserve ~{hw.reserve_percent:.0f}% ({last_full}, depletion "
+        f"{hw.depletion_kwh_per_day:.1f} kWh/d {hw.depletion_source}); forecast "
+        f"{forecast_kwh:.1f} kWh won't refill — boost ~{hw.suggested_boost_hours:.0f}h on off-peak"
+    )
+    plan_date = state.now.date().isoformat()
+    return Decision(
+        kind=DecisionKind.RECOMMEND_HOT_WATER_BOOST,
+        target_entity="hot_water",
+        value=hw.suggested_boost_hours,
+        reason=reason,
+        dedupe_key=f"hot-water-{plan_date}-{hw.suggested_boost_hours}",
+    )
 
 
 class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
@@ -204,6 +235,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             return
         await self._emit(decision)
         self.last_overnight_plan = decision
+
+        # Hot-water boost prompt — notify-only, evaluated alongside the overnight plan.
+        hot_water_decision = _hot_water_decision(state)
+        if hot_water_decision is not None:
+            await self._emit(hot_water_decision)
 
     async def _emit(self, decision: Decision) -> None:
         key = (decision.kind.value, decision.target_entity)

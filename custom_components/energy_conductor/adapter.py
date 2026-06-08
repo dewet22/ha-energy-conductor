@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from datetime import time as dt_time
 from typing import Any
 
+from homeassistant.components.recorder.history import state_changes_during_period
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -38,6 +39,13 @@ from .const import (
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
+    CONF_HOTWATER_CAPACITY_KWH,
+    CONF_HOTWATER_DEPLETION_KWH,
+    CONF_HOTWATER_GREEN_SENSOR,
+    CONF_HOTWATER_HEATER_KW,
+    CONF_HOTWATER_MAX_TEMP_STATE,
+    CONF_HOTWATER_STATUS_SENSOR,
+    CONF_HOTWATER_THRESHOLD_PERCENT,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OFF_PEAK_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
@@ -52,12 +60,24 @@ from .const import (
     DEFAULT_BASELINE_LOAD_W,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
+    DEFAULT_HOTWATER_CAPACITY_KWH,
+    DEFAULT_HOTWATER_DEPLETION_KWH,
+    DEFAULT_HOTWATER_HEATER_KW,
+    DEFAULT_HOTWATER_MAX_TEMP_STATE,
+    DEFAULT_HOTWATER_THRESHOLD_PERCENT,
     DEFAULT_RESERVE_PERCENT,
     DEFAULT_SUMMER_MAX_KWH,
     FORECAST_PLAUSIBILITY_MARGIN,
     FORECAST_SOURCE_DAILY,
     FORECAST_SOURCE_NONE,
     FORECAST_SOURCE_SOLCAST,
+    HOTWATER_DEPLETION_MAX_KWH,
+    HOTWATER_DEPLETION_MIN_SAMPLES,
+    HOTWATER_DEPLETION_PERCENTILE,
+    HOTWATER_DIVERSION_FRACTION,
+    HOTWATER_LOOKBACK_DAYS,
+    HOTWATER_MAX_BOOST_HOURS,
+    HOTWATER_MIN_BOOST_HOURS,
     SOLCAST_SLOT_HOURS,
     STALE_FORECAST_SECONDS,
     STATS_CALENDAR_WINDOW_DAYS,
@@ -66,11 +86,13 @@ from .const import (
     STATS_PERCENTILE,
 )
 from .fallback import forecast_implausible, seasonal_fallback_kwh
+from .hotwater import boost_recommendation, estimate_reserve, learn_depletion
 from .learn_daily_target import learned_daily_kwh
 from .model import (
     Battery,
     EVCharger,
     ForecastSlot,
+    HotWaterState,
     SiteState,
     SolarForecast,
     TariffState,
@@ -213,6 +235,9 @@ class Adapter:
             self._compute_daily_target(now)
         )
 
+        # Hot-water reserve — optional; None unless the Eddi green + status sensors are set.
+        hot_water = self._hot_water_state(now, solar_forecast)
+
         return SiteState(
             now=now,
             battery=battery,
@@ -225,6 +250,7 @@ class Adapter:
             daily_kwh_target=daily_kwh_target,
             daily_kwh_target_source=daily_target_source,
             daily_kwh_target_qualifying_days=daily_target_qualifying_days,
+            hot_water=hot_water,
         )
 
     def _reserve_percent(self) -> float:
@@ -546,3 +572,149 @@ class Adapter:
         if value is None:
             return None
         return value, len(daily_totals)
+
+    def _hot_water_state(
+        self, now: datetime, solar_forecast: SolarForecast
+    ) -> HotWaterState | None:
+        """Estimate the hot-water reserve and whether a boost should be prompted.
+
+        Open-loop energy balance anchored by the diverter's "Max temp reached" status
+        (see hotwater.py). None unless both core sensors (green diversion + status) are set;
+        any recorder failure degrades to None so the rest of the tick is unaffected.
+        """
+        green_sensor = self.config.get(CONF_HOTWATER_GREEN_SENSOR)
+        status_sensor = self.config.get(CONF_HOTWATER_STATUS_SENSOR)
+        if not green_sensor or not status_sensor:
+            return None
+        try:
+            capacity = float(
+                self.config.get(CONF_HOTWATER_CAPACITY_KWH, DEFAULT_HOTWATER_CAPACITY_KWH)
+            )
+            threshold = float(
+                self.config.get(CONF_HOTWATER_THRESHOLD_PERCENT, DEFAULT_HOTWATER_THRESHOLD_PERCENT)
+            )
+            heater_kw = float(self.config.get(CONF_HOTWATER_HEATER_KW, DEFAULT_HOTWATER_HEATER_KW))
+            depletion_fallback = float(
+                self.config.get(CONF_HOTWATER_DEPLETION_KWH, DEFAULT_HOTWATER_DEPLETION_KWH)
+            )
+            max_temp_state = self.config.get(
+                CONF_HOTWATER_MAX_TEMP_STATE, DEFAULT_HOTWATER_MAX_TEMP_STATE
+            )
+
+            last_full_at, full_dates = self._hot_water_full_events(
+                now, status_sensor, max_temp_state
+            )
+            daily_green = self._hot_water_daily_green(now, green_sensor)
+            depletion, depletion_source = learn_depletion(
+                self._hot_water_steady_samples(daily_green, full_dates),
+                percentile=HOTWATER_DEPLETION_PERCENTILE,
+                min_samples=HOTWATER_DEPLETION_MIN_SAMPLES,
+                fallback=depletion_fallback,
+            )
+
+            if last_full_at is None:
+                # No confirmed-full event in the lookback window → assume depleted.
+                reserve = 0.0
+            else:
+                green_since = self._hot_water_green_since(last_full_at, now, green_sensor)
+                reserve = estimate_reserve(
+                    elapsed_hours_since_full=(now - last_full_at).total_seconds() / 3600.0,
+                    energy_in_since_full_kwh=green_since,
+                    depletion_kwh_per_day=depletion,
+                    capacity_kwh=capacity,
+                )
+
+            expected_refill = min(
+                capacity, max(0.0, solar_forecast.total_kwh_forecast * HOTWATER_DIVERSION_FRACTION)
+            )
+            boost_recommended, hours = boost_recommendation(
+                reserve_kwh=reserve,
+                capacity_kwh=capacity,
+                threshold_percent=threshold,
+                expected_refill_kwh=expected_refill,
+                depletion_kwh_per_day=depletion,
+                heater_kw=heater_kw,
+                min_hours=HOTWATER_MIN_BOOST_HOURS,
+                max_hours=HOTWATER_MAX_BOOST_HOURS,
+            )
+            return HotWaterState(
+                reserve_kwh=round(reserve, 2),
+                capacity_kwh=capacity,
+                reserve_percent=round(reserve / capacity * 100, 1) if capacity > 0 else 0.0,
+                last_full_at=last_full_at,
+                depletion_kwh_per_day=round(depletion, 2),
+                depletion_source=depletion_source,
+                boost_recommended=boost_recommended,
+                suggested_boost_hours=hours,
+            )
+        except Exception:  # recorder/parse failures must not crash the tick
+            _LOGGER.exception("Hot-water reserve estimate failed; skipping")
+            return None
+
+    def _hot_water_full_events(
+        self, now: datetime, status_entity: str, max_temp_state: str
+    ) -> tuple[datetime | None, set]:
+        """Return (last 'Max temp reached' timestamp, set of local dates it occurred on)."""
+        start = now - timedelta(days=HOTWATER_LOOKBACK_DAYS)
+        states_by_entity = state_changes_during_period(
+            self.hass,
+            start,
+            now,
+            status_entity,
+            no_attributes=True,  # status is very chatty; we only need state + last_changed
+            include_start_time_state=False,
+        )
+        full_times = [
+            s.last_changed
+            for s in states_by_entity.get(status_entity, [])
+            if s.state == max_temp_state
+        ]
+        if not full_times:
+            return None, set()
+        full_dates = {dt_util.as_local(ts).date() for ts in full_times}
+        return max(full_times), full_dates
+
+    def _hot_water_daily_green(self, now: datetime, green_entity: str) -> dict:
+        """Map each complete local date in the lookback to that day's green diversion (kWh)."""
+        start = now - timedelta(days=HOTWATER_LOOKBACK_DAYS)
+        stats = statistics_during_period(
+            self.hass, start, now, {green_entity}, "day", None, {"change"}
+        )
+        local_today = dt_util.as_local(now).date()
+        daily: dict = {}
+        for row in stats.get(green_entity, []):
+            change = row.get("change")
+            ts = row.get("start")
+            if change is None or ts is None:
+                continue
+            ts = ts if isinstance(ts, datetime) else dt_util.utc_from_timestamp(ts)
+            day = dt_util.as_local(ts).date()
+            if day >= local_today:
+                continue  # skip today's partial day
+            daily[day] = float(change)
+        return daily
+
+    def _hot_water_steady_samples(self, daily_green: dict, full_dates: set) -> list[float]:
+        """Green totals for days bracketed by 'Max temp reached' on both that day and the prior.
+
+        On such full→full days net tank energy ≈ 0, so the day's green diversion ≈ depletion.
+        """
+        samples: list[float] = []
+        for day, kwh in daily_green.items():
+            prev = day - timedelta(days=1)
+            if day in full_dates and prev in full_dates and 0 < kwh <= HOTWATER_DEPLETION_MAX_KWH:
+                samples.append(kwh)
+        return samples
+
+    def _hot_water_green_since(
+        self, last_full_at: datetime, now: datetime, green_entity: str
+    ) -> float:
+        """Green diversion energy (kWh) accumulated since the last full event."""
+        stats = statistics_during_period(
+            self.hass, last_full_at, now, {green_entity}, "hour", None, {"change"}
+        )
+        return sum(
+            float(row["change"])
+            for row in stats.get(green_entity, [])
+            if row.get("change") is not None
+        )

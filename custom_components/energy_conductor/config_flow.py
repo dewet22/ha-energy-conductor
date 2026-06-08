@@ -45,6 +45,14 @@ from .const import (
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_HOME_LOAD_SENSOR,
+    CONF_HOTWATER_CAPACITY_KWH,
+    CONF_HOTWATER_DEPLETION_KWH,
+    CONF_HOTWATER_ENERGY_SENSOR,
+    CONF_HOTWATER_GREEN_SENSOR,
+    CONF_HOTWATER_HEATER_KW,
+    CONF_HOTWATER_MAX_TEMP_STATE,
+    CONF_HOTWATER_STATUS_SENSOR,
+    CONF_HOTWATER_THRESHOLD_PERCENT,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_MIN_TARGET_SOC_PERCENT,
     CONF_NOTIFY_TARGET,
@@ -59,6 +67,11 @@ from .const import (
     CONF_WRITE_MODE,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
+    DEFAULT_HOTWATER_CAPACITY_KWH,
+    DEFAULT_HOTWATER_DEPLETION_KWH,
+    DEFAULT_HOTWATER_HEATER_KW,
+    DEFAULT_HOTWATER_MAX_TEMP_STATE,
+    DEFAULT_HOTWATER_THRESHOLD_PERCENT,
     DEFAULT_MIN_TARGET_SOC_PERCENT,
     DEFAULT_OVERNIGHT_PLAN_TIME,
     DEFAULT_OVERNIGHT_WINDOW_END_TIME,
@@ -106,6 +119,16 @@ LOADS_KEYS = (
     CONF_DAILY_KWH_TARGET,
 )
 EV_KEYS = (CONF_EV_POWER_SENSOR, CONF_EV_MIN_ACTIVATION_W)
+HOTWATER_KEYS = (
+    CONF_HOTWATER_GREEN_SENSOR,
+    CONF_HOTWATER_STATUS_SENSOR,
+    CONF_HOTWATER_ENERGY_SENSOR,
+    CONF_HOTWATER_CAPACITY_KWH,
+    CONF_HOTWATER_HEATER_KW,
+    CONF_HOTWATER_THRESHOLD_PERCENT,
+    CONF_HOTWATER_DEPLETION_KWH,
+    CONF_HOTWATER_MAX_TEMP_STATE,
+)
 BEHAVIOUR_KEYS = (
     CONF_WRITE_MODE,
     CONF_NOTIFY_TARGET,
@@ -163,6 +186,18 @@ def _kwh_selector(*, min_value: float = 0, max_value: float = 100) -> NumberSele
             step=0.1,
             mode=NumberSelectorMode.BOX,
             unit_of_measurement="kWh",
+        )
+    )
+
+
+def _kw_selector(*, min_value: float = 0.5, max_value: float = 10) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=min_value,
+            max=max_value,
+            step=0.1,
+            mode=NumberSelectorMode.BOX,
+            unit_of_measurement="kW",
         )
     )
 
@@ -362,6 +397,53 @@ def ev_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
     )
 
 
+def hotwater_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
+    """Hot-water diverter (Eddi). All optional — feature inert unless green + status are set."""
+    return vol.Schema(
+        {
+            _marker(CONF_HOTWATER_GREEN_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="energy")
+            ),
+            _marker(CONF_HOTWATER_STATUS_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector()
+            ),
+            _marker(CONF_HOTWATER_ENERGY_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="energy")
+            ),
+            _marker(
+                CONF_HOTWATER_CAPACITY_KWH,
+                options=options,
+                defaults=defaults,
+                default=DEFAULT_HOTWATER_CAPACITY_KWH,
+            ): _kwh_selector(min_value=1, max_value=50),
+            _marker(
+                CONF_HOTWATER_HEATER_KW,
+                options=options,
+                defaults=defaults,
+                default=DEFAULT_HOTWATER_HEATER_KW,
+            ): _kw_selector(),
+            _marker(
+                CONF_HOTWATER_THRESHOLD_PERCENT,
+                options=options,
+                defaults=defaults,
+                default=DEFAULT_HOTWATER_THRESHOLD_PERCENT,
+            ): _percent_selector(),
+            _marker(
+                CONF_HOTWATER_DEPLETION_KWH,
+                options=options,
+                defaults=defaults,
+                default=DEFAULT_HOTWATER_DEPLETION_KWH,
+            ): _kwh_selector(min_value=0, max_value=30),
+            _marker(
+                CONF_HOTWATER_MAX_TEMP_STATE,
+                options=options,
+                defaults=defaults,
+                default=DEFAULT_HOTWATER_MAX_TEMP_STATE,
+            ): TextSelector(TextSelectorConfig()),
+        }
+    )
+
+
 def behaviour_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
     return vol.Schema(
         {
@@ -477,6 +559,20 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
         # Only store EV fields when a power sensor is actually configured.
         if user_input.get(CONF_EV_POWER_SENSOR):
             self._data.update({k: v for k, v in user_input.items() if v is not None})
+        return await self.async_step_hotwater()
+
+    async def async_step_hotwater(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="hotwater", data_schema=hotwater_schema({}, options=False)
+            )
+        # Only store hot-water fields when both core sensors (green + status) are set.
+        if user_input.get(CONF_HOTWATER_GREEN_SENSOR) and user_input.get(
+            CONF_HOTWATER_STATUS_SENSOR
+        ):
+            self._data.update({k: v for k, v in user_input.items() if v is not None})
         return await self.async_step_behaviour()
 
     async def async_step_behaviour(
@@ -532,7 +628,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["battery", "tariff", "solar", "loads", "ev", "behaviour"],
+            menu_options=["battery", "tariff", "solar", "loads", "ev", "hotwater", "behaviour"],
         )
 
     async def async_step_battery(
@@ -585,6 +681,15 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 step_id="ev", data_schema=ev_schema(self._defaults(), options=True)
             )
         return self._save(user_input, EV_KEYS)
+
+    async def async_step_hotwater(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="hotwater", data_schema=hotwater_schema(self._defaults(), options=True)
+            )
+        return self._save(user_input, HOTWATER_KEYS)
 
     async def async_step_behaviour(
         self, user_input: dict[str, Any] | None = None

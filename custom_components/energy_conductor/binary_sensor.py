@@ -32,6 +32,7 @@ async def async_setup_entry(
         [
             TariffCheapNowBinarySensor(coordinator, entry),
             TariffDispatchingNowBinarySensor(coordinator, entry),
+            HotWaterBoostRecommendedBinarySensor(coordinator, entry),
         ]
     )
 
@@ -86,6 +87,34 @@ class TariffCheapNowBinarySensor(_BaseBinarySensor):
                 "off-peak rate window and intra-day dispatch slots (e.g. Octopus Intelligent). "
                 "Battery discharge is blocked to 0 W whenever this is active."
             ),
+        }
+
+
+class HotWaterBoostRecommendedBinarySensor(_BaseBinarySensor):
+    _attr_translation_key = "hot_water_boost_recommended"
+    _attr_name = "Hot water boost recommended"
+    _attr_icon = "mdi:water-boiler-alert"
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-hot-water-boost-recommended"
+
+    @property
+    def is_on(self) -> bool | None:
+        state = self.coordinator.last_site_state
+        if state is None or state.hot_water is None:
+            return None
+        return state.hot_water.boost_recommended
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        if state is None or state.hot_water is None:
+            return {}
+        hw = state.hot_water
+        return {
+            "suggested_boost_hours": hw.suggested_boost_hours,
+            "reserve_percent": hw.reserve_percent,
         }
 
 

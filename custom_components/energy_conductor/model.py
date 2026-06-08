@@ -71,6 +71,23 @@ class SolarForecast:
 
 
 @dataclass(frozen=True)
+class HotWaterState:
+    """Open-loop hot-water reserve estimate for a solar diverter (see hotwater.py)."""
+
+    reserve_kwh: float
+    capacity_kwh: float
+    reserve_percent: float
+    last_full_at: datetime | None  # most recent "Max temp reached"; None = none in lookback
+    depletion_kwh_per_day: float
+    depletion_source: str | None  # "stats" | "default"
+    boost_recommended: bool
+    suggested_boost_hours: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_aware("HotWaterState.last_full_at", self.last_full_at)
+
+
+@dataclass(frozen=True)
 class TariffState:
     off_peak_now: bool
     ev_dispatching_now: bool
@@ -95,6 +112,7 @@ class SiteState:
     daily_kwh_target: float = 0.0  # learned or static; consumed by overnight planner
     daily_kwh_target_source: str | None = None  # "stats" | "default"
     daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
+    hot_water: HotWaterState | None = None  # None when the diverter isn't configured
 
     def __post_init__(self) -> None:
         _require_aware("SiteState.now", self.now)

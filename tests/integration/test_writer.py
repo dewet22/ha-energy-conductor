@@ -1,0 +1,33 @@
+"""Writer tests — notify-only decisions must never trigger a service write."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from custom_components.energy_conductor.const import WRITE_MODE_LIVE
+from custom_components.energy_conductor.decisions import Decision, DecisionKind
+from custom_components.energy_conductor.writer import Writer
+
+
+@pytest.fixture
+def hass() -> MagicMock:
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+    return hass
+
+
+def _decision(kind: DecisionKind, value) -> Decision:
+    return Decision(kind=kind, target_entity="x", value=value, reason="r", dedupe_key="k")
+
+
+async def test_writer_skips_notify_only_kind_in_live_mode(hass: MagicMock) -> None:
+    writer = Writer(hass, WRITE_MODE_LIVE)
+    await writer.write(_decision(DecisionKind.RECOMMEND_HOT_WATER_BOOST, 2.0))
+    hass.services.async_call.assert_not_called()
+
+
+async def test_writer_writes_number_kind_in_live_mode(hass: MagicMock) -> None:
+    writer = Writer(hass, WRITE_MODE_LIVE)
+    await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, 0))
+    hass.services.async_call.assert_awaited_once()

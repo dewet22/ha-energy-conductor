@@ -102,3 +102,59 @@ async def test_emit_renotifies_on_changed_decision(coordinator) -> None:
     await coordinator._emit(_decision(dedupe_key="d-1", value=2600))
 
     assert coordinator.notifications_sent == 2
+
+
+# ---- hot-water boost decision builder ---------------------------------------------------
+
+from datetime import UTC, datetime  # noqa: E402
+
+from custom_components.energy_conductor.coordinator import _hot_water_decision  # noqa: E402
+from custom_components.energy_conductor.model import (  # noqa: E402
+    Battery,
+    HotWaterState,
+    SiteState,
+    SolarForecast,
+    TariffState,
+)
+
+
+def _site_state(hot_water: HotWaterState | None) -> SiteState:
+    return SiteState(
+        now=datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
+        battery=Battery(90.0, 11.0, 3000, 3000, 4.0),
+        ev_charger=None,
+        solar_forecast=SolarForecast(slots=(), fallback_kwh=6.0, fallback_source="t"),
+        tariff=TariffState(False, False, None, None),
+        baseline_load_w=700.0,
+        hot_water=hot_water,
+    )
+
+
+def _hw(*, boost: bool, hours: float | None) -> HotWaterState:
+    return HotWaterState(
+        reserve_kwh=1.5,
+        capacity_kwh=11.0,
+        reserve_percent=14.0,
+        last_full_at=datetime(2026, 6, 6, 3, 0, tzinfo=UTC),
+        depletion_kwh_per_day=3.0,
+        depletion_source="stats",
+        boost_recommended=boost,
+        suggested_boost_hours=hours,
+    )
+
+
+def test_hot_water_decision_none_when_unconfigured() -> None:
+    assert _hot_water_decision(_site_state(None)) is None
+
+
+def test_hot_water_decision_none_when_not_recommended() -> None:
+    assert _hot_water_decision(_site_state(_hw(boost=False, hours=None))) is None
+
+
+def test_hot_water_decision_built_when_recommended() -> None:
+    decision = _hot_water_decision(_site_state(_hw(boost=True, hours=2.0)))
+    assert decision is not None
+    assert decision.kind == DecisionKind.RECOMMEND_HOT_WATER_BOOST
+    assert decision.value == 2.0
+    assert "2026-06-08" in decision.dedupe_key
+    assert "reserve" in decision.reason.lower()

@@ -90,3 +90,16 @@ def test_render_message_charge_target_formats_percent() -> None:
     msg = render_message(decision, WRITE_MODE_LIVE)
     assert "Overnight charge target → 80%" in msg
     assert "overnight plan" in msg
+
+
+def test_render_message_hot_water_boost_formats_hours() -> None:
+    decision = Decision(
+        kind=DecisionKind.RECOMMEND_HOT_WATER_BOOST,
+        target_entity="hot_water",
+        value=2.0,
+        reason="reserve low",
+        dedupe_key="hw-1",
+    )
+    msg = render_message(decision, WRITE_MODE_LIVE)
+    assert "Hot water boost recommended → ~2.0h" in msg
+    assert "reserve low" in msg

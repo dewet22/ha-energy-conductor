@@ -23,6 +23,8 @@ class Writer:
 
     async def write(self, decision: Decision) -> None:
         """Apply a decision via HA service call. No-op in dry-run mode."""
+        if decision.kind == DecisionKind.RECOMMEND_HOT_WATER_BOOST:
+            return  # notify-only decision: surfaced via the Notifier, never written
         if self.write_mode != WRITE_MODE_LIVE:
             return
         if decision.kind in (DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT):

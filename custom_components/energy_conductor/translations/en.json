@@ -59,6 +59,20 @@
           "ev_min_activation_power_w": "Minimum activation power (W)"
         }
       },
+      "hotwater": {
+        "title": "Hot water (optional)",
+        "description": "Track a solar diverter (myenergi Eddi) and prompt for a manual boost before a cloudy spell leaves the tank cold. Inert unless the green + status sensors are set.",
+        "data": {
+          "hotwater_green_sensor": "Green/diverted energy sensor (kWh, total_increasing) — core energy-in",
+          "hotwater_status_sensor": "Diverter status sensor (emits 'Max temp reached' when the tank is full)",
+          "hotwater_energy_sensor": "Total energy-in sensor (optional; display only)",
+          "hotwater_capacity_kwh": "Cylinder capacity (kWh to heat cold-to-hot)",
+          "hotwater_heater_kw": "Heater power (kW) — sets the suggested boost duration",
+          "hotwater_threshold_percent": "Reserve threshold (%) — prompt when projected below this",
+          "hotwater_depletion_kwh": "Daily depletion fallback (kWh/day) — used until learned",
+          "hotwater_max_temp_state": "Status value meaning 'tank full' (default 'Max temp reached')"
+        }
+      },
       "behaviour": {
         "title": "Behaviour",
         "description": "Write mode, notification target and planning schedule.",
@@ -87,6 +101,7 @@
           "solar": "Solar forecast",
           "loads": "Loads & learning",
           "ev": "EV charger",
+          "hotwater": "Hot water",
           "behaviour": "Behaviour"
         }
       },
@@ -140,6 +155,19 @@
         "data": {
           "ev_power_sensor": "EV charger power sensor",
           "ev_min_activation_power_w": "Minimum activation power (W)"
+        }
+      },
+      "hotwater": {
+        "title": "Hot water",
+        "data": {
+          "hotwater_green_sensor": "Green/diverted energy sensor (kWh, total_increasing) — core energy-in",
+          "hotwater_status_sensor": "Diverter status sensor (emits 'Max temp reached' when the tank is full)",
+          "hotwater_energy_sensor": "Total energy-in sensor (optional; display only)",
+          "hotwater_capacity_kwh": "Cylinder capacity (kWh to heat cold-to-hot)",
+          "hotwater_heater_kw": "Heater power (kW) — sets the suggested boost duration",
+          "hotwater_threshold_percent": "Reserve threshold (%) — prompt when projected below this",
+          "hotwater_depletion_kwh": "Daily depletion fallback (kWh/day) — used until learned",
+          "hotwater_max_temp_state": "Status value meaning 'tank full' (default 'Max temp reached')"
         }
       },
       "behaviour": {

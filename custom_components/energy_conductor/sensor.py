@@ -64,6 +64,7 @@ async def async_setup_entry(
             EVChargerPowerSensor(coordinator, entry),
             BaselineLoadSensor(coordinator, entry),
             DailyKwhTargetSensor(coordinator, entry),
+            HotWaterReserveSensor(coordinator, entry),
             LastSiteStateAtSensor(coordinator, entry),
         ]
     )
@@ -494,6 +495,42 @@ class DailyKwhTargetSensor(_BaseSensor):
         if state is not None and state.daily_kwh_target_qualifying_days is not None:
             attrs["qualifying_days"] = state.daily_kwh_target_qualifying_days
         return attrs
+
+
+class HotWaterReserveSensor(_BaseSensor):
+    _attr_translation_key = "hot_water_reserve"
+    _attr_name = "Hot water reserve"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_icon = "mdi:water-boiler"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-hot-water-reserve"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        if state is None or state.hot_water is None:
+            return None
+        return state.hot_water.reserve_percent
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        if state is None or state.hot_water is None:
+            return {}
+        hw = state.hot_water
+        return {
+            "reserve_kwh": hw.reserve_kwh,
+            "capacity_kwh": hw.capacity_kwh,
+            "last_full_at": hw.last_full_at.isoformat() if hw.last_full_at else None,
+            "depletion_kwh_per_day": hw.depletion_kwh_per_day,
+            "depletion_source": hw.depletion_source,
+            "boost_recommended": hw.boost_recommended,
+            "suggested_boost_hours": hw.suggested_boost_hours,
+        }
 
 
 class LastSiteStateAtSensor(_BaseSensor):

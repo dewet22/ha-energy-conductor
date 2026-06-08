@@ -38,6 +38,20 @@ CONF_SOUTHERN_HEMISPHERE = "southern_hemisphere"
 CONF_EV_POWER_SENSOR = "ev_power_sensor"
 CONF_EV_MIN_ACTIVATION_W = "ev_min_activation_power_w"
 
+# Config keys — hot water (myenergi Eddi diverter)
+# Core: a green/diverted-energy sensor (kWh, total_increasing) drives the energy balance,
+# and a status sensor whose "Max temp reached" state anchors the estimate to a full tank.
+# Boost energy enters the model ONLY via that anchor, so green-only energy-in is correct
+# whether or not a scheduled boost is running. Total-in is optional, display-only.
+CONF_HOTWATER_GREEN_SENSOR = "hotwater_green_sensor"
+CONF_HOTWATER_STATUS_SENSOR = "hotwater_status_sensor"
+CONF_HOTWATER_ENERGY_SENSOR = "hotwater_energy_sensor"  # optional total-in, display only
+CONF_HOTWATER_CAPACITY_KWH = "hotwater_capacity_kwh"
+CONF_HOTWATER_DEPLETION_KWH = "hotwater_depletion_kwh"  # fallback when not learned
+CONF_HOTWATER_THRESHOLD_PERCENT = "hotwater_threshold_percent"
+CONF_HOTWATER_HEATER_KW = "hotwater_heater_kw"
+CONF_HOTWATER_MAX_TEMP_STATE = "hotwater_max_temp_state"
+
 # Config keys — house load / managed loads
 CONF_HOME_LOAD_SENSOR = "home_load_sensor"  # home-load power sensor (any semantics)
 CONF_MANAGED_LOAD_SENSORS = "managed_load_sensors"  # list[str]; loads baked in, to net out
@@ -83,6 +97,13 @@ DEFAULT_DAILY_KWH_TARGET = 10.0
 DEFAULT_OVERNIGHT_PLAN_TIME = time(21, 0)
 DEFAULT_OVERNIGHT_WINDOW_END_TIME = time(5, 30)
 
+# Hot water (Eddi) defaults
+DEFAULT_HOTWATER_CAPACITY_KWH = 11.0  # 210 L cold-to-hot: ~210 kg * 4.186 kJ/kg.K * ~45 C
+DEFAULT_HOTWATER_DEPLETION_KWH = 3.0  # lumped daily standing loss + draw, when not learned
+DEFAULT_HOTWATER_THRESHOLD_PERCENT = 20  # lean: prompt late, tune up if caught cold
+DEFAULT_HOTWATER_HEATER_KW = 2.7  # Eddi immersion element; sets suggested boost hours
+DEFAULT_HOTWATER_MAX_TEMP_STATE = "Max temp reached"  # status value meaning "tank full"
+
 # Solar forecast
 # Solcast detailedForecast `pv_estimate` is AVERAGE POWER (kW) over each slot, not
 # energy. Slots are 30 minutes, so energy_kwh = pv_estimate * 0.5h.
@@ -110,6 +131,17 @@ DAILY_TARGET_LOOKBACK_DAYS = 14
 DAILY_TARGET_MIN_SAMPLES = 7
 DAILY_TARGET_PERCENTILE = 0.50
 DAILY_TARGET_MAX_KWH = 50.0  # reject outliers from sensor strategy changes or meter glitches
+
+# Hot-water reserve learning (energy-balance estimate anchored by "Max temp reached")
+HOTWATER_LOOKBACK_DAYS = 10  # bounded by raw state-history retention for the status anchor
+HOTWATER_DEPLETION_MIN_SAMPLES = 5  # steady (full→full) days needed before learning kicks in
+HOTWATER_DEPLETION_PERCENTILE = 0.50
+HOTWATER_DEPLETION_MAX_KWH = 20.0  # reject implausible steady-day green totals
+# Fraction of tomorrow's forecast generation assumed to reach the tank as diversion. Crude
+# v1 heuristic for the refill projection; refine with a learned ratio or flow/temp probes.
+HOTWATER_DIVERSION_FRACTION = 0.15
+HOTWATER_MIN_BOOST_HOURS = 1
+HOTWATER_MAX_BOOST_HOURS = 2
 
 # Pre-off-peak discharge hold: stop discharging this many minutes before the
 # overnight window opens so the battery enters the cheap period with more charge.

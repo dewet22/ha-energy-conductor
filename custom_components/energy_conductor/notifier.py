@@ -14,6 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 _KIND_LABEL = {
     DecisionKind.SET_CHARGE_TARGET: "Overnight charge target",
     DecisionKind.SET_DISCHARGE_LIMIT: "Discharge cap",
+    DecisionKind.RECOMMEND_HOT_WATER_BOOST: "Hot water boost recommended",
 }
 
 
@@ -22,6 +23,8 @@ def _format_value(decision: Decision) -> str:
         return f"{decision.value}%"
     if decision.kind == DecisionKind.SET_DISCHARGE_LIMIT:
         return f"{decision.value}W"
+    if decision.kind == DecisionKind.RECOMMEND_HOT_WATER_BOOST:
+        return f"~{decision.value}h"
     return str(decision.value)  # pragma: no cover - defensive; all kinds handled above
 
 
