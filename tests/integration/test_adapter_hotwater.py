@@ -16,6 +16,7 @@ from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
+    CONF_HOTWATER_ENERGY_SENSOR,
     CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_STATUS_SENSOR,
@@ -137,3 +138,48 @@ async def test_recorder_failure_degrades_to_none(hass, now):
     adapter = _adapter(hass)
     with patch(_PATCH_HISTORY, side_effect=RuntimeError("recorder down")):
         assert adapter._hot_water_state(now, _forecast()) is None
+
+
+TOTAL = "sensor.eddi_total"
+
+
+def _stats_side_effect_with_total(
+    green_daily: list[dict], total_daily: list[dict], hourly_total: float
+):
+    """Stats mock that distinguishes green vs total entity for day-period queries."""
+
+    def _impl(hass, start, end, ids, period, units, types):
+        if period == "day":
+            if TOTAL in ids:
+                return {TOTAL: total_daily}
+            return {GREEN: green_daily}
+        # hourly green-since-full query
+        return {GREEN: [{"start": start, "change": hourly_total}]}
+
+    return _impl
+
+
+async def test_total_sensor_used_for_depletion_learning(hass, now):
+    # Green-only steady days show ~1 kWh/day (post-boost marginal top-up).
+    # Total-in steady days show ~2.5 kWh/day (actual heat loss + draw).
+    # With the total sensor configured, depletion should be learned from total.
+    full_days = [1, 2, 3, 4, 5, 6, 7, 8]
+    green_daily = _daily_green([1, 2, 3, 4, 5, 6, 7], 1.0)  # understated
+    total_daily = [
+        {"start": datetime(2026, 6, d, 0, 0, tzinfo=UTC), "change": 2.5}
+        for d in [1, 2, 3, 4, 5, 6, 7]
+    ]
+    adapter = _adapter(hass, extra={CONF_HOTWATER_ENERGY_SENSOR: TOTAL})
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(
+            _PATCH_STATS,
+            side_effect=_stats_side_effect_with_total(green_daily, total_daily, 0.5),
+        ),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.depletion_source == "stats"
+    # Should be learned from total (~2.5), not from green (~1.0)
+    assert hw.depletion_kwh_per_day == pytest.approx(2.5, abs=0.1)

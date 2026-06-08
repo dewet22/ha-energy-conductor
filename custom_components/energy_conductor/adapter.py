@@ -41,6 +41,7 @@ from .const import (
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
+    CONF_HOTWATER_ENERGY_SENSOR,
     CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_MAX_TEMP_STATE,
@@ -604,9 +605,18 @@ class Adapter:
             last_full_at, full_dates = self._hot_water_full_events(
                 now, status_sensor, max_temp_state
             )
-            daily_green = self._hot_water_daily_green(now, green_sensor)
+            daily_green = self._hot_water_daily_kwh(now, green_sensor)
+            # Use total-in sensor (green + boost) for depletion learning when available.
+            # On a full→full day total energy in ≈ actual heat loss + draw, regardless
+            # of source. While the overnight boost runs, green-only understates depletion
+            # (it measures marginal solar top-up, not full draw). Once the boost is off,
+            # total == green, so there's no cost to always preferring total when set.
+            total_sensor = self.config.get(CONF_HOTWATER_ENERGY_SENSOR)
+            learning_totals = (
+                self._hot_water_daily_kwh(now, total_sensor) if total_sensor else daily_green
+            )
             depletion, depletion_source = learn_depletion(
-                self._hot_water_steady_samples(daily_green, full_dates),
+                self._hot_water_steady_samples(learning_totals, full_dates),
                 percentile=HOTWATER_DEPLETION_PERCENTILE,
                 min_samples=HOTWATER_DEPLETION_MIN_SAMPLES,
                 fallback=depletion_fallback,
@@ -674,15 +684,17 @@ class Adapter:
         full_dates = {dt_util.as_local(ts).date() for ts in full_times}
         return max(full_times), full_dates
 
-    def _hot_water_daily_green(self, now: datetime, green_entity: str) -> dict:
-        """Map each complete local date in the lookback to that day's green diversion (kWh)."""
+    def _hot_water_daily_kwh(self, now: datetime, entity: str) -> dict:
+        """Map each complete local date in the lookback to that day's energy (kWh).
+
+        Works for any daily-resetting or total_increasing energy sensor; uses the
+        recorder's 'change' stat so daily resets are handled internally.
+        """
         start = now - timedelta(days=HOTWATER_LOOKBACK_DAYS)
-        stats = statistics_during_period(
-            self.hass, start, now, {green_entity}, "day", None, {"change"}
-        )
+        stats = statistics_during_period(self.hass, start, now, {entity}, "day", None, {"change"})
         local_today = dt_util.as_local(now).date()
         daily: dict = {}
-        for row in stats.get(green_entity, []):
+        for row in stats.get(entity, []):
             change = row.get("change")
             ts = row.get("start")
             if change is None or ts is None:
