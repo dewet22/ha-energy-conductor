@@ -104,15 +104,29 @@ describe("registry resolution", () => {
 });
 
 describe("graceful degradation", () => {
-  it("omits the hot-water card and rows when the Eddi sensors are absent", async () => {
-    const hass = makeHass({ omitKeys: ["hot-water-reserve", "hot-water-boost-recommended"] });
+  it("omits hot-water rows/graph when the diverter is unconfigured (entities present but unknown)", async () => {
+    // The hot-water sensors are always registered; an unconfigured Eddi leaves
+    // them at "unknown" rather than absent. Gating is on live state, not registry
+    // presence — so the registry still contains the IDs here.
+    const hass = makeHass({ hotWaterUnconfigured: true });
     const dash = await EC.generateDashboard({}, hass);
+
+    const registry = await regSet(hass);
+    expect([...registry].some((id) => id.endsWith("_hot_water_reserve"))).toBe(true);
 
     expect(hasNullEntity(dash)).toBe(false);
     expect(cardTypes(dash)).toEqual(["entities", "markdown", "statistics-graph"]);
     const names = cardByType(dash, "entities").entities.map((r) => r.name);
     expect(names).not.toContain("Hot water reserve");
     expect(names).not.toContain("Hot water boost needed");
+  });
+
+  it("shows hot-water rows/graph when the diverter is configured (reserve live)", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    expect(cardTypes(dash)).toContain("history-graph");
+    const names = cardByType(dash, "entities").entities.map((r) => r.name);
+    expect(names).toContain("Hot water reserve");
+    expect(names).toContain("Hot water boost needed");
   });
 
   it("returns an error dashboard when the registry query fails", async () => {

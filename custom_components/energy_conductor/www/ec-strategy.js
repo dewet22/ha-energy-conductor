@@ -17,6 +17,10 @@
 // convention (`sensor.loft_...`) cannot break the dashboard. We never construct
 // or parse an entity_id string.
 //
+// The hot-water entities are always registered (configured or not), so the
+// hot-water rows and graph are gated on the reserve sensor's live state rather
+// than on registry presence — a battery-only install renders without them.
+//
 // NOTE: ASCII-only source on purpose - the /energy_conductor/ static serving
 // path mangles multibyte UTF-8, so card titles use "-" rather than em-dash.
 
@@ -106,7 +110,22 @@
       var key = e.unique_id.slice(prefix.length);
       if (!(key in keys)) keys[key] = e.entity_id; // store the registry's id
     }
-    return { keys: keys, device: target };
+
+    // The hot-water sensors are registered unconditionally (like the EV sensor),
+    // so their entity_ids are always in the registry even when the Eddi isn't
+    // configured — they merely sit unavailable/unknown. Registry presence is
+    // therefore not a "feature is on" signal; the reserve sensor's live state is.
+    var states = (hass && hass.states) || {};
+    var hotWaterConfigured = isLive(states, keys["hot-water-reserve"]);
+
+    return { keys: keys, device: target, hotWaterConfigured: hotWaterConfigured };
+  }
+
+  function isLive(states, entityId) {
+    if (!entityId) return false;
+    var s = states[entityId];
+    if (!s) return false;
+    return s.state !== "unavailable" && s.state !== "unknown" && s.state !== "" && s.state != null;
   }
 
   function accessor(state) {
@@ -130,27 +149,27 @@
   // --- view generation ------------------------------------------------------
 
   // The single "bedtime" view: four cards answering "is EC on top of things
-  // tonight?". Cards/rows whose backing entity is absent are omitted, so a
-  // battery-only install (no Eddi hot-water sensors) still renders cleanly.
-  function generateView(acc) {
+  // tonight?". The hot-water rows/graph are shown only when the diverter is
+  // configured (reserve sensor live), so a battery-only install renders cleanly;
+  // any other absent row is dropped defensively by cleanRows.
+  function generateView(acc, hotWaterConfigured) {
     var cards = [];
 
     // 1. Tonight at a glance.
-    cards.push({
-      type: "entities",
-      title: "Tonight",
-      entities: cleanRows([
-        row(acc("status"), "Status"),
-        row(acc("battery-soc"), "Battery"),
-        row(acc("battery-usable-energy"), "Usable energy"),
-        row(acc("overnight-plan"), "Charge target tonight"),
-        row(acc("solar-forecast-today"), "Solar forecast tomorrow"),
-        row(acc("off-peak-window-start"), "Off-peak starts"),
-        row(acc("cheap-window-end"), "Off-peak ends"),
-        row(acc("hot-water-reserve"), "Hot water reserve"),
-        row(acc("hot-water-boost-recommended"), "Hot water boost needed"),
-      ]),
-    });
+    var tonightRows = [
+      row(acc("status"), "Status"),
+      row(acc("battery-soc"), "Battery"),
+      row(acc("battery-usable-energy"), "Usable energy"),
+      row(acc("overnight-plan"), "Charge target tonight"),
+      row(acc("solar-forecast-today"), "Solar forecast tomorrow"),
+      row(acc("off-peak-window-start"), "Off-peak starts"),
+      row(acc("cheap-window-end"), "Off-peak ends"),
+    ];
+    if (hotWaterConfigured) {
+      tonightRows.push(row(acc("hot-water-reserve"), "Hot water reserve"));
+      tonightRows.push(row(acc("hot-water-boost-recommended"), "Hot water boost needed"));
+    }
+    cards.push({ type: "entities", title: "Tonight", entities: cleanRows(tonightRows) });
 
     // 2. Plan reasoning - the overnight plan's reason string (a sensor
     //    attribute that is otherwise invisible).
@@ -167,9 +186,9 @@
     }
 
     // 3. Hot water reserve over the last week - the daily fill/drain cycle.
-    //    Omitted entirely when the Eddi sensors are not configured.
+    //    Omitted entirely when the diverter is not configured.
     var hwId = acc("hot-water-reserve");
-    if (hwId) {
+    if (hotWaterConfigured && hwId) {
       cards.push({
         type: "history-graph",
         title: "Hot water reserve - 7 days",
@@ -235,7 +254,10 @@
         "No Energy Conductor device found. Add and configure the integration first."
       );
     }
-    return { title: "Energy Conductor", views: [generateView(accessor(state))] };
+    return {
+      title: "Energy Conductor",
+      views: [generateView(accessor(state), state.hotWaterConfigured)],
+    };
   }
 
   // Node (vitest) entry points. In the browser `module` is undefined, so this

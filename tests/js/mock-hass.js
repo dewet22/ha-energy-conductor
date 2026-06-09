@@ -34,8 +34,13 @@ function entityId(domain, prefix, deviceName, key) {
   return domain + "." + prefix + "energy_conductor_" + deviceName + "_" + key.replace(/-/g, "_");
 }
 
+// The hot-water sensors are always registered by the integration; when the Eddi
+// is unconfigured they sit at "unknown" rather than being absent. The mock models
+// that — hot-water entities are present in the registry but their *state* reflects
+// configuration, controlled by opts.hotWaterUnconfigured.
+//
 // opts: { entryId, deviceName, areaPrefix, omitKeys[], disabledKeys[],
-//         extraDevice: {entryId, name}, failWS }
+//         extraDevice: {entryId, name}, failWS, hotWaterUnconfigured }
 function makeHass(opts) {
   opts = opts || {};
   const prefix = opts.areaPrefix || "";
@@ -55,17 +60,26 @@ function makeHass(opts) {
   ];
 
   const entities = [];
+  const states = {};
+
+  function stateFor(key) {
+    if (key === "hot-water-reserve") return opts.hotWaterUnconfigured ? "unknown" : "100.0";
+    if (key === "hot-water-boost-recommended") return opts.hotWaterUnconfigured ? "unknown" : "off";
+    return "ok"; // benign live state; only hot-water liveness is actually checked
+  }
 
   function add(domain, key) {
     if (omit.indexOf(key) !== -1) return;
+    const id = entityId(domain, prefix, deviceName, key);
     entities.push({
-      entity_id: entityId(domain, prefix, deviceName, key),
+      entity_id: id,
       platform: "energy_conductor",
       device_id: deviceId,
       unique_id: entryId + "-" + key,
       area_id: prefix ? "loft" : null,
       disabled_by: disabled.indexOf(key) !== -1 ? "user" : null,
     });
+    states[id] = { state: stateFor(key) };
   }
 
   SENSOR_KEYS.forEach(function (k) {
@@ -94,18 +108,21 @@ function makeHass(opts) {
       via_device_id: null,
     });
     SENSOR_KEYS.forEach(function (k) {
+      const id = entityId("sensor", prefix, opts.extraDevice.name, k);
       entities.push({
-        entity_id: entityId("sensor", prefix, opts.extraDevice.name, k),
+        entity_id: id,
         platform: "energy_conductor",
         device_id: id2,
         unique_id: opts.extraDevice.entryId + "-" + k,
         area_id: prefix ? "loft" : null,
         disabled_by: null,
       });
+      states[id] = { state: stateFor(k) };
     });
   }
 
   return {
+    states: states,
     callWS: function (msg) {
       if (opts.failWS) return Promise.reject(new Error("ws down"));
       if (msg.type === "config/entity_registry/list") return Promise.resolve(entities);
