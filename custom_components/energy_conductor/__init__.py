@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .const import (
@@ -14,8 +16,42 @@ from .const import (
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.typing import ConfigType
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["binary_sensor", "sensor"]
+
+# Bundled dashboard-strategy frontend module. Bump _STRATEGY_VERSION on any
+# change to ec-strategy.js so the browser cache doesn't serve a stale copy.
+_STRATEGY_FILENAME = "ec-strategy.js"
+_STRATEGY_URL = f"/{DOMAIN}/{_STRATEGY_FILENAME}"
+_STRATEGY_VERSION = "3"
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the bundled dashboard-strategy frontend module.
+
+    Component scope, so the static-path registration happens exactly once
+    regardless of how many config entries exist.
+    """
+    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.http import StaticPathConfig
+
+    if hass.http is None:
+        # No web server (e.g. the test harness) — nothing to serve from anyway.
+        return True
+    try:
+        module_path = Path(__file__).parent / "www" / _STRATEGY_FILENAME
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(_STRATEGY_URL, str(module_path), False)]
+        )
+        add_extra_js_url(hass, f"{_STRATEGY_URL}?v={_STRATEGY_VERSION}")
+    except Exception as exc:
+        # The bundled module is cosmetic (dashboard frontend) — a failure here
+        # must never take down the integration. Log and carry on.
+        _LOGGER.warning("Could not register the dashboard strategy module: %s", exc)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
