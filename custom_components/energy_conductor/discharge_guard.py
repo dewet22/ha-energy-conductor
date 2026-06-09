@@ -22,8 +22,6 @@ from .const import PRE_OFF_PEAK_HOLD_MINUTES
 from .decisions import Decision, DecisionKind
 from .model import SiteState
 
-_BUCKET_W = 100  # dedupe granularity; baseline jitter <100W doesn't re-notify
-
 
 def _near_off_peak_start(state: SiteState) -> bool:
     start = state.tariff.next_off_peak_window_start
@@ -52,5 +50,9 @@ def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:
         target_entity=target_entity,
         value=limit_w,
         reason=reason,
-        dedupe_key=f"discharge-{limit_w // _BUCKET_W}",
+        # Dedupe on the raw limit. With regime 3 (the old variable baseline cap) gone, the
+        # limit is only ever 0 or max — no jitter to bucket. Bucketing by //100 here was a
+        # latent bug: on a %-based discharge control max reads as 50, so 0 and 50 collapsed
+        # to the same bucket and every off-peak transition was deduped away (never written).
+        dedupe_key=f"discharge-{limit_w}",
     )

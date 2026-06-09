@@ -58,11 +58,25 @@ class TestDischargeRegimes:
         assert "unconstrained" in decision.reason.lower()
 
 
-class TestDedupeKeyBucketing:
+class TestDedupeKey:
     def test_regime_change_changes_key(self):
         d_default = _decide()
         d_off_peak = _decide(tariff=a_tariff(off_peak_now=True))
         assert d_default.dedupe_key != d_off_peak.dedupe_key
+
+    def test_percent_scale_max_distinct_from_off_peak(self):
+        # On a %-based discharge control, the entity's `max` reads as 50 (not watts), so
+        # max_discharge_power_w is 50. Off-peak (0) and unconstrained (50) must still produce
+        # DISTINCT dedupe keys — the old `// 100` bucketing collapsed both to "discharge-0",
+        # so the off-peak transition was deduped away and never written (the live bug).
+        d_unconstrained = _decide(battery=a_battery(max_discharge_power_w=50))
+        d_off_peak = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(max_discharge_power_w=50),
+        )
+        assert d_unconstrained.value == 50
+        assert d_off_peak.value == 0
+        assert d_unconstrained.dedupe_key != d_off_peak.dedupe_key
 
 
 class TestPreOffPeakHold:
