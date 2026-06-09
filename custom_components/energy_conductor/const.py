@@ -72,11 +72,16 @@ CONF_NOTIFY_TARGET = "notify_target"
 CONF_OVERNIGHT_PLAN_TIME = "overnight_plan_time"
 CONF_DAILY_KWH_TARGET = "daily_kwh_target"
 CONF_DEVICE_NAME = "device_name"
-# Absolute floor the overnight SoC target must never fall below. Acts as the safety
-# margin against forecast/baseline error AND BMS SoC unreliability near empty (the
-# inverter can cut out above the nominal reserve, and the SoC reading is least
-# trustworthy at the bottom). Set above the BMS reserve floor.
-CONF_MIN_TARGET_SOC_PERCENT = "min_target_soc_percent"
+# Baked-in safety margin for the overnight charge target: the battery is always
+# provisioned to hold at least this much USABLE energy above the reserve floor for
+# the morning, even when the solar forecast suggests less is needed. Guards against
+# forecast/baseline error and BMS SoC unreliability near empty. Replaces the old
+# user-facing min_target_soc_percent knob (whose absolute-SoC meaning was unclear) —
+# see overnight.py.
+# NOTE: a fixed kWh margin saturates the target to 100% on a very small battery
+# (< ~2 kWh) — immaterial for real installs (≥ ~5 kWh) and moot once this margin
+# becomes learned/data-driven (the planned next step), so kept fixed for now.
+MIN_OVERNIGHT_USABLE_KWH = 1.5
 
 # Enum values
 FORECAST_SOURCE_SOLCAST = "solcast"
@@ -88,7 +93,6 @@ WRITE_MODE_LIVE = "live"
 
 # Defaults
 DEFAULT_RESERVE_PERCENT = 10
-DEFAULT_MIN_TARGET_SOC_PERCENT = 10  # conservative floor; safe above typical BMS reserves
 DEFAULT_EV_MIN_ACTIVATION_W = 1400
 DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribute
 DEFAULT_WINTER_MIN_KWH = 0.0

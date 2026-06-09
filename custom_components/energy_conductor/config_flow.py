@@ -54,7 +54,6 @@ from .const import (
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_THRESHOLD_PERCENT,
     CONF_MANAGED_LOAD_SENSORS,
-    CONF_MIN_TARGET_SOC_PERCENT,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
@@ -72,7 +71,6 @@ from .const import (
     DEFAULT_HOTWATER_HEATER_KW,
     DEFAULT_HOTWATER_MAX_TEMP_STATE,
     DEFAULT_HOTWATER_THRESHOLD_PERCENT,
-    DEFAULT_MIN_TARGET_SOC_PERCENT,
     DEFAULT_OVERNIGHT_PLAN_TIME,
     DEFAULT_OVERNIGHT_WINDOW_END_TIME,
     DEFAULT_RESERVE_PERCENT,
@@ -133,7 +131,6 @@ BEHAVIOUR_KEYS = (
     CONF_WRITE_MODE,
     CONF_NOTIFY_TARGET,
     CONF_OVERNIGHT_PLAN_TIME,
-    CONF_MIN_TARGET_SOC_PERCENT,
     CONF_DEVICE_NAME,
 )
 
@@ -464,13 +461,6 @@ def behaviour_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
                 required=True,
                 default=DEFAULT_OVERNIGHT_PLAN_TIME.isoformat(),
             ): TimeSelector(),
-            _marker(
-                CONF_MIN_TARGET_SOC_PERCENT,
-                options=options,
-                defaults=defaults,
-                required=True,
-                default=DEFAULT_MIN_TARGET_SOC_PERCENT,
-            ): _percent_selector(),
             _marker(CONF_DEVICE_NAME, options=options, defaults=defaults): (
                 TextSelector(TextSelectorConfig())
             ),

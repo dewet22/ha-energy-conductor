@@ -10,6 +10,10 @@ build/
 *.egg-info/
 .ruff_cache/
 .claude/settings.local.json
+.claude/settings.json
+
+# Local scratch planning notes (not part of the integration)
+/PLAN-*.md
 
 # Frontend (dashboard strategy) dev tooling
 node_modules/

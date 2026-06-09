@@ -53,7 +53,6 @@ def test_overnight_target_within_reserve_and_100(
         state,
         target_entity="number.charge_target",
         daily_kwh_target=daily,
-        min_target_soc_percent=0.0,
     )
     # Target never below the reserve floor, never above 100, regardless of inputs.
     assert int(reserve) <= decision.value <= 100

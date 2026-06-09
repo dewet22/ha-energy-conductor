@@ -7,14 +7,17 @@ Algorithm recap (reserve-aware):
   morning_gap_kwh   = baseline_load_w * morning_gap_hours / 1000
   forecast_kwh      = total_kwh_forecast (slots) or fallback_kwh
   forecast_deficit  = max(0, daily_kwh_target - forecast_kwh)
-  usable_kwh        = morning_gap_kwh + forecast_deficit  (energy ABOVE the reserve floor)
+  usable_kwh        = max(morning_gap_kwh + forecast_deficit, MIN_OVERNIGHT_USABLE_KWH)
   usable_percent    = usable_kwh / capacity_kwh * 100
-  target_percent    = round(min(100, max(min_target, reserve, reserve + usable_percent)))
+  target_percent    = round(min(100, reserve + usable_percent))
 
 The +reserve term is the fix: the gap energy must sit ABOVE the dead reserve band,
 so a 1.6 kWh gap on a 10 kWh battery with a 10% reserve targets 10 + 16 = 26%, not 16%.
+MIN_OVERNIGHT_USABLE_KWH is a baked-in safety floor that only binds on the sunniest,
+smallest-gap nights (replaces the old user-facing min_target_soc_percent knob).
 """
 
+from energy_conductor.const import MIN_OVERNIGHT_USABLE_KWH
 from energy_conductor.decisions import DecisionKind
 from energy_conductor.overnight import (
     MEANINGFUL_SLOT_KWH,
@@ -48,14 +51,11 @@ def _state(**overrides):
     return a_site_state(**base)
 
 
-def _plan(state, *, daily_kwh_target=10.0, min_target=0.0):
-    # Default min_target=0 so most tests isolate the reserve-aware gap math; the
-    # min-target clamp gets its own dedicated tests.
+def _plan(state, *, daily_kwh_target=10.0):
     return plan_overnight(
         state,
         target_entity=CHARGE_ENTITY,
         daily_kwh_target=daily_kwh_target,
-        min_target_soc_percent=min_target,
     )
 
 
@@ -107,8 +107,10 @@ class TestOvernightAlgorithm:
         assert decision.value == 96
         assert "fallback" in decision.reason.lower()
 
-    def test_surplus_forecast_clamps_to_reserve(self):
-        # tiny gap, surplus forecast → usable ≈ 0 → target floors at reserve
+    def test_tiny_gap_floors_at_baked_in_usable_margin(self):
+        # Tiny gap + surplus forecast → morning need ≈ 0, but the baked-in safety
+        # margin floors usable energy. On a 10 kWh battery, 1.5 kWh = 15% usable,
+        # so target = reserve 10 + 15 = 25 (not just the bare reserve).
         forecast = a_forecast_with_slots(
             first_slot_at=utc(2026, 6, 2, 5, 31),  # 1 minute after off-peak end
             slot_count=20,
@@ -119,38 +121,8 @@ class TestOvernightAlgorithm:
             battery=a_battery(reserve_percent=10.0, capacity_kwh=10.0),
         )
         decision = _plan(state)
-        assert decision.value == 10  # gap ≈ 0 → just the reserve floor
-
-    def test_min_target_clamp_raises_low_target(self):
-        # Same near-zero-gap surplus case, but min_target 15% lifts the floor above reserve
-        forecast = a_forecast_with_slots(
-            first_slot_at=utc(2026, 6, 2, 5, 31),
-            slot_count=20,
-            kwh_per_slot=2.0,
-        )
-        state = _state(
-            solar_forecast=forecast,
-            battery=a_battery(reserve_percent=10.0, capacity_kwh=10.0),
-        )
-        decision = _plan(state, min_target=15.0)
-        assert decision.value == 15  # clamped up to the min target
-
-    def test_bms_reserve_above_min_target_warns(self):
-        # Live BMS reserve (12%) exceeds the user's min target (10%): the inverter
-        # won't supply down to where we'd plan. Surface a warning; still clamp up.
-        forecast = a_forecast_with_slots(
-            first_slot_at=utc(2026, 6, 2, 5, 31),
-            slot_count=20,
-            kwh_per_slot=2.0,
-        )
-        state = _state(
-            solar_forecast=forecast,
-            battery=a_battery(reserve_percent=12.0, capacity_kwh=10.0),
-        )
-        decision = _plan(state, min_target=10.0)
-        assert decision.value == 12  # clamped up to BMS reserve
-        assert "WARNING" in decision.reason
-        assert "BMS reserve" in decision.reason
+        expected = round(10 + MIN_OVERNIGHT_USABLE_KWH / 10.0 * 100)  # reserve + floor%
+        assert decision.value == expected == 25
 
     def test_clamped_at_100(self):
         # huge deficit → target above 100%
@@ -190,7 +162,7 @@ class TestDawnProjectionNote:
                 kwh_per_slot=0.5,
             ),
         )
-        decision = _plan(state, daily_kwh_target=10.0, min_target=10.0)
+        decision = _plan(state, daily_kwh_target=10.0)
         assert "no charge needed" in decision.reason
         assert "at dawn" in decision.reason
 

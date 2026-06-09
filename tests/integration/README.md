@@ -38,9 +38,8 @@ Run all of these before tagging a release.
 - [ ] Within 30s of setup, `sensor.energy_conductor_status` reads `ok`
 - [ ] `sensor.energy_conductor_overnight_plan` populates with a numeric % within 60s
 - [ ] At `overnight_plan_time` (set to a near-future time for testing), a fresh plan fires and a notification arrives on the mobile target
-- [ ] Discharge guard: temporarily set the cheap-rate binary sensor to `on` (e.g. via Developer Tools → States). Within seconds, a `Discharge cap → 0W` notification arrives.
-- [ ] Discharge guard: set the dispatching sensor to `on` AND set the EV power sensor above the activation threshold. A `Discharge cap → ~baseline W` notification arrives.
-- [ ] Discharge guard dedupe: with the EV drawing steadily, only one notification per regime transition (not 120/hour).
+- [ ] Discharge guard: temporarily set the off-peak binary sensor to `on` (e.g. via Developer Tools → States). Within seconds, a `Discharge cap → 0W` notification arrives. (This is the EV-protection path: EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls grid.)
+- [ ] Discharge guard dedupe: across an off-peak → peak → off-peak cycle, only one notification per regime transition (not 120/hour).
 
 ### Failure modes
 

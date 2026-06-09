@@ -53,7 +53,7 @@
       },
       "ev": {
         "title": "EV charger (optional)",
-        "description": "If present, enables the EV-dispatch discharge regime.",
+        "description": "Optional EV charger inputs — surfaced on the dashboard and reserved for upcoming EV-aware planning. They no longer affect the discharge guard (the off-peak signal already covers EV charging).",
         "data": {
           "ev_power_sensor": "EV charger power sensor",
           "ev_min_activation_power_w": "Minimum activation power (W)"
@@ -80,7 +80,6 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
           "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }
@@ -176,7 +175,6 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
           "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }

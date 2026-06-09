@@ -13,7 +13,6 @@ from custom_components.energy_conductor.const import (
     CONF_ENTITY_REFS,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
-    CONF_MIN_TARGET_SOC_PERCENT,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
@@ -100,7 +99,6 @@ async def test_wizard_creates_v3_entry_with_anchors(hass):
             CONF_WRITE_MODE: WRITE_MODE_DRY_RUN,
             CONF_NOTIFY_TARGET: "notify.test",
             CONF_OVERNIGHT_PLAN_TIME: "21:00:00",
-            CONF_MIN_TARGET_SOC_PERCENT: 10,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
