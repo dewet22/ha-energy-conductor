@@ -78,6 +78,9 @@ CONF_DEVICE_NAME = "device_name"
 # forecast/baseline error and BMS SoC unreliability near empty. Replaces the old
 # user-facing min_target_soc_percent knob (whose absolute-SoC meaning was unclear) —
 # see overnight.py.
+# NOTE: a fixed kWh margin saturates the target to 100% on a very small battery
+# (< ~2 kWh) — immaterial for real installs (≥ ~5 kWh) and moot once this margin
+# becomes learned/data-driven (the planned next step), so kept fixed for now.
 MIN_OVERNIGHT_USABLE_KWH = 1.5
 
 # Enum values
