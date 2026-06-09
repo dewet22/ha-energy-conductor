@@ -123,6 +123,7 @@ class OvernightPlanSensor(_BaseSensor):
     _attr_translation_key = "overnight_plan"
     _attr_name = "Overnight plan target"
     _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -438,6 +439,7 @@ class BaselineLoadSensor(_BaseSensor):
     _attr_name = "Calculated baseline load"
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
