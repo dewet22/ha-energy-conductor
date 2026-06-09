@@ -17,15 +17,14 @@ Two always-on coordination loops that run against entities you already have:
 
 **Discharge guard** (runs on every state change, ~30 s tick)
 
-Applies a three-regime limit to battery discharge:
+Applies a simple limit to battery discharge:
 
 | Condition | Discharge limit |
 |---|---|
-| Off-peak window active | 0 W — battery idles, grid fills demand |
-| EV smart-dispatch active *and* EV drawing power | House baseline load — battery covers the house but doesn't feed the EV |
+| Off-peak window active (incl. smart-dispatch slots), or about to open | 0 W — battery idles, grid fills demand |
 | Otherwise | Full rated discharge power |
 
-The guard prevents a hybrid inverter from depleting a battery into an EV charger that is simultaneously drawing cheap overnight grid power — a common source of wasted energy.
+This is what stops a hybrid inverter from draining the battery into an EV charger: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls cheap grid rather than the battery. (An earlier per-EV "cap discharge at house baseline" regime was removed once it was clear the off-peak signal already covers every case — see `discharge_guard.py` for the reasoning.)
 
 **Overnight charge planning** (runs once per evening at a configured time)
 

@@ -139,9 +139,9 @@ class TariffDispatchingNowBinarySensor(_BaseBinarySensor):
             "monitored_sensor": monitored,
             "note": (
                 "True when the optional EV-dispatch sensor is on (e.g. Octopus Intelligent "
-                "smart-charge active). When True and the EV is drawing above its activation "
-                "threshold, the discharge guard caps battery output at the house baseline "
-                "rather than blocking discharge entirely."
+                "smart-charge active). Diagnostic only: the discharge guard keys off the "
+                "off-peak rate signal, which already covers dispatch windows, so this no "
+                "longer affects the battery discharge decision."
             )
             if monitored
             else "No EV dispatch sensor configured; always False.",
