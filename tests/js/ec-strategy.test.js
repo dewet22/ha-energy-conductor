@@ -1,0 +1,159 @@
+// Unit tests for the Energy Conductor dashboard strategy. Guards the
+// registry-resolution behaviour (resolve by unique_id, never construct an
+// entity_id) and the graceful-degradation paths.
+
+const path = require("path");
+const { makeHass, entityId } = require("./mock-hass");
+
+// Require once, before any customElements stub exists, so the module's
+// browser-registration branch is skipped and only the Node exports are taken.
+const EC = require(
+  path.join(__dirname, "..", "..", "custom_components", "energy_conductor", "www", "ec-strategy.js")
+);
+
+// --- helpers ----------------------------------------------------------------
+
+function collectRefs(node, out) {
+  out = out || [];
+  if (Array.isArray(node)) {
+    node.forEach((n) => collectRefs(n, out));
+  } else if (node && typeof node === "object") {
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      if (k === "entity" && typeof v === "string") out.push(v);
+      else collectRefs(v, out);
+    }
+  }
+  return out;
+}
+
+function hasNullEntity(node) {
+  if (Array.isArray(node)) return node.some(hasNullEntity);
+  if (node && typeof node === "object") {
+    if ("entity" in node && node.entity === null) return true;
+    return Object.keys(node).some((k) => hasNullEntity(node[k]));
+  }
+  return false;
+}
+
+async function regSet(hass) {
+  const ents = await hass.callWS({ type: "config/entity_registry/list" });
+  return new Set(ents.filter((e) => e.platform === "energy_conductor").map((e) => e.entity_id));
+}
+
+const view = (dash) => dash.views[0];
+const cardTypes = (dash) => view(dash).cards.map((c) => c.type);
+const cardByType = (dash, t) => view(dash).cards.find((c) => c.type === t);
+
+// --- tests ------------------------------------------------------------------
+
+describe("dashboard structure", () => {
+  it("builds a single Overview view with the four cards for a full install", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    expect(dash.title).toBe("Energy Conductor");
+    expect(dash.views.length).toBe(1);
+    expect(view(dash).title).toBe("Overview");
+    expect(cardTypes(dash)).toEqual(["entities", "markdown", "history-graph", "statistics-graph"]);
+  });
+
+  it("lists the expected Tonight rows", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    const names = cardByType(dash, "entities").entities.map((r) => r.name);
+    expect(names).toContain("Status");
+    expect(names).toContain("Battery");
+    expect(names).toContain("Charge target tonight");
+    expect(names).toContain("Hot water reserve");
+    expect(names).toContain("Hot water boost needed");
+  });
+});
+
+describe("registry resolution", () => {
+  it("resolves every entity from the registry and survives the loft_ area prefix", async () => {
+    const hass = makeHass({ areaPrefix: "loft_" });
+    const dash = await EC.generateDashboard({}, hass);
+    const refs = collectRefs(dash);
+    const registry = await regSet(hass);
+
+    expect(refs.length).toBeGreaterThan(3);
+    for (const r of refs) {
+      expect(registry.has(r)).toBe(true); // came from the registry, not constructed
+      expect(r).toContain("loft_"); // proves the current (area-prefixed) id was read
+    }
+  });
+
+  it("ignores entities from other integrations", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    expect(collectRefs(dash)).not.toContain("sensor.kitchen_temperature");
+  });
+
+  it("embeds the resolved overnight-plan id in the reasoning markdown", async () => {
+    const hass = makeHass({ areaPrefix: "loft_" });
+    const dash = await EC.generateDashboard({}, hass);
+    const md = cardByType(dash, "markdown");
+    const planId = entityId("sensor", "loft_", "blithe", "overnight-plan");
+    expect(md.content).toContain(planId);
+    expect(md.content).toContain("'reason'");
+  });
+
+  it("skips disabled entities", async () => {
+    const hass = makeHass({ disabledKeys: ["battery-usable-energy"] });
+    const dash = await EC.generateDashboard({}, hass);
+    const names = cardByType(dash, "entities").entities.map((r) => r.name);
+    expect(names).not.toContain("Usable energy");
+  });
+});
+
+describe("graceful degradation", () => {
+  it("omits the hot-water card and rows when the Eddi sensors are absent", async () => {
+    const hass = makeHass({ omitKeys: ["hot-water-reserve", "hot-water-boost-recommended"] });
+    const dash = await EC.generateDashboard({}, hass);
+
+    expect(hasNullEntity(dash)).toBe(false);
+    expect(cardTypes(dash)).toEqual(["entities", "markdown", "statistics-graph"]);
+    const names = cardByType(dash, "entities").entities.map((r) => r.name);
+    expect(names).not.toContain("Hot water reserve");
+    expect(names).not.toContain("Hot water boost needed");
+  });
+
+  it("returns an error dashboard when the registry query fails", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({ failWS: true }));
+    expect(dash.views.length).toBe(1);
+    expect(view(dash).cards.length).toBe(1);
+    expect(view(dash).cards[0].type).toBe("markdown");
+    expect(view(dash).cards[0].content).toContain("entity registry");
+  });
+
+  it("returns an error dashboard when no Energy Conductor device exists", async () => {
+    const hass = {
+      callWS(msg) {
+        if (msg.type === "config/entity_registry/list") return Promise.resolve([]);
+        if (msg.type === "config/device_registry/list") return Promise.resolve([]);
+        return Promise.reject(new Error("unexpected"));
+      },
+    };
+    const dash = await EC.generateDashboard({}, hass);
+    expect(view(dash).cards[0].content).toContain("No Energy Conductor device");
+  });
+});
+
+describe("device pin", () => {
+  it("defaults to the sole/first device", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    const refs = collectRefs(dash);
+    expect(refs.every((r) => r.includes("_blithe_"))).toBe(true);
+  });
+
+  it("selects a named device when pinned", async () => {
+    const hass = makeHass({ extraDevice: { entryId: "entry999", name: "annexe" } });
+    const dash = await EC.generateDashboard({ device: "annexe" }, hass);
+    const refs = collectRefs(dash);
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.every((r) => r.includes("_annexe_"))).toBe(true);
+  });
+
+  it("pins by entry_id too", async () => {
+    const hass = makeHass({ extraDevice: { entryId: "entry999", name: "annexe" } });
+    const dash = await EC.generateDashboard({ device: "entry999" }, hass);
+    expect(collectRefs(dash).every((r) => r.includes("_annexe_"))).toBe(true);
+  });
+});

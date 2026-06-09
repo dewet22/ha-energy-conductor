@@ -1,0 +1,11 @@
+{
+  "name": "energy-conductor-frontend",
+  "private": true,
+  "description": "Frontend assets (dashboard strategy) for the Energy Conductor integration",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
+  }
+}

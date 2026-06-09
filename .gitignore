@@ -10,3 +10,6 @@ build/
 *.egg-info/
 .ruff_cache/
 .claude/settings.local.json
+
+# Frontend (dashboard strategy) dev tooling
+node_modules/
