@@ -80,7 +80,6 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
           "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }
@@ -176,7 +175,6 @@
           "write_mode": "Write mode",
           "notify_target": "Notification target",
           "overnight_plan_time": "Overnight plan time (local)",
-          "min_target_soc_percent": "Minimum overnight SoC target (%) — safety floor above the BMS reserve",
           "device_name": "Site name (appended to 'Energy Conductor', e.g. 'Blithe' → 'Energy Conductor Blithe')"
         }
       }
