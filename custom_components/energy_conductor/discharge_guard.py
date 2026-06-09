@@ -29,7 +29,11 @@ def _near_off_peak_start(state: SiteState) -> bool:
     start = state.tariff.next_off_peak_window_start
     if start is None:
         return False
-    return (start - state.now) <= timedelta(minutes=PRE_OFF_PEAK_HOLD_MINUTES)
+    # Hold only when off-peak starts within the next PRE_OFF_PEAK_HOLD_MINUTES.
+    # A past start (e.g. a stale tariff sensor) yields a negative delta — guard the
+    # lower bound, else it would wrongly idle the battery during peak.
+    delta = start - state.now
+    return timedelta(0) <= delta <= timedelta(minutes=PRE_OFF_PEAK_HOLD_MINUTES)
 
 
 def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:

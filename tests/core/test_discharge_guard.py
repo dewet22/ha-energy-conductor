@@ -96,3 +96,13 @@ class TestPreOffPeakHold:
             battery=a_battery(max_discharge_power_w=3000),
         )
         assert decision.value == 3000
+
+    def test_past_start_does_not_hold(self):
+        # Stale tariff sensor: next off-peak start sits in the PAST → negative delta.
+        # Must NOT idle the battery during peak (regression for the negative-timedelta
+        # bug where any past start satisfied "<= hold window").
+        decision = _decide(
+            tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW - timedelta(minutes=5)),
+            battery=a_battery(max_discharge_power_w=3000),
+        )
+        assert decision.value == 3000
