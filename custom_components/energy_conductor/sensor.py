@@ -37,7 +37,6 @@ from .const import (
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
     DOMAIN,
-    PRE_OFF_PEAK_HOLD_MINUTES,
 )
 from .coordinator import EnergyConductorCoordinator
 
@@ -398,7 +397,6 @@ class NextOffPeakWindowStartSensor(_BaseSensor):
         config = self.coordinator.config
         return {
             "source_sensor": config.get(CONF_OFF_PEAK_SENSOR),
-            "hold_minutes": PRE_OFF_PEAK_HOLD_MINUTES,
         }
 
 

@@ -1,13 +1,16 @@
-"""Tests for the three-regime discharge guard (spec §4.2).
+"""Tests for the two-regime discharge guard (spec §4.2).
 
 Regime table:
-  1. off_peak_now             → limit 0W
-  2. pre-off-peak hold window → limit 0W
-  3. default                  → limit max_discharge_power_w
+  1. off_peak_now → limit 0W
+  2. default      → limit max_discharge_power_w
 
-The former "EV dispatch → cap at baseline" regime was removed: on a whole-house
-meter, dispatch always coincides with off_peak, so regime 1 already idles the
-battery while the EV grid-charges. EV state no longer affects the discharge limit.
+Two regimes were removed:
+- "EV dispatch → cap at baseline": on a whole-house meter dispatch always
+  coincides with off_peak, so regime 1 already idles the battery. EV state no
+  longer affects the discharge limit.
+- "pre-off-peak hold" (idle for 30 min before off-peak): those minutes are still
+  peak, where discharging saves the most, and the held-back charge had no payoff.
+  The battery now discharges right up to off-peak (see the counter-test below).
 """
 
 from datetime import timedelta
@@ -79,15 +82,25 @@ class TestDedupeKey:
         assert d_unconstrained.dedupe_key != d_off_peak.dedupe_key
 
 
-class TestPreOffPeakHold:
-    def test_holds_at_zero_when_within_hold_window(self):
+class TestNoPreOffPeakHold:
+    """The pre-off-peak hold was removed — the battery discharges right up to off-peak."""
+
+    def test_keeps_discharging_when_off_peak_is_near(self):
+        # Counter-test for the removed pre-hold. Off-peak opens in 15 min (the old
+        # 30-min hold would have idled the battery here), but those minutes are still
+        # peak — the most valuable discharge of the day. The battery must KEEP
+        # discharging (unconstrained), not hold back. Guards against re-introducing
+        # a pre-hold; "if it runs out before off-peak, that's fine" (reserve floor
+        # handles the bottom).
         decision = _decide(
             tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=15)),
+            battery=a_battery(max_discharge_power_w=3000),
         )
-        assert decision.value == 0
-        assert "pre-off-peak" in decision.reason.lower()
+        assert decision.value == 3000
+        assert "unconstrained" in decision.reason.lower()
 
-    def test_off_peak_now_takes_priority_over_pre_hold(self):
+    def test_off_peak_now_still_idles_regardless_of_next_start(self):
+        # Once off-peak is actually active, idle — independent of next-start timing.
         decision = _decide(
             tariff=a_tariff(
                 off_peak_now=True,
@@ -96,27 +109,3 @@ class TestPreOffPeakHold:
         )
         assert decision.value == 0
         assert "off-peak rate" in decision.reason.lower()
-
-    def test_beyond_hold_window_is_unconstrained(self):
-        decision = _decide(
-            tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW + timedelta(minutes=31)),
-            battery=a_battery(max_discharge_power_w=3000),
-        )
-        assert decision.value == 3000
-
-    def test_no_start_sensor_is_unconstrained(self):
-        decision = _decide(
-            tariff=a_tariff(next_off_peak_window_start=None),
-            battery=a_battery(max_discharge_power_w=3000),
-        )
-        assert decision.value == 3000
-
-    def test_past_start_does_not_hold(self):
-        # Stale tariff sensor: next off-peak start sits in the PAST → negative delta.
-        # Must NOT idle the battery during peak (regression for the negative-timedelta
-        # bug where any past start satisfied "<= hold window").
-        decision = _decide(
-            tariff=a_tariff(next_off_peak_window_start=DEFAULT_NOW - timedelta(minutes=5)),
-            battery=a_battery(max_discharge_power_w=3000),
-        )
-        assert decision.value == 3000
