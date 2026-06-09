@@ -76,7 +76,8 @@
     if (!ecDevices.length) return { error: "no_device" };
 
     // Pick the target device: optional `device` pin (entry_id or name), else
-    // the sole/first device.
+    // the sole/first device. A pin that matches nothing is an explicit error,
+    // never a silent fallback to the wrong device.
     var target = ecDevices[0];
     if (config && config.device) {
       var want = String(config.device).toLowerCase();
@@ -88,7 +89,8 @@
           name === "energy conductor " + want
         );
       });
-      if (match) target = match;
+      if (!match) return { error: "device_not_found", want: config.device };
+      target = match;
     }
 
     // Resolve unique_id -> current entity_id for the target device's enabled
@@ -219,6 +221,13 @@
     if (state.error === "registry") {
       return errorDashboard(
         "Could not read the Home Assistant entity registry. Try reloading the page."
+      );
+    }
+    if (state.error === "device_not_found") {
+      return errorDashboard(
+        "The pinned device '" +
+          state.want +
+          "' was not found. Check the strategy's `device` option."
       );
     }
     if (state.error === "no_device") {

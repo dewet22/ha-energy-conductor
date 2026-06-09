@@ -156,4 +156,13 @@ describe("device pin", () => {
     const dash = await EC.generateDashboard({ device: "entry999" }, hass);
     expect(collectRefs(dash).every((r) => r.includes("_annexe_"))).toBe(true);
   });
+
+  it("shows an error dashboard when a pinned device is not found", async () => {
+    // A pin that matches nothing must NOT silently fall back to another device.
+    const dash = await EC.generateDashboard({ device: "nonexistent" }, makeHass({}));
+    expect(view(dash).cards.length).toBe(1);
+    expect(view(dash).cards[0].type).toBe("markdown");
+    expect(view(dash).cards[0].content).toContain("nonexistent");
+    expect(view(dash).cards[0].content).toContain("not found");
+  });
 });
