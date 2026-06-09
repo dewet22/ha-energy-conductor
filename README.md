@@ -21,7 +21,7 @@ Applies a three-regime limit to battery discharge:
 
 | Condition | Discharge limit |
 |---|---|
-| Cheap tariff window active | 0 W — battery idles, grid fills demand |
+| Off-peak window active | 0 W — battery idles, grid fills demand |
 | EV smart-dispatch active *and* EV drawing power | House baseline load — battery covers the house but doesn't feed the EV |
 | Otherwise | Full rated discharge power |
 
@@ -32,12 +32,16 @@ The guard prevents a hybrid inverter from depleting a battery into an EV charger
 Calculates a battery charge target based on tomorrow's conditions:
 
 1. Reads tomorrow's solar forecast (Solcast, a daily-total sensor, or an automatic fallback)
-2. Calculates the *morning gap*: hours from the end of the cheap window until solar meaningfully contributes
+2. Calculates the *morning gap*: hours from the end of the off-peak window until solar meaningfully contributes
 3. Estimates the gap's energy cost: `gap_hours × baseline_load`
 4. Adds any forecast deficit against your configured daily kWh target
 5. Sets the battery charge target, clamped between your reserve level and 100 %
 
 If no forecast source is configured, it falls back to historical recorder statistics (same ±14-day calendar window in prior years) and then to a seasonal cosine curve.
+
+**Hot-water reserve safety net** (optional; evaluated alongside the evening plan)
+
+For a solar diverter such as the myenergi Eddi running on solar surplus alone, it estimates the tank's stored reserve from an open-loop energy balance — anchored by the diverter's "tank full" status event — and sends a notify-only prompt to add a short manual boost when a run of cloudy days is projected to leave the tank inadequate. It never controls the diverter; it only advises, so you can drop a scheduled overnight boost and rely on solar with a safety net.
 
 All decisions are sent as mobile notifications before any write is made. A **dry-run mode** (the default) sends the notifications but skips the writes, so you can validate behaviour before going live.
 
@@ -61,18 +65,43 @@ Copy `custom_components/energy_conductor/` into your HA `config/custom_component
 
 **Settings → Devices & Services → Add Integration → Energy Conductor**
 
-The config flow walks through six steps:
+The config flow walks through these steps:
 
 | Step | Required | What you configure |
 |---|---|---|
-| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve % |
-| Tariff | ✓ | Cheap-rate binary sensor, optional EV dispatching sensor, overnight window end time |
+| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve %, optional reserve-SoC sensor |
+| Tariff | ✓ | Off-peak binary sensor, optional EV dispatching sensor, overnight window end time |
 | Forecast source | ✓ | Solcast sensor, daily-total sensor, or none |
 | Forecast details | ✓ | Optional live generation sensor, winter/summer fallback range, hemisphere |
+| Loads & learning | ✓ | Optional home-load and managed-load sensors, optional daily-energy sensor, daily kWh target |
 | EV charger | optional | Power sensor, minimum activation power |
-| Behaviour | ✓ | Write mode (dry-run / live), notify target, plan time, daily kWh target |
+| Hot water | optional | Eddi diverted-energy and status sensors, optional total-energy sensor, tank capacity, heater power, reserve threshold, depletion fallback |
+| Behaviour | ✓ | Write mode (dry-run / live), notify target, plan time, minimum target SoC, device name |
 
-The **Behaviour** settings can be changed at any time via the integration's **Configure** option without re-running the full flow.
+Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
+
+---
+
+## Dashboard
+
+The integration bundles a Lovelace **dashboard strategy** that builds a single calm overview — battery and hot-water state, tonight's charge target, the plan's reasoning, and a couple of trend graphs. It's a glanceable "is everything in good hands tonight?" view.
+
+To use it, create a new dashboard (**Settings → Dashboards → Add Dashboard**), open the **raw configuration editor** (top-right ⋮ menu → *Edit dashboard* → ⋮ → *Raw configuration editor*), and replace the whole config with:
+
+```yaml
+strategy:
+  type: custom:energy-conductor
+```
+
+That's it — there are no entity IDs to edit. The strategy resolves every entity from the registry by its stable `unique_id` on each render, so it works regardless of your device name and survives entity renames (including the Home Assistant 2026.6 area-prefix convention). Cards whose backing entity is absent — for example the hot-water graph when no Eddi sensors are configured — are simply omitted.
+
+If you run more than one Energy Conductor instance, pin the one you want:
+
+```yaml
+strategy:
+  type: custom:energy-conductor
+  device: blithe   # device name, or the config-entry id
+```
 
 ---
 
@@ -104,7 +133,7 @@ This means conductor works with any inverter, any EV charger, any forecast servi
 
 Conductor operates at the level of sophistication your entity mapping supports:
 
-- Map only a cheap-rate binary sensor → basic overnight charge scheduling
+- Map only an off-peak binary sensor → basic overnight charge scheduling
 - Also map a price sensor → cost-threshold dispatch decisions
 - Also map hourly forecast slots → morning-gap calculation and intraday routing
 - Also map deferrable and advisory loads → full coordination across all devices
@@ -115,11 +144,9 @@ Each additional entity slot unlocks a richer strategy. None are required to get 
 
 ## Roadmap
 
-**v1 (current)** — discharge guard + overnight charge planning + Solcast/daily/seasonal forecast
+**Shipped** — discharge guard; overnight charge planning (Solcast / daily-total / seasonal forecast); baseline load and daily-target learned from recorder statistics; hot-water reserve safety net for solar diverters; entity reference resilience across renames; a registry-resolved dashboard strategy
 
-**v2** — baseline load from recorder stats (replaces the 400 W placeholder); saving-session precharge; forecast bias correction from (forecast, actual) pairs
-
-**v3** — deferrable load dispatch (EV, HWC); advisory load notifications; formal OpenADR/EEBUS grid event reception
+**Planned** — saving-session precharge; forecast bias correction from (forecast, actual) pairs; active deferrable-load dispatch (EV, HWC); advisory load notifications; formal OpenADR/EEBUS grid event reception
 
 ---
 
