@@ -147,10 +147,6 @@ HOTWATER_DIVERSION_FRACTION = 0.15
 HOTWATER_MIN_BOOST_HOURS = 1
 HOTWATER_MAX_BOOST_HOURS = 2
 
-# Pre-off-peak discharge hold: stop discharging this many minutes before the
-# overnight window opens so the battery enters the cheap period with more charge.
-PRE_OFF_PEAK_HOLD_MINUTES = 30
-
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes
 STALE_FORECAST_SECONDS = 24 * 3600  # 24 hours
