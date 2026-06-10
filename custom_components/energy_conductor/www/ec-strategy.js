@@ -194,6 +194,47 @@
       });
     }
 
+    // 2b. Control status - is EC actually driving the inverter, and did the last
+    //     write land? Surfaces write_mode + per-decision outcome + write counters,
+    //     otherwise only visible as sensor attributes. Same safe embedding as card 2:
+    //     every id is a VALID_ENTITY_ID-validated registry value used as a string literal.
+    var statusId = acc("status");
+    var dischargeId = acc("discharge-decision");
+    if (statusId) {
+      var lines = ["**Mode:** {{ state_attr('" + statusId + "', 'write_mode') | upper }}"];
+      if (dischargeId) {
+        lines.push(
+          "**Discharge limit:** {{ states('" +
+            dischargeId +
+            "') }} W - {{ state_attr('" +
+            dischargeId +
+            "', 'outcome') }}",
+        );
+      }
+      if (planId) {
+        lines.push(
+          "**Charge target:** {{ states('" +
+            planId +
+            "') }}% - {{ state_attr('" +
+            planId +
+            "', 'outcome') }}",
+        );
+      }
+      lines.push(
+        "**Writes:** {{ state_attr('" +
+          statusId +
+          "', 'writes_sent') }} sent, {{ state_attr('" +
+          statusId +
+          "', 'write_failures') }} failed",
+      );
+      lines.push(
+        "{% set e = state_attr('" +
+          statusId +
+          "', 'last_write_error') %}{% if e %}**Last write error:** {{ e }}{% endif %}",
+      );
+      cards.push({ type: "markdown", title: "Control status", content: lines.join("\n") });
+    }
+
     // 3. Hot water reserve over the last week - the daily fill/drain cycle.
     //    Omitted entirely when the diverter is not configured.
     var hwId = acc("hot-water-reserve");

@@ -16,6 +16,7 @@ from homeassistant.helpers.event import (
     async_track_time_change,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .adapter import Adapter, EntityProblem, parse_hh_mm
 from .const import (
@@ -35,6 +36,7 @@ from .const import (
     STATUS_ERROR,
     STATUS_OK,
     WRITE_MODE_DRY_RUN,
+    WRITE_MODE_LIVE,
 )
 from .decisions import Decision, DecisionKind
 from .discharge_guard import discharge_limit
@@ -54,6 +56,9 @@ _LOGGER = logging.getLogger(__name__)
 # overnight charging window yet stays well short of the ~24h gap to the next cycle. Age-based
 # (not calendar-date) freshness avoids a retry blackout for a plan emitted near midnight.
 _PLAN_RETRY_MAX_AGE = timedelta(hours=12)
+
+# Decision kinds that drive a hardware write (vs notify-only). Mirrors writer.py's routing.
+_WRITE_KINDS = frozenset({DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT})
 
 
 @dataclass
@@ -129,6 +134,21 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # visible on the diagnostic sensor rather than lost to the log.
         self.notify_failures: int = 0
         self.last_notify_error: str | None = None
+        # Write-outcome tracking, mirroring the notify counters above. EC actuates hardware
+        # autonomously, so "did it write, when, did it succeed?" must be answerable at a glance.
+        # writes_sent counts ACTUAL hardware writes (live only) — in dry-run it stays 0 and the
+        # outcome reads "dry_run", so whether EC is really driving the inverter is unambiguous.
+        self.write_mode: str = self.config.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN)
+        self.writes_sent: int = 0
+        self.write_failures: int = 0
+        self.last_write_at: datetime | None = None
+        self.last_write_error: str | None = None
+        self.last_write_outcome: str | None = None
+        self.last_discharge_outcome: str | None = None
+        self.last_overnight_outcome: str | None = None
+        # When the coordinator first went non-OK (degraded/error), cleared on a healthy tick —
+        # so a post-restart or upstream-entity gap explains its own duration.
+        self.degraded_since: datetime | None = None
         self.last_overnight_plan: Decision | None = None
         # When last_overnight_plan was computed (state.now at plan time). Gates the every-tick
         # retry by elapsed age so a pending write from a past cycle is never applied once the
@@ -212,16 +232,21 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         except EntityProblem as exc:
             self.status = STATUS_DEGRADED
             self.last_error = str(exc)
+            if self.degraded_since is None:
+                self.degraded_since = dt_util.utcnow()
             _LOGGER.warning("Skipping tick: %s", exc)
             return
         except Exception as exc:
             self.status = STATUS_ERROR
             self.last_error = repr(exc)
+            if self.degraded_since is None:
+                self.degraded_since = dt_util.utcnow()
             _LOGGER.exception("Unexpected error building SiteState")
             raise UpdateFailed(str(exc)) from exc
 
         self.status = STATUS_OK
         self.last_error = None
+        self.degraded_since = None
         self.last_site_state = state
 
         try:
@@ -231,10 +256,12 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         except Exception as exc:
             self.status = STATUS_ERROR
             self.last_error = repr(exc)
+            if self.degraded_since is None:
+                self.degraded_since = dt_util.utcnow()
             _LOGGER.exception("Discharge guard crashed")
             return
 
-        await self._emit(decision)
+        self.last_discharge_outcome = await self._emit(decision)
         self.last_discharge_decision = decision
 
         # Retry a pending (failed) charge-target write on every tick too. The overnight
@@ -253,7 +280,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             and self.last_overnight_plan_at is not None
             and state.now - self.last_overnight_plan_at <= _PLAN_RETRY_MAX_AGE
         ):
-            await self._emit(self.last_overnight_plan)
+            self.last_overnight_outcome = await self._emit(self.last_overnight_plan)
 
     async def _run_overnight_plan(self, _now=None) -> None:
         try:
@@ -278,7 +305,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self.last_error = "plan_overnight crashed (see logs)"
             _LOGGER.exception("plan_overnight crashed")
             return
-        await self._emit(decision)
+        self.last_overnight_outcome = await self._emit(decision)
         self.last_overnight_plan = decision
         self.last_overnight_plan_at = state.now
 
@@ -287,14 +314,21 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         if hot_water_decision is not None:
             await self._emit(hot_water_decision)
 
-    async def _emit(self, decision: Decision) -> None:
+    async def _emit(self, decision: Decision) -> str:
+        """Notify + write a decision, returning the write outcome for observability:
+
+        ``applied`` (live write landed) | ``dry_run`` (write-kind, dry-run, no-op) |
+        ``unchanged`` (already written + notified, nothing to do) | ``failed`` (write error,
+        will retry) | ``notified`` (notify-only kind, no hardware write).
+        """
         key = (decision.kind.value, decision.target_entity)
         st = self._emit_state[key]
         dk = decision.dedupe_key
+        is_write_kind = decision.kind in _WRITE_KINDS
 
         # Fully handled: written to hardware AND the user was told. Nothing to do.
         if st.written == dk and st.notified == dk:
-            return
+            return "unchanged"
 
         # Primary notification — once per decision, retried only until delivered (so a
         # failed notify isn't suppressed forever; a retried write doesn't re-notify).
@@ -311,6 +345,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 await self.writer.write(decision)
             except WriteFailure as exc:
                 _LOGGER.warning("Write failed: %s", exc)
+                self.write_failures += 1
+                self.last_write_error = str(exc)
+                if is_write_kind:
+                    self.last_write_outcome = "failed"
                 if st.notify_failed != dk:
                     failure_decision = Decision(
                         kind=decision.kind,
@@ -321,8 +359,21 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                     )
                     if await self._notify(failure_decision):
                         st.notify_failed = dk
-                return  # NOT marked written → write retries on the next tick
+                return "failed"  # NOT marked written → write retries on the next tick
             st.written = dk
+            if not is_write_kind:
+                return "notified"  # writer.write was a no-op (notify-only kind)
+            if self.write_mode == WRITE_MODE_LIVE:
+                # An actual hardware write landed.
+                self.writes_sent += 1
+                self.last_write_at = dt_util.utcnow()
+                self.last_write_outcome = "applied"
+                return "applied"
+            self.last_write_outcome = "dry_run"
+            return "dry_run"
+
+        # Write was already applied earlier; this emission only (re)delivered a notification.
+        return "unchanged"
 
     async def _notify(self, decision: Decision) -> bool:
         """Dispatch a notification; record any failure on the diagnostic counters.

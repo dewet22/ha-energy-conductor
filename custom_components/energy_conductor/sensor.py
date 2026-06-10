@@ -111,7 +111,14 @@ class StatusSensor(_BaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "last_error": self.coordinator.last_error,
+            "degraded_since": self.coordinator.degraded_since,
             "ticks_total": self.coordinator.ticks_total,
+            "write_mode": self.coordinator.write_mode,
+            "writes_sent": self.coordinator.writes_sent,
+            "write_failures": self.coordinator.write_failures,
+            "last_write_at": self.coordinator.last_write_at,
+            "last_write_outcome": self.coordinator.last_write_outcome,
+            "last_write_error": self.coordinator.last_write_error,
             "notifications_sent": self.coordinator.notifications_sent,
             "notify_failures": self.coordinator.notify_failures,
             "last_notify_error": self.coordinator.last_notify_error,
@@ -138,7 +145,12 @@ class OvernightPlanSensor(_BaseSensor):
         plan = self.coordinator.last_overnight_plan
         if plan is None:
             return {}
-        return {"reason": plan.reason, "dedupe_key": plan.dedupe_key}
+        return {
+            "reason": plan.reason,
+            "dedupe_key": plan.dedupe_key,
+            "outcome": self.coordinator.last_overnight_outcome,
+            "write_mode": self.coordinator.write_mode,
+        }
 
 
 class DischargeDecisionSensor(_BaseSensor):
@@ -160,7 +172,12 @@ class DischargeDecisionSensor(_BaseSensor):
         d = self.coordinator.last_discharge_decision
         if d is None:
             return {}
-        return {"reason": d.reason, "dedupe_key": d.dedupe_key}
+        return {
+            "reason": d.reason,
+            "dedupe_key": d.dedupe_key,
+            "outcome": self.coordinator.last_discharge_outcome,
+            "write_mode": self.coordinator.write_mode,
+        }
 
 
 class BatterySocSensor(_BaseSensor):

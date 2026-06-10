@@ -48,12 +48,30 @@ const cardByType = (dash, t) => view(dash).cards.find((c) => c.type === t);
 // --- tests ------------------------------------------------------------------
 
 describe("dashboard structure", () => {
-  it("builds a single Overview view with the four cards for a full install", async () => {
+  it("builds a single Overview view with the five cards for a full install", async () => {
     const dash = await EC.generateDashboard({}, makeHass({}));
     expect(dash.title).toBe("Energy Conductor");
     expect(dash.views.length).toBe(1);
     expect(view(dash).title).toBe("Overview");
-    expect(cardTypes(dash)).toEqual(["entities", "markdown", "history-graph", "statistics-graph"]);
+    expect(cardTypes(dash)).toEqual([
+      "entities",
+      "markdown",
+      "markdown",
+      "history-graph",
+      "statistics-graph",
+    ]);
+  });
+
+  it("builds a Control status card surfacing write_mode and write counters", async () => {
+    const hass = makeHass({});
+    const dash = await EC.generateDashboard({}, hass);
+    const card = view(dash).cards.find((c) => c.title === "Control status");
+    expect(card).toBeDefined();
+    expect(card.type).toBe("markdown");
+    expect(card.content).toContain("write_mode");
+    expect(card.content).toContain("writes_sent");
+    // References the resolved (registry) status entity id, not a constructed string.
+    expect(card.content).toContain("energy_conductor_blithe_status");
   });
 
   it("lists the expected Tonight rows", async () => {
@@ -115,7 +133,7 @@ describe("graceful degradation", () => {
     expect([...registry].some((id) => id.endsWith("_hot_water_reserve"))).toBe(true);
 
     expect(hasNullEntity(dash)).toBe(false);
-    expect(cardTypes(dash)).toEqual(["entities", "markdown", "statistics-graph"]);
+    expect(cardTypes(dash)).toEqual(["entities", "markdown", "markdown", "statistics-graph"]);
     const names = cardByType(dash, "entities").entities.map((r) => r.name);
     expect(names).not.toContain("Hot water reserve");
     expect(names).not.toContain("Hot water boost needed");
@@ -172,8 +190,13 @@ describe("graceful degradation", () => {
 
     const dash = await EC.generateDashboard({}, hass);
 
-    expect(cardTypes(dash)).not.toContain("markdown");
-    expect(JSON.stringify(dash)).not.toContain("%}"); // no template fragments anywhere
+    // The plan-reasoning card (which would embed the overnight-plan id) is omitted.
+    expect(view(dash).cards.find((c) => c.title === "Plan reasoning")).toBeUndefined();
+    // The Control status card may still be built from the VALID status id, but the crafted
+    // overnight-plan payload must never reach any card.
+    const json = JSON.stringify(dash);
+    expect(json).not.toContain("states | count");
+    expect(json).not.toContain("sensor.x'");
   });
 
   it("returns an error dashboard when no Energy Conductor device exists", async () => {
