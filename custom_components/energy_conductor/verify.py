@@ -48,4 +48,10 @@ def check_actuation(
             ok=False,
             detail=f"discharge capped at 0 but battery discharging {power_w:.0f} W{grid_note}",
         )
+    # Charging is fine under a discharge cap (the cap only forbids discharging) — but call it
+    # what it is rather than "idle" when the battery is pulling meaningful power in (Gemini).
+    if power_w < -VERIFY_DISCHARGE_THRESHOLD_W:
+        return VerificationResult(
+            ok=True, detail=f"battery charging at {-power_w:.0f} W{grid_note}"
+        )
     return VerificationResult(ok=True, detail=f"battery idle at {power_w:.0f} W{grid_note}")

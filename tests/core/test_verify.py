@@ -43,6 +43,15 @@ def test_ok_when_battery_idle_under_cap():
     result = check_actuation(state, _cap(0), "applied")
     assert result is not None
     assert result.ok is True
+    assert "idle" in result.detail
+
+
+def test_ok_and_labelled_charging_when_battery_charging():
+    # Charging is fine under a discharge cap; the detail should say "charging", not "idle".
+    state = _state(battery_power=-2000.0)
+    result = check_actuation(state, _cap(0), "applied")
+    assert result.ok is True
+    assert "charging at 2000 W" in result.detail
 
 
 def test_grid_import_included_in_detail():
