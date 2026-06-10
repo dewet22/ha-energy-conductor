@@ -6,7 +6,7 @@ import logging
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -122,6 +122,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.notify_failures: int = 0
         self.last_notify_error: str | None = None
         self.last_overnight_plan: Decision | None = None
+        # The planning date of last_overnight_plan (== state.now.date() at plan time, the
+        # same date its dedupe_key carries). Gates the every-tick retry so a pending write
+        # from a past planning cycle is never applied once planning has moved on.
+        self.last_overnight_plan_date: date | None = None
         self.last_discharge_decision: Decision | None = None
         self.last_site_state: SiteState | None = None
 
@@ -221,7 +225,17 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # plan otherwise only re-emits at its scheduled time + hourly, so a transient
         # write failure would leave the target stale for up to an hour. _emit is a no-op
         # once the write has landed, so re-emitting the cached plan each tick is cheap.
-        if self.last_overnight_plan is not None:
+        #
+        # Only retry while the cached plan is still for the current date. Planning runs
+        # hourly, so in healthy operation this is always today's plan; the date only falls
+        # behind when planning itself has been failing across a day boundary — and in that
+        # degraded state a recovered entity must NOT have a past cycle's target applied to
+        # it (audit M-4, Codex). The retry only acts on a still-pending write anyway, so
+        # gating it out once the date is stale costs nothing in the healthy case.
+        if (
+            self.last_overnight_plan is not None
+            and self.last_overnight_plan_date == state.now.date()
+        ):
             await self._emit(self.last_overnight_plan)
 
     async def _run_overnight_plan(self, _now=None) -> None:
@@ -249,6 +263,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             return
         await self._emit(decision)
         self.last_overnight_plan = decision
+        self.last_overnight_plan_date = state.now.date()
 
         # Hot-water boost prompt — notify-only, evaluated alongside the overnight plan.
         hot_water_decision = _hot_water_decision(state)
