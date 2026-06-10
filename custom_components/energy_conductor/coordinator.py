@@ -334,7 +334,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         for key, cmd in self._commanded.items():
             if (now - cmd.written_at).total_seconds() < VERIFY_MISMATCH_SECONDS:
                 continue  # write-echo still settling — no verdict for this command yet
-            target = key[1]
+            kind, target = key  # kind is a non-identifying label; target is the entity_id
             raw = self.hass.states.get(target)
             readback: float | None = None
             if raw is not None and raw.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
@@ -342,7 +342,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                     readback = float(raw.state)
                 except TypeError, ValueError:
                     readback = None
-            result = check_write_landed(target, cmd.value, readback)
+            # Pass the decision kind, NOT the entity_id, into the detail — it flows into
+            # diagnostics + notifications, where the entity_id would re-leak room/device
+            # names that the redaction strips (Codex review).
+            result = check_write_landed(kind, cmd.value, readback)
             if result is None:
                 continue  # entity unreadable — no verdict either way
             if not result.ok:

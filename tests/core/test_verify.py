@@ -104,21 +104,30 @@ def test_not_applicable_for_other_decision_kinds():
 
 
 def test_write_landed_match():
-    result = check_write_landed("number.discharge", 0.0, 0.0)
+    result = check_write_landed("set_discharge_limit", 0.0, 0.0)
     assert result.ok is True
     assert "as commanded" in result.detail
 
 
 def test_write_landed_within_tolerance():
     # Setpoint registers are integers; allow float/rounding slack only.
-    assert check_write_landed("number.discharge", 50.0, 50.4).ok is True
+    assert check_write_landed("set_discharge_limit", 50.0, 50.4).ok is True
 
 
 def test_write_landed_flip_back_mismatch():
-    result = check_write_landed("number.discharge", 0.0, 50.0)
+    result = check_write_landed("set_discharge_limit", 0.0, 50.0)
     assert result.ok is False
-    assert "commanded number.discharge=0 but entity reads 50" in result.detail
+    assert "commanded set_discharge_limit=0 but entity reads 50" in result.detail
+
+
+def test_write_landed_detail_uses_label_not_entity_id():
+    # The detail flows into diagnostics + notifications, so it must carry a non-identifying
+    # label (the decision kind), never the entity_id (room/device names) — Codex review.
+    for value in (0.0, 50.0):  # both ok and mismatch paths
+        detail = check_write_landed("set_discharge_limit", 0.0, value).detail
+        assert "number." not in detail
+        assert "set_discharge_limit" in detail
 
 
 def test_write_landed_unreadable_entity_no_verdict():
-    assert check_write_landed("number.discharge", 0.0, None) is None
+    assert check_write_landed("set_discharge_limit", 0.0, None) is None

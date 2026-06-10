@@ -64,9 +64,13 @@ def check_actuation(
 
 
 def check_write_landed(
-    target_entity: str, commanded: float, readback: float | None
+    label: str, commanded: float, readback: float | None
 ) -> VerificationResult | None:
     """Compare a commanded setpoint write against the entity's current (read-back) value.
+
+    ``label`` is a NON-identifying control name (the decision kind, e.g. "set_discharge_limit")
+    — never the entity_id, which embeds room/device names and would re-leak into the
+    (publicly-attached) diagnostics dump + notifications that detail strings flow into.
 
     ``None`` when the entity can't be read (unavailable/non-numeric) — no verdict either way.
     The caller owns the settle-window timing (don't judge before the write-echo has had time to
@@ -75,10 +79,8 @@ def check_write_landed(
     if readback is None:
         return None
     if abs(readback - commanded) <= VERIFY_READBACK_TOLERANCE:
-        return VerificationResult(
-            ok=True, detail=f"{target_entity} reads {readback:g} as commanded"
-        )
+        return VerificationResult(ok=True, detail=f"{label} reads {readback:g} as commanded")
     return VerificationResult(
         ok=False,
-        detail=f"commanded {target_entity}={commanded:g} but entity reads {readback:g}",
+        detail=f"commanded {label}={commanded:g} but entity reads {readback:g}",
     )
