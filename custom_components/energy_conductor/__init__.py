@@ -26,7 +26,7 @@ PLATFORMS = ["binary_sensor", "sensor"]
 # change to ec-strategy.js so the browser cache doesn't serve a stale copy.
 _STRATEGY_FILENAME = "ec-strategy.js"
 _STRATEGY_URL = f"/{DOMAIN}/{_STRATEGY_FILENAME}"
-_STRATEGY_VERSION = "4"
+_STRATEGY_VERSION = "5"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

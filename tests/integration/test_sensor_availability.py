@@ -99,3 +99,38 @@ async def test_sensors_publish_when_soc_unavailable_at_boot(hass: HomeAssistant)
     assert status.state not in ("unavailable", "unknown"), (
         f"status sensor withheld at boot: {status.state}"
     )
+
+
+async def test_status_sensor_exposes_write_attributes(hass: HomeAssistant) -> None:
+    """Write-outcome observability: the status sensor surfaces write_mode + write counters."""
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="t4")
+    assert await _setup(hass, entry)
+
+    attrs = _status_state(hass, entry).attributes
+    for key in (
+        "write_mode",
+        "writes_sent",
+        "write_failures",
+        "last_write_at",
+        "last_write_outcome",
+        "last_write_error",
+        "degraded_since",
+    ):
+        assert key in attrs, key
+    assert attrs["write_mode"] == "dry_run"  # MOCK_CONFIG default
+    assert attrs["degraded_since"] is None  # healthy setup
+
+
+async def test_discharge_sensor_exposes_outcome(hass: HomeAssistant) -> None:
+    """The discharge decision sensor surfaces the per-decision outcome + write_mode."""
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="t5")
+    assert await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    eid = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}-discharge-decision")
+    assert eid is not None
+    attrs = hass.states.get(eid).attributes
+    assert attrs.get("outcome") in ("dry_run", "applied", "unchanged", "failed")
+    assert attrs.get("write_mode") == "dry_run"

@@ -103,6 +103,83 @@ async def test_write_failure_retries_until_success(coordinator) -> None:
     assert coordinator.notifications_sent == 2
 
 
+async def test_emit_outcome_applied_in_live_mode(coordinator) -> None:
+    """Write-outcome tracking: a live write reports 'applied' and increments writes_sent once."""
+    from custom_components.energy_conductor.const import WRITE_MODE_LIVE
+
+    coordinator.write_mode = WRITE_MODE_LIVE
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "applied"
+    assert coordinator.writes_sent == 1
+    assert coordinator.last_write_at is not None
+    assert coordinator.last_write_outcome == "applied"
+
+    # Re-emitting the identical decision is a no-op write: 'unchanged', no extra count.
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "unchanged"
+    assert coordinator.writes_sent == 1
+
+
+async def test_emit_outcome_dry_run(coordinator) -> None:
+    """In dry-run the write is a no-op: outcome 'dry_run', writes_sent stays 0."""
+    from custom_components.energy_conductor.const import WRITE_MODE_DRY_RUN
+
+    assert coordinator.write_mode == WRITE_MODE_DRY_RUN  # fixture default
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "dry_run"
+    assert coordinator.writes_sent == 0
+    assert coordinator.last_write_outcome == "dry_run"
+
+
+async def test_emit_outcome_failed_counts_and_records(coordinator) -> None:
+    """A WriteFailure reports 'failed', increments write_failures, records the error."""
+    from custom_components.energy_conductor.writer import WriteFailure
+
+    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "failed"
+    assert coordinator.write_failures == 1
+    assert coordinator.last_write_error == "boom"
+    assert coordinator.last_write_outcome == "failed"
+
+
+async def test_successful_write_clears_stale_error(coordinator) -> None:
+    """A recovered write must clear last_write_error, so the dashboard doesn't show a stale
+    failure next to a successful outcome (Codex review)."""
+    from custom_components.energy_conductor.const import WRITE_MODE_LIVE
+    from custom_components.energy_conductor.writer import WriteFailure
+
+    coordinator.write_mode = WRITE_MODE_LIVE
+    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
+    await coordinator._emit(_decision(dedupe_key="d-0"))
+    assert coordinator.last_write_error == "boom"
+
+    # Recovery: identical decision, write now succeeds → applied AND the stale error is cleared.
+    coordinator.writer.write = AsyncMock(return_value=None)
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "applied"
+    assert coordinator.last_write_error is None
+    assert coordinator.last_write_outcome == "applied"
+
+
+async def test_degraded_since_set_and_cleared(coordinator) -> None:
+    """degraded_since stamps the first non-OK tick and clears on recovery, so a gap explains
+    its own duration (audit observability)."""
+    from custom_components.energy_conductor.adapter import EntityProblem
+    from custom_components.energy_conductor.const import STATUS_DEGRADED, STATUS_OK
+
+    coordinator.adapter.build_site_state = AsyncMock(side_effect=EntityProblem("sensor.x: gone"))
+    await coordinator._async_update_data()
+    assert coordinator.status == STATUS_DEGRADED
+    first = coordinator.degraded_since
+    assert first is not None
+
+    # A second consecutive failure keeps the original timestamp.
+    await coordinator._async_update_data()
+    assert coordinator.degraded_since == first
+
+    # A healthy tick clears it.
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
+    await coordinator._async_update_data()
+    assert coordinator.status == STATUS_OK
+    assert coordinator.degraded_since is None
+
+
 async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
     """Audit M-4 (Codex): a failed charge-target write must retry on the next coordinator
     tick, not only at the hourly plan re-eval — `_async_update_data` re-emits the cached
