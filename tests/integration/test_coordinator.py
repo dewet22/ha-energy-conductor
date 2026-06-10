@@ -381,7 +381,14 @@ def test_hot_water_decision_built_when_recommended() -> None:
 
 from datetime import timedelta  # noqa: E402
 
-from custom_components.energy_conductor.const import WRITE_MODE_LIVE  # noqa: E402
+from custom_components.energy_conductor.const import (  # noqa: E402
+    CONF_BATTERY_CHARGE_CONTROL,
+    WRITE_MODE_LIVE,
+)
+from custom_components.energy_conductor.coordinator import (  # noqa: E402
+    _PLAN_RETRY_MAX_AGE,
+    _CommandedWrite,
+)
 
 _T0 = datetime(2026, 6, 8, 23, 0, tzinfo=UTC)
 
@@ -433,6 +440,93 @@ async def test_verification_skipped_in_dry_run(coordinator) -> None:
     assert coordinator.write_mode == "dry_run"  # fixture default
     await _tick(coordinator, secs=0, battery_power=2000.0)
     await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "n/a"
+
+
+# ---- write-readback verification ---------------------------------------------------------
+
+_DISCHARGE_KEY = ("set_discharge_limit", "number.battery_discharge_limit")
+
+
+async def test_write_readback_not_recorded_in_dry_run(coordinator) -> None:
+    """Dry-run issues no real write — nothing to read back."""
+    assert coordinator.write_mode == "dry_run"
+    await _tick(coordinator, secs=0, battery_power=None)
+    assert coordinator._commanded == {}
+
+
+async def test_write_readback_ok_when_entity_reflects_command(coordinator, hass) -> None:
+    """A judgeable commanded write whose entity reads the commanded value → status ok."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)  # live write records _commanded
+    # Make it judgeable: pretend the write happened well before the tick clock (_T0).
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    hass.states.async_set("number.battery_discharge_limit", "0")  # echo landed
+
+    await _tick(coordinator, secs=0, battery_power=None)  # actuation n/a (no battery power)
+    assert coordinator.verification_status == "ok"
+    assert "as commanded" in coordinator.last_verification_detail
+
+
+async def test_write_readback_pending_during_settle(coordinator, hass) -> None:
+    """No verdict while the write-echo is still settling — an early read must not judge."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0  # just written
+    hass.states.async_set("number.battery_discharge_limit", "50")  # still the old value
+
+    await _tick(coordinator, secs=30, battery_power=None)  # 30s < VERIFY_MISMATCH_SECONDS
+    assert coordinator.verification_status == "n/a"
+    assert coordinator._commanded[_DISCHARGE_KEY].retries == 0
+
+
+async def test_write_readback_flip_back_retries_then_flags(coordinator, hass) -> None:
+    """The flip-back signature: entity reverts to the original value. First confirmation
+    re-issues the write once (self-heal); if the retry doesn't stick either, the mismatch
+    persists through the debounce window → flagged + notified."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)  # write 1 (applied)
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    hass.states.async_set("number.battery_discharge_limit", "50")  # flipped back
+
+    # First confirmation → re-issue scheduled (emit bookkeeping cleared), not yet flagged.
+    writes_before = coordinator.writer.write.await_count
+    await _tick(coordinator, secs=30, battery_power=None)
+    assert coordinator.verification_status != "mismatch"
+    assert coordinator._commanded[_DISCHARGE_KEY].retries == 1
+
+    # Next tick re-issues the same command (write 2) and starts a fresh settle window.
+    await _tick(coordinator, secs=60, battery_power=None)
+    assert coordinator.writer.write.await_count > writes_before
+
+    # The retry doesn't stick either: make it judgeable, entity still shows the old value.
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    await _tick(coordinator, secs=90, battery_power=None)
+    assert coordinator.verification_status != "mismatch"  # mismatch persistence window starts
+    n_before = coordinator.notifications_sent
+
+    await _tick(coordinator, secs=190, battery_power=None)  # >90s persisted → confirmed
+    assert coordinator.verification_status == "mismatch"
+    assert "entity reads 50" in coordinator.last_verification_detail
+    assert coordinator.notifications_sent == n_before + 1
+
+
+async def test_write_readback_drops_stale_charge_target(coordinator, hass) -> None:
+    """A charge-target command must stop being verified once the overnight plan goes stale
+    (>_PLAN_RETRY_MAX_AGE) — EC no longer re-enforces it, so a later divergence on the entity
+    must NOT raise a false mismatch (Gemini review)."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    charge_entity = coordinator.config[CONF_BATTERY_CHARGE_CONTROL]
+    charge_key = ("set_charge_target", charge_entity)
+    # EC commanded a charge target long ago; the entity has since diverged (window over).
+    coordinator._commanded[charge_key] = _CommandedWrite(
+        value=80.0, written_at=_T0 - timedelta(hours=2)
+    )
+    coordinator.last_overnight_plan_at = _T0 - (_PLAN_RETRY_MAX_AGE + timedelta(hours=1))
+    hass.states.async_set(charge_entity, "20")  # changed since EC's stale command
+
+    await _tick(coordinator, secs=0, battery_power=None)
+    assert charge_key not in coordinator._commanded  # dropped, not verified
     assert coordinator.verification_status == "n/a"
 
 

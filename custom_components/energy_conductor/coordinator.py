@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -46,7 +47,7 @@ from .jitter import hourly_jitter_offset
 from .model import SiteState
 from .notifier import Notifier
 from .overnight import plan_overnight
-from .verify import check_actuation
+from .verify import VerificationResult, check_actuation, check_write_landed
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,16 @@ _PLAN_RETRY_MAX_AGE = timedelta(hours=12)
 
 # Decision kinds that drive a hardware write (vs notify-only). Mirrors writer.py's routing.
 _WRITE_KINDS = frozenset({DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT})
+
+
+@dataclass
+class _CommandedWrite:
+    """Bookkeeping for write-readback verification, per (kind, target) — the entity must come
+    to reflect this value (the inverter's write-echo) and KEEP reflecting it on every tick."""
+
+    value: float
+    written_at: datetime
+    retries: int = 0  # re-issue budget consumed (retry once, then flag)
 
 
 @dataclass
@@ -164,6 +175,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_verification_detail: str | None = None
         self.last_verification_at: datetime | None = None
         self._mismatch_since: datetime | None = None
+        # Write-readback: last successfully-commanded value per (kind, target), re-verified
+        # against the entity every tick (catches flip-backs at any timescale).
+        self._commanded: dict[tuple[str, str], _CommandedWrite] = {}
 
         self._unsubs: list = []
 
@@ -293,13 +307,69 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # Actuation verification: did the meter reflect the discharge cap we just emitted?
         await self._verify_actuation(state)
 
-    async def _verify_actuation(self, state: SiteState) -> None:
-        """Check the last discharge actuation against the meter and flag a persistent mismatch.
+    def _check_writes_landed(self, now: datetime) -> VerificationResult | None:
+        """Re-verify every commanded setpoint against its entity readback (write-landing).
 
-        Live-mode only (dry-run isn't actuating). A mismatch must persist VERIFY_MISMATCH_SECONDS
-        before it's confirmed — one timer serving as both settle window and debounce, robust to the
-        variable tick cadence (state-change events trigger extra refreshes). A confirmed mismatch
-        raises the actuation-mismatch binary sensor and notifies once per episode.
+        The entity reflects the inverter's write-echo within a tick, so after a short settle
+        window (which absorbs the transient flip-back signature) a non-matching readback means
+        the write was silently rejected or didn't persist. Self-heals once by clearing the
+        emit bookkeeping so the M-4 every-tick retry re-issues the command; a second failure
+        returns a mismatch verdict. Returns ok when all judgeable writes match, None when
+        nothing is judgeable (settling / unreadable entities / no commands yet).
+        """
+        # Stop verifying the charge target once the overnight plan is no longer fresh: EC has
+        # stopped re-enforcing it (the M-4 retry is freshness-gated), so the entity may
+        # legitimately diverge (a later change once the window is over) and verifying the stale
+        # value would false-flag — and the self-heal couldn't re-write it anyway (Gemini review).
+        # The discharge command needs no such cleanup: it's recomputed and re-asserted each tick.
+        if (
+            self.last_overnight_plan_at is not None
+            and now - self.last_overnight_plan_at > _PLAN_RETRY_MAX_AGE
+        ):
+            charge_entity = self.config.get(CONF_BATTERY_CHARGE_CONTROL)
+            if charge_entity is not None:
+                self._commanded.pop((DecisionKind.SET_CHARGE_TARGET.value, charge_entity), None)
+
+        verdict: VerificationResult | None = None
+        for key, cmd in self._commanded.items():
+            if (now - cmd.written_at).total_seconds() < VERIFY_MISMATCH_SECONDS:
+                continue  # write-echo still settling — no verdict for this command yet
+            kind, target = key  # kind is a non-identifying label; target is the entity_id
+            raw = self.hass.states.get(target)
+            readback: float | None = None
+            if raw is not None and raw.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
+                try:
+                    readback = float(raw.state)
+                except TypeError, ValueError:
+                    readback = None
+            # Pass the decision kind, NOT the entity_id, into the detail — it flows into
+            # diagnostics + notifications, where the entity_id would re-leak room/device
+            # names that the redaction strips (Codex review).
+            result = check_write_landed(kind, cmd.value, readback)
+            if result is None:
+                continue  # entity unreadable — no verdict either way
+            if not result.ok:
+                if cmd.retries < 1:
+                    # Self-heal first: re-issue once via the M-4 retry path; flag only if
+                    # the retry doesn't stick either.
+                    cmd.retries += 1
+                    self._emit_state[key].written = None
+                    _LOGGER.warning("Write readback failed (%s); re-issuing once", result.detail)
+                    continue
+                return result
+            verdict = verdict or result
+        return verdict
+
+    async def _verify_actuation(self, state: SiteState) -> None:
+        """Verify EC's commands took effect; flag a persistent mismatch.
+
+        Two live-mode-only checks, folded into one verdict: write-readback (did each commanded
+        setpoint value land — and stay — on its entity?) and the anti-drain actuation check
+        (did the battery physically respond?). A landed-mismatch wins (the write didn't even
+        stick); mismatches must persist VERIFY_MISMATCH_SECONDS before confirming — one timer
+        serving as both settle window and debounce, robust to the variable tick cadence. A
+        confirmed mismatch raises the actuation-mismatch binary sensor and notifies once per
+        episode.
         """
         if self.write_mode != WRITE_MODE_LIVE:
             self.verification_status = "n/a"
@@ -307,7 +377,16 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self._mismatch_since = None
             return
 
-        result = check_actuation(state, self.last_discharge_decision, self.last_discharge_outcome)
+        actuation = check_actuation(
+            state, self.last_discharge_decision, self.last_discharge_outcome
+        )
+        landed = self._check_writes_landed(state.now)
+        if landed is not None and not landed.ok:
+            result = landed  # the write didn't even land — the most fundamental failure
+        elif actuation is not None:
+            result = actuation
+        else:
+            result = landed  # ok (all judgeable writes match) or None (nothing to verify)
         if result is None:
             self.verification_status = "n/a"
             self.last_verification_detail = None
@@ -335,7 +414,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         mismatch = Decision(
             kind=DecisionKind.VERIFICATION_MISMATCH,
             target_entity="actuation",
-            value=state.battery.power_w,
+            # A landed-mismatch can fire without a battery-power sensor; the notifier
+            # formats this as watts, so it must always be numeric.
+            value=state.battery.power_w if state.battery.power_w is not None else 0,
             reason=result.detail,
             dedupe_key=f"mismatch-{self._mismatch_since.isoformat()}",
         )
@@ -430,6 +511,15 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 self.writes_sent += 1
                 self.last_write_at = dt_util.utcnow()
                 self.last_write_outcome = "applied"
+                # Record for write-readback verification. A re-issue of the same command
+                # keeps its retry budget; a new value resets it.
+                prev = self._commanded.get(key)
+                value = float(decision.value)
+                self._commanded[key] = _CommandedWrite(
+                    value=value,
+                    written_at=self.last_write_at,
+                    retries=prev.retries if prev is not None and prev.value == value else 0,
+                )
                 return "applied"
             self.last_write_outcome = "dry_run"
             return "dry_run"
