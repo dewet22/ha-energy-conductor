@@ -10,15 +10,19 @@ import dataclasses
 import json
 from typing import Any
 
-from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_NOTIFY_TARGET, DOMAIN
+from .const import CONF_DEVICE_NAME, CONF_ENTITY_REFS, DOMAIN
 from .decisions import Decision
+from .entity_ref import ENTITY_REF_CONF_KEYS
 
-# The notify service id isn't a secret, but it's the only personal-ish value here; redact it.
-TO_REDACT = {CONF_NOTIFY_TARGET}
+# These dumps are meant to be attached to public issue reports. Entity IDs embed room/device/
+# site names (the 2026.6 area-prefix convention bakes the area straight into them), so anything
+# carrying an entity reference is identifying. Redact every entity-valued config key (this set
+# already includes the notify target), plus the device name and the unique-id anchor map.
+TO_REDACT = set(ENTITY_REF_CONF_KEYS) | {CONF_DEVICE_NAME, CONF_ENTITY_REFS}
 
 
 def _iso(value: Any) -> str | None:
@@ -34,6 +38,7 @@ def _decision_dict(decision: Decision | None, outcome: str | None) -> dict[str, 
     if decision is None:
         return None
     data = _json_safe(dataclasses.asdict(decision))
+    data["target_entity"] = REDACTED  # entity id embeds device/area names
     data["outcome"] = outcome
     return data
 

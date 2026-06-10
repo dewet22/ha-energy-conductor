@@ -363,6 +363,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             st.written = dk
             if not is_write_kind:
                 return "notified"  # writer.write was a no-op (notify-only kind)
+            # The write didn't fail, so any earlier failure is no longer current — clear it so
+            # the dashboard doesn't show a stale "last write error" next to a healthy outcome.
+            self.last_write_error = None
             if self.write_mode == WRITE_MODE_LIVE:
                 # An actual hardware write landed.
                 self.writes_sent += 1

@@ -139,6 +139,24 @@ async def test_emit_outcome_failed_counts_and_records(coordinator) -> None:
     assert coordinator.last_write_outcome == "failed"
 
 
+async def test_successful_write_clears_stale_error(coordinator) -> None:
+    """A recovered write must clear last_write_error, so the dashboard doesn't show a stale
+    failure next to a successful outcome (Codex review)."""
+    from custom_components.energy_conductor.const import WRITE_MODE_LIVE
+    from custom_components.energy_conductor.writer import WriteFailure
+
+    coordinator.write_mode = WRITE_MODE_LIVE
+    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
+    await coordinator._emit(_decision(dedupe_key="d-0"))
+    assert coordinator.last_write_error == "boom"
+
+    # Recovery: identical decision, write now succeeds → applied AND the stale error is cleared.
+    coordinator.writer.write = AsyncMock(return_value=None)
+    assert await coordinator._emit(_decision(dedupe_key="d-0")) == "applied"
+    assert coordinator.last_write_error is None
+    assert coordinator.last_write_outcome == "applied"
+
+
 async def test_degraded_since_set_and_cleared(coordinator) -> None:
     """degraded_since stamps the first non-OK tick and clears on recovery, so a gap explains
     its own duration (audit observability)."""

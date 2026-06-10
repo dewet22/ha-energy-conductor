@@ -39,8 +39,15 @@ async def test_diagnostics_dump(hass: HomeAssistant) -> None:
     diag = await async_get_config_entry_diagnostics(hass, entry)
 
     assert set(diag) >= {"config", "coordinator", "last_decisions", "last_site_state"}
-    # The notify target is the one personal-ish value — redacted.
+    # Identifying entity references are redacted — they embed room/device/area names.
     assert diag["config"]["notify_target"] == "**REDACTED**"
+    assert diag["config"]["battery_soc_sensor"] == "**REDACTED**"
+    assert diag["config"]["battery_discharge_limit"] == "**REDACTED**"
+    # The decision's target entity id is redacted too (the kind/outcome still identify it).
+    discharge = diag["last_decisions"]["discharge"]
+    assert discharge is not None
+    assert discharge["target_entity"] == "**REDACTED**"
+    assert discharge["kind"] == "set_discharge_limit"
     # Write-observability fields are present on the coordinator snapshot.
     coord = diag["coordinator"]
     assert coord["write_mode"] == "dry_run"
