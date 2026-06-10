@@ -57,3 +57,23 @@ async def test_diagnostics_dump(hass: HomeAssistant) -> None:
     assert diag["last_site_state"] is not None
     # The whole dump must be JSON-serialisable (datetimes/enums coerced to primitives).
     json.dumps(diag)
+
+
+async def test_diagnostics_without_coordinator(hass: HomeAssistant) -> None:
+    """If setup failed there's no coordinator — diagnostics must still return the redacted
+    config rather than KeyError-ing on hass.data (Gemini review)."""
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="d2")
+    entry.add_to_hass(hass)  # not set up → not in hass.data[DOMAIN]
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diag["coordinator"] is None
+    assert diag["config"]["battery_soc_sensor"] == "**REDACTED**"
+    json.dumps(diag)
+
+
+def test_decision_dict_none() -> None:
+    """A missing decision serialises to None (e.g. before the first overnight plan)."""
+    from custom_components.energy_conductor.diagnostics import _decision_dict
+
+    assert _decision_dict(None, None) is None

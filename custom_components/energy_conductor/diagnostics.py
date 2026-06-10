@@ -46,9 +46,14 @@ def _decision_dict(decision: Decision | None, outcome: str | None) -> dict[str, 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
-    coord = hass.data[DOMAIN][entry.entry_id]
+    config = async_redact_data({**entry.data, **entry.options}, TO_REDACT)
+    coord = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coord is None:
+        # Setup failed, so there's no coordinator — still return the (redacted) config, which
+        # is often exactly what a failed-setup bug report needs.
+        return {"config": config, "coordinator": None}
     return {
-        "config": async_redact_data({**entry.data, **entry.options}, TO_REDACT),
+        "config": config,
         "coordinator": {
             "status": coord.status,
             "last_error": coord.last_error,

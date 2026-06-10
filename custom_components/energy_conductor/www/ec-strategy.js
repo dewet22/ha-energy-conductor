@@ -201,7 +201,9 @@
     var statusId = acc("status");
     var dischargeId = acc("discharge-decision");
     if (statusId) {
-      var lines = ["**Mode:** {{ state_attr('" + statusId + "', 'write_mode') | upper }}"];
+      var lines = [
+        "**Mode:** {{ (state_attr('" + statusId + "', 'write_mode') or 'unknown') | upper }}",
+      ];
       if (dischargeId) {
         lines.push(
           "**Discharge limit:** {{ states('" +
