@@ -217,6 +217,13 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         await self._emit(decision)
         self.last_discharge_decision = decision
 
+        # Retry a pending (failed) charge-target write on every tick too. The overnight
+        # plan otherwise only re-emits at its scheduled time + hourly, so a transient
+        # write failure would leave the target stale for up to an hour. _emit is a no-op
+        # once the write has landed, so re-emitting the cached plan each tick is cheap.
+        if self.last_overnight_plan is not None:
+            await self._emit(self.last_overnight_plan)
+
     async def _run_overnight_plan(self, _now=None) -> None:
         try:
             state = await self.adapter.build_site_state()
@@ -262,10 +269,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         if st.notified != dk and await self._notify(decision):
             st.notified = dk
 
-        # Write — retried every tick until it succeeds (number.set_value is idempotent).
-        # M-4: a failed write must NOT suppress the retry, or the actuator stays stale
-        # until the decision value next changes (hours, for discharge). Only the failure
-        # notification is deduped.
+        # Write — retried on each re-emission until it succeeds (number.set_value is
+        # idempotent). Both writing decisions are re-emitted every coordinator tick: the
+        # discharge limit directly, and the cached overnight plan via _async_update_data.
+        # M-4: a failed write must NOT suppress the retry, or the actuator stays stale.
+        # Only the failure notification is deduped.
         if st.written != dk:
             try:
                 await self.writer.write(decision)

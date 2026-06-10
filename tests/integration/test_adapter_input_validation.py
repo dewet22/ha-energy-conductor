@@ -71,6 +71,15 @@ async def test_max_attr_returns_default_when_absent(hass):
     assert _max_attr(hass, "number.discharge", default=3000) == 3000
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+async def test_max_attr_non_finite_falls_back_to_default(hass, bad):
+    # int(float("inf")) raises OverflowError, int(float("nan")) raises ValueError —
+    # a float-valued non-finite `max` from a buggy integration must not crash the tick.
+    hass.states.async_set("number.discharge", "40", {"max": bad})
+    await hass.async_block_till_done()
+    assert _max_attr(hass, "number.discharge", default=3000) == 3000
+
+
 @pytest.mark.parametrize(("raw", "expected"), [("150", 100.0), ("-5", 0.0), ("4", 4.0)])
 async def test_reserve_percent_clamped_to_0_100(hass, mock_config_entry, raw, expected):
     hass.states.async_set("number.reserve", raw)

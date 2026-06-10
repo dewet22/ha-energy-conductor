@@ -156,7 +156,9 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     raw = state.attributes.get("max")
     try:
         value = int(raw)
-    except TypeError, ValueError:
+    except TypeError, ValueError, OverflowError:
+        # OverflowError: int(float("inf")) — a float-valued `max` of inf from a
+        # buggy upstream integration would otherwise crash build_site_state.
         return default
     # The discharge guard writes this verbatim to the limit entity — clamp to a
     # plausible inverter range so a bogus `max` attribute can't drive a bad write.

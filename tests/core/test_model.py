@@ -31,9 +31,13 @@ class TestBatteryInvariants:
     def test_valid_battery_constructs(self):
         assert _battery().capacity_kwh == 10.0
 
-    @pytest.mark.parametrize("bad_capacity", [0, 0.0, -5.0])
-    def test_non_positive_capacity_rejected(self, bad_capacity):
-        with pytest.raises(ValueError, match="capacity_kwh must be > 0"):
+    @pytest.mark.parametrize(
+        "bad_capacity", [0, 0.0, -5.0, float("nan"), float("inf"), float("-inf")]
+    )
+    def test_non_positive_or_non_finite_capacity_rejected(self, bad_capacity):
+        # nan/inf slip past `<= 0` (nan compares false) and would produce a bogus
+        # 100% charge target downstream — must be rejected here.
+        with pytest.raises(ValueError, match="capacity_kwh must be finite and > 0"):
             _battery(capacity_kwh=bad_capacity)
 
     @pytest.mark.parametrize("bad_reserve", [-1.0, 100.5, 150.0])

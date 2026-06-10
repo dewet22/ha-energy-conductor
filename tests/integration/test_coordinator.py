@@ -103,6 +103,37 @@ async def test_write_failure_retries_until_success(coordinator) -> None:
     assert coordinator.notifications_sent == 2
 
 
+async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
+    """Audit M-4 (Codex): a failed charge-target write must retry on the next coordinator
+    tick, not only at the hourly plan re-eval — `_async_update_data` re-emits the cached
+    overnight plan each tick so it isn't stale for up to an hour."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.energy_conductor.writer import WriteFailure
+
+    plan = Decision(
+        kind=DecisionKind.SET_CHARGE_TARGET,
+        target_entity="number.battery_charge_target",
+        value=80,
+        reason="overnight plan",
+        dedupe_key="overnight-2026-06-08-80",
+    )
+    # The overnight plan emitted earlier; its write failed → still pending.
+    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
+    await coordinator._emit(plan)
+    coordinator.last_overnight_plan = plan
+    assert coordinator.writer.write.await_count == 1
+
+    # Write recovers; a coordinator tick must retry the pending charge-target write.
+    coordinator.writer.write = AsyncMock(return_value=None)
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
+    await coordinator._async_update_data()
+
+    # The tick wrote the discharge decision AND retried the pending overnight write.
+    written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
+    assert "number.battery_charge_target" in written
+
+
 async def test_emit_dedupes_repeated_decision(coordinator) -> None:
     await coordinator._emit(_decision(dedupe_key="d-0"))
     await coordinator._emit(_decision(dedupe_key="d-0"))
