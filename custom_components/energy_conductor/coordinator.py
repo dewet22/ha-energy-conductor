@@ -307,7 +307,13 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self._mismatch_since = None
             return
 
-        result = check_actuation(state, self.last_discharge_decision, self.last_discharge_outcome)
+        result = check_actuation(
+            state,
+            discharge=self.last_discharge_decision,
+            discharge_outcome=self.last_discharge_outcome,
+            charge=self.last_overnight_plan,
+            charge_outcome=self.last_overnight_outcome,
+        )
         if result is None:
             self.verification_status = "n/a"
             self.last_verification_detail = None

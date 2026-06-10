@@ -436,6 +436,26 @@ async def test_verification_skipped_in_dry_run(coordinator) -> None:
     assert coordinator.verification_status == "n/a"
 
 
+async def test_verification_flags_charge_mismatch(coordinator) -> None:
+    """Charge-target check: off-peak with SoC (90%) below a live target (100%) but the battery
+    not charging → mismatch flagged via the same combined surface."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    coordinator.last_overnight_plan = Decision(
+        kind=DecisionKind.SET_CHARGE_TARGET,
+        target_entity="number.battery_charge_target",
+        value=100,  # _site_state SoC is 90 → below target
+        reason="overnight plan",
+        dedupe_key="overnight-2026-06-08-100",
+    )
+    coordinator.last_overnight_plan_at = _T0  # fresh, so the tick re-emits → outcome live
+
+    # battery_power 0 → not discharging (discharge ok) but not charging either → charge mismatch.
+    await _tick(coordinator, secs=0, battery_power=0.0)
+    await _tick(coordinator, secs=95, battery_power=0.0)
+    assert coordinator.verification_status == "mismatch"
+    assert "charge target" in coordinator.last_verification_detail
+
+
 async def test_verification_renotifies_after_recovery(coordinator) -> None:
     """A second mismatch the same day, after recovery, is a fresh episode → notifies again
     (the per-episode dedupe key, not per-day; Codex review)."""
