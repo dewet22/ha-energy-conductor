@@ -6,7 +6,7 @@ import logging
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -46,6 +46,14 @@ from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
+
+# A pending charge-target write retries every tick until it lands, but only while the cached
+# plan is still fresh. Planning runs hourly, so a healthy plan is never more than ~1h old;
+# this cap bounds how long a write keeps retrying once planning itself has stalled, so a
+# recovered entity can't apply a target from a past night's cycle. 12h comfortably covers any
+# overnight charging window yet stays well short of the ~24h gap to the next cycle. Age-based
+# (not calendar-date) freshness avoids a retry blackout for a plan emitted near midnight.
+_PLAN_RETRY_MAX_AGE = timedelta(hours=12)
 
 
 @dataclass
@@ -122,10 +130,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.notify_failures: int = 0
         self.last_notify_error: str | None = None
         self.last_overnight_plan: Decision | None = None
-        # The planning date of last_overnight_plan (== state.now.date() at plan time, the
-        # same date its dedupe_key carries). Gates the every-tick retry so a pending write
-        # from a past planning cycle is never applied once planning has moved on.
-        self.last_overnight_plan_date: date | None = None
+        # When last_overnight_plan was computed (state.now at plan time). Gates the every-tick
+        # retry by elapsed age so a pending write from a past cycle is never applied once the
+        # plan has gone stale — without a calendar-date blackout for plans made near midnight.
+        self.last_overnight_plan_at: datetime | None = None
         self.last_discharge_decision: Decision | None = None
         self.last_site_state: SiteState | None = None
 
@@ -226,15 +234,16 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # write failure would leave the target stale for up to an hour. _emit is a no-op
         # once the write has landed, so re-emitting the cached plan each tick is cheap.
         #
-        # Only retry while the cached plan is still for the current date. Planning runs
-        # hourly, so in healthy operation this is always today's plan; the date only falls
-        # behind when planning itself has been failing across a day boundary — and in that
-        # degraded state a recovered entity must NOT have a past cycle's target applied to
-        # it (audit M-4, Codex). The retry only acts on a still-pending write anyway, so
-        # gating it out once the date is stale costs nothing in the healthy case.
+        # Only retry while the cached plan is still fresh (see _PLAN_RETRY_MAX_AGE). Planning
+        # runs hourly, so a healthy plan is always recent; the age only grows when planning
+        # itself has been failing — and in that degraded state a recovered entity must NOT
+        # have a past cycle's target applied to it (audit M-4, Codex). The retry only acts on
+        # a still-pending write anyway, so gating it out once the plan is stale costs nothing
+        # in the healthy case.
         if (
             self.last_overnight_plan is not None
-            and self.last_overnight_plan_date == state.now.date()
+            and self.last_overnight_plan_at is not None
+            and state.now - self.last_overnight_plan_at <= _PLAN_RETRY_MAX_AGE
         ):
             await self._emit(self.last_overnight_plan)
 
@@ -263,7 +272,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             return
         await self._emit(decision)
         self.last_overnight_plan = decision
-        self.last_overnight_plan_date = state.now.date()
+        self.last_overnight_plan_at = state.now
 
         # Hot-water boost prompt — notify-only, evaluated alongside the overnight plan.
         hot_water_decision = _hot_water_decision(state)

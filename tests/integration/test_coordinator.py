@@ -122,10 +122,8 @@ async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
     coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
     await coordinator._emit(plan)
     coordinator.last_overnight_plan = plan
-    # _site_state's now is 2026-06-08, so the cached plan is for the current date.
-    from datetime import date
-
-    coordinator.last_overnight_plan_date = date(2026, 6, 8)
+    # _site_state's now is 2026-06-08 21:00, so a plan stamped now is fresh.
+    coordinator.last_overnight_plan_at = datetime(2026, 6, 8, 21, 0, tzinfo=UTC)
     assert coordinator.writer.write.await_count == 1
 
     # Write recovers; a coordinator tick must retry the pending charge-target write.
@@ -140,10 +138,9 @@ async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
 
 async def test_tick_does_not_retry_stale_overnight_plan(coordinator) -> None:
     """Audit M-4 (Codex): a pending charge-target write from a PAST planning cycle must not
-    be applied when the entity recovers. If planning has been failing across a day boundary,
-    last_overnight_plan_date falls behind state.now.date() and the every-tick retry is gated
-    out — so a recovered number entity never lands an obsolete command."""
-    from datetime import date
+    be applied when the entity recovers. Once the cached plan is older than _PLAN_RETRY_MAX_AGE
+    (planning has been failing to refresh it), the every-tick retry is gated out — so a
+    recovered number entity never lands an obsolete command."""
     from unittest.mock import AsyncMock
 
     from custom_components.energy_conductor.writer import WriteFailure
@@ -159,7 +156,8 @@ async def test_tick_does_not_retry_stale_overnight_plan(coordinator) -> None:
     coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
     await coordinator._emit(plan)
     coordinator.last_overnight_plan = plan
-    coordinator.last_overnight_plan_date = date(2026, 6, 7)  # stale: _site_state.now is 06-08
+    # 24h before _site_state.now (06-08 21:00) — well past the 12h retry window.
+    coordinator.last_overnight_plan_at = datetime(2026, 6, 7, 21, 0, tzinfo=UTC)
 
     # Entity recovers; a tick must NOT re-apply the stale (past-cycle) target.
     coordinator.writer.write = AsyncMock(return_value=None)
@@ -168,6 +166,39 @@ async def test_tick_does_not_retry_stale_overnight_plan(coordinator) -> None:
 
     written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
     assert "number.battery_charge_target" not in written
+
+
+async def test_tick_retries_pending_plan_across_midnight(coordinator) -> None:
+    """Audit M-4 (Codex): a plan emitted just before midnight must keep retrying straight
+    through the date rollover — age-based freshness has no calendar blackout. A plan stamped
+    23:55 is only 10 min old at 00:05, so its still-pending write is retried inside the
+    overnight charging window."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.energy_conductor.writer import WriteFailure
+
+    plan = Decision(
+        kind=DecisionKind.SET_CHARGE_TARGET,
+        target_entity="number.battery_charge_target",
+        value=80,
+        reason="overnight plan",
+        dedupe_key="overnight-2026-06-08-80",
+    )
+    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
+    await coordinator._emit(plan)
+    coordinator.last_overnight_plan = plan
+    coordinator.last_overnight_plan_at = datetime(2026, 6, 8, 23, 55, tzinfo=UTC)
+
+    # Tick fires at 00:05 the next day — past the date boundary but only 10 min after the plan.
+    coordinator.writer.write = AsyncMock(return_value=None)
+    after_midnight = datetime(2026, 6, 9, 0, 5, tzinfo=UTC)
+    coordinator.adapter.build_site_state = AsyncMock(
+        return_value=_site_state(None, now=after_midnight)
+    )
+    await coordinator._async_update_data()
+
+    written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
+    assert "number.battery_charge_target" in written
 
 
 async def test_emit_dedupes_repeated_decision(coordinator) -> None:
@@ -199,9 +230,9 @@ from custom_components.energy_conductor.model import (  # noqa: E402
 )
 
 
-def _site_state(hot_water: HotWaterState | None) -> SiteState:
+def _site_state(hot_water: HotWaterState | None, *, now: datetime | None = None) -> SiteState:
     return SiteState(
-        now=datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
+        now=now or datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
         battery=Battery(90.0, 11.0, 3000, 3000, 4.0),
         ev_charger=None,
         solar_forecast=SolarForecast(slots=(), fallback_kwh=6.0, fallback_source="t"),
