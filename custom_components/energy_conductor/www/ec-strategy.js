@@ -49,6 +49,12 @@
 
   var DOMAIN = "energy_conductor";
 
+  // HA entity-ID shape. Resolved IDs end up in generated card config — including
+  // a markdown card's Jinja2 template — so anything from the registry that does
+  // not match this shape is dropped at resolution time (single chokepoint), or a
+  // crafted entity_id could inject template code.
+  var VALID_ENTITY_ID = /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/;
+
   // --- registry resolution --------------------------------------------------
 
   // Query the entity + device registries live and build a { key -> entity_id }
@@ -93,7 +99,7 @@
           name === "energy conductor " + want
         );
       });
-      if (!match) return { error: "device_not_found", want: config.device };
+      if (!match) return { error: "device_not_found" };
       target = match;
     }
 
@@ -107,6 +113,7 @@
       if (e.device_id !== target.deviceId) continue;
       if (e.disabled_by) continue;
       if (!e.unique_id || e.unique_id.lastIndexOf(prefix, 0) !== 0) continue;
+      if (!VALID_ENTITY_ID.test(e.entity_id)) continue; // see VALID_ENTITY_ID note
       var key = e.unique_id.slice(prefix.length);
       if (!(key in keys)) keys[key] = e.entity_id; // store the registry's id
     }
@@ -172,7 +179,9 @@
     cards.push({ type: "entities", title: "Tonight", entities: cleanRows(tonightRows) });
 
     // 2. Plan reasoning - the overnight plan's reason string (a sensor
-    //    attribute that is otherwise invisible).
+    //    attribute that is otherwise invisible). The entity_id is interpolated
+    //    into a Jinja2 template; it is safe to embed because buildAccessors only
+    //    resolves IDs matching VALID_ENTITY_ID (template injection chokepoint).
     var planId = acc("overnight-plan");
     if (planId) {
       cards.push({
@@ -243,10 +252,10 @@
       );
     }
     if (state.error === "device_not_found") {
+      // Deliberately generic: config.device is user-controlled YAML and the
+      // markdown card renders Jinja2, so never reflect the raw value here.
       return errorDashboard(
-        "The pinned device '" +
-          state.want +
-          "' was not found. Check the strategy's `device` option."
+        "The pinned device was not found - check the strategy's `device` option."
       );
     }
     if (state.error === "no_device") {

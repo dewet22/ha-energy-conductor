@@ -28,7 +28,16 @@ class Writer:
         if self.write_mode != WRITE_MODE_LIVE:
             return
         if decision.kind in (DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT):
-            await self._set_number(decision.target_entity, float(decision.value))
+            # Convert inside the failure boundary: Decision.value is Any, and a
+            # non-numeric value must surface as WriteFailure (handled upstream),
+            # not as an unhandled TypeError/ValueError escaping the coordinator.
+            try:
+                value = float(decision.value)
+            except (TypeError, ValueError) as exc:
+                raise WriteFailure(
+                    f"non-numeric decision value for {decision.target_entity}: {decision.value!r}"
+                ) from exc
+            await self._set_number(decision.target_entity, value)
         else:
             _LOGGER.warning("Unhandled decision kind: %s", decision.kind)
 

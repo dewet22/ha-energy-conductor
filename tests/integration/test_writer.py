@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from custom_components.energy_conductor.const import WRITE_MODE_LIVE
 from custom_components.energy_conductor.decisions import Decision, DecisionKind
-from custom_components.energy_conductor.writer import Writer
+from custom_components.energy_conductor.writer import WriteFailure, Writer
 
 
 @pytest.fixture
@@ -31,3 +31,13 @@ async def test_writer_writes_number_kind_in_live_mode(hass: MagicMock) -> None:
     writer = Writer(hass, WRITE_MODE_LIVE)
     await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, 0))
     hass.services.async_call.assert_awaited_once()
+
+
+async def test_writer_non_numeric_value_raises_write_failure(hass: MagicMock) -> None:
+    # Security audit L-2: Decision.value is Any — a non-numeric value must surface
+    # as WriteFailure (handled by the coordinator), not as a raw TypeError/ValueError
+    # escaping the failure boundary. No service call is attempted.
+    writer = Writer(hass, WRITE_MODE_LIVE)
+    with pytest.raises(WriteFailure, match="non-numeric"):
+        await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, "not-a-number"))
+    hass.services.async_call.assert_not_called()

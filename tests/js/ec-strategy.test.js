@@ -137,6 +137,45 @@ describe("graceful degradation", () => {
     expect(view(dash).cards[0].content).toContain("entity registry");
   });
 
+  it("omits the plan-reasoning card when the entity_id fails validation (audit M-1)", async () => {
+    // The overnight-plan entity_id is interpolated into a Jinja2 template inside
+    // a markdown card. A crafted entity_id that breaks out of the string literal
+    // must never reach that template — the card is omitted instead.
+    const evil = "sensor.x') %}{{ states | count }}{% set y = ('";
+    const entities = [
+      {
+        entity_id: evil,
+        platform: "energy_conductor",
+        device_id: "dev_ec",
+        unique_id: "entry123-overnight-plan",
+        disabled_by: null,
+      },
+      {
+        entity_id: "sensor.energy_conductor_blithe_status",
+        platform: "energy_conductor",
+        device_id: "dev_ec",
+        unique_id: "entry123-status",
+        disabled_by: null,
+      },
+    ];
+    const devices = [
+      { id: "dev_ec", identifiers: [["energy_conductor", "entry123"]], name: "Energy Conductor blithe" },
+    ];
+    const hass = {
+      states: {},
+      callWS(msg) {
+        if (msg.type === "config/entity_registry/list") return Promise.resolve(entities);
+        if (msg.type === "config/device_registry/list") return Promise.resolve(devices);
+        return Promise.reject(new Error("unexpected"));
+      },
+    };
+
+    const dash = await EC.generateDashboard({}, hass);
+
+    expect(cardTypes(dash)).not.toContain("markdown");
+    expect(JSON.stringify(dash)).not.toContain("%}"); // no template fragments anywhere
+  });
+
   it("returns an error dashboard when no Energy Conductor device exists", async () => {
     const hass = {
       callWS(msg) {
@@ -171,12 +210,14 @@ describe("device pin", () => {
     expect(collectRefs(dash).every((r) => r.includes("_annexe_"))).toBe(true);
   });
 
-  it("shows an error dashboard when a pinned device is not found", async () => {
-    // A pin that matches nothing must NOT silently fall back to another device.
-    const dash = await EC.generateDashboard({ device: "nonexistent" }, makeHass({}));
+  it("shows a generic error when a pinned device is not found (no value reflection)", async () => {
+    // A pin that matches nothing must NOT silently fall back to another device,
+    // and (audit M-2) the raw config.device value must NOT be reflected into the
+    // markdown card — markdown cards render Jinja2.
+    const dash = await EC.generateDashboard({ device: "nonexistent{{ 1 }}" }, makeHass({}));
     expect(view(dash).cards.length).toBe(1);
     expect(view(dash).cards[0].type).toBe("markdown");
-    expect(view(dash).cards[0].content).toContain("nonexistent");
     expect(view(dash).cards[0].content).toContain("not found");
+    expect(view(dash).cards[0].content).not.toContain("nonexistent");
   });
 });
