@@ -308,15 +308,13 @@ class Adapter:
         sensor = self.config.get(CONF_BATTERY_POWER_SENSOR)
         if not sensor:
             return None
-        state = self.hass.states.get(sensor)
-        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
-            return None
         try:
-            value = float(state.state)
-        except TypeError, ValueError:
-            _LOGGER.warning("Battery power sensor unreadable (%s): %r", sensor, state.state)
-            return None
-        if not math.isfinite(value):
+            # Reject stale/unavailable/non-finite state via _read_float: this drives an active
+            # alert, so a frozen "discharging" reading from a stalled integration must not
+            # confirm a false mismatch (Codex review). Same staleness gate as the grid inputs.
+            value = _read_float(self.hass, sensor, max_age_seconds=STALE_POWER_SECONDS)
+        except EntityProblem as exc:
+            _LOGGER.debug("Battery power unavailable: %s", exc)
             return None
         if self.config.get(CONF_BATTERY_POWER_POSITIVE_IS_CHARGING):
             value = -value  # source reads +ve = charging; flip to EC's +ve = discharging

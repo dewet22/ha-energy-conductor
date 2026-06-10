@@ -434,3 +434,25 @@ async def test_verification_skipped_in_dry_run(coordinator) -> None:
     await _tick(coordinator, secs=0, battery_power=2000.0)
     await _tick(coordinator, secs=95, battery_power=2000.0)
     assert coordinator.verification_status == "n/a"
+
+
+async def test_verification_renotifies_after_recovery(coordinator) -> None:
+    """A second mismatch the same day, after recovery, is a fresh episode → notifies again
+    (the per-episode dedupe key, not per-day; Codex review)."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+
+    # Episode 1: confirm + notify once.
+    await _tick(coordinator, secs=0, battery_power=2000.0)
+    await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+    n1 = coordinator.notifications_sent
+
+    # Recover.
+    await _tick(coordinator, secs=130, battery_power=30.0)
+    assert coordinator.verification_status == "ok"
+
+    # Episode 2 (same day): a fresh mismatch must notify again, not be deduped away.
+    await _tick(coordinator, secs=200, battery_power=2000.0)
+    await _tick(coordinator, secs=300, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+    assert coordinator.notifications_sent == n1 + 1

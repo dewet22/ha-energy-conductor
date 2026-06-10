@@ -164,7 +164,6 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_verification_detail: str | None = None
         self.last_verification_at: datetime | None = None
         self._mismatch_since: datetime | None = None
-        self._mismatch_notified: bool = False
 
         self._unsubs: list = []
 
@@ -299,14 +298,13 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
         Live-mode only (dry-run isn't actuating). A mismatch must persist VERIFY_MISMATCH_SECONDS
         before it's confirmed — one timer serving as both settle window and debounce, robust to the
-        variable tick cadence (state-change events trigger extra refreshes). Confirmed mismatches
-        raise the actuation-mismatch binary sensor and notify once (per day, via _emit).
+        variable tick cadence (state-change events trigger extra refreshes). A confirmed mismatch
+        raises the actuation-mismatch binary sensor and notifies once per episode.
         """
         if self.write_mode != WRITE_MODE_LIVE:
             self.verification_status = "n/a"
             self.last_verification_detail = None
             self._mismatch_since = None
-            self._mismatch_notified = False
             return
 
         result = check_actuation(state, self.last_discharge_decision, self.last_discharge_outcome)
@@ -314,14 +312,12 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             self.verification_status = "n/a"
             self.last_verification_detail = None
             self._mismatch_since = None
-            self._mismatch_notified = False
             return
         if result.ok:
             self.verification_status = "ok"
             self.last_verification_detail = result.detail
             self.last_verification_at = state.now
             self._mismatch_since = None
-            self._mismatch_notified = False
             return
 
         # Mismatch — confirm only once it has persisted (settle + debounce in one window).
@@ -332,16 +328,18 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.verification_status = "mismatch"
         self.last_verification_detail = result.detail
         self.last_verification_at = state.now
-        if not self._mismatch_notified:
-            mismatch = Decision(
-                kind=DecisionKind.VERIFICATION_MISMATCH,
-                target_entity="actuation",
-                value=state.battery.power_w,
-                reason=result.detail,
-                dedupe_key=f"mismatch-{state.now.date().isoformat()}",
-            )
-            await self._emit(mismatch)
-            self._mismatch_notified = True
+        # Notify via _emit, keyed on the episode start (_mismatch_since) — so a recovered-then-
+        # recurring mismatch the same day gets a fresh key and re-notifies, and _emit's own
+        # bookkeeping handles once-per-episode dedupe + notify-failure retry (no outer latch,
+        # which would both block re-notification and swallow a failed delivery — Codex review).
+        mismatch = Decision(
+            kind=DecisionKind.VERIFICATION_MISMATCH,
+            target_entity="actuation",
+            value=state.battery.power_w,
+            reason=result.detail,
+            dedupe_key=f"mismatch-{self._mismatch_since.isoformat()}",
+        )
+        await self._emit(mismatch)
 
     async def _run_overnight_plan(self, _now=None) -> None:
         try:

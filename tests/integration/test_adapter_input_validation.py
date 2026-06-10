@@ -210,3 +210,17 @@ async def test_battery_power_invert_toggle(hass):
 
 async def test_battery_power_none_when_unconfigured(hass):
     assert Adapter(hass, {})._battery_power_w() is None
+
+
+async def test_battery_power_none_when_stale(hass, freezer):
+    # Stale state must not drive the active verifier: a frozen "discharging" reading from a
+    # stalled integration would otherwise confirm a false mismatch (Codex review).
+    from datetime import timedelta
+
+    from custom_components.energy_conductor.const import STALE_POWER_SECONDS
+
+    hass.states.async_set("sensor.battery_power", "2000")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(seconds=STALE_POWER_SECONDS + 60))
+    adapter = Adapter(hass, {CONF_BATTERY_POWER_SENSOR: "sensor.battery_power"})
+    assert adapter._battery_power_w() is None
