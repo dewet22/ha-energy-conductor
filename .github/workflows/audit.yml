@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly, so newly-disclosed CVEs against unchanged dependencies surface even
-    # when nothing in the repo has changed (the "continuous" in continuous CVE scan).
+    # Weekly, so a newly-disclosed CVE against an unchanged dependency surfaces even
+    # when nothing in the repo has changed.
     - cron: "0 6 * * 1"
 
 # Least-privilege GITHUB_TOKEN; nothing here writes to the repo.
@@ -14,34 +14,14 @@ permissions:
   contents: read
 
 jobs:
-  pip-audit:
-    runs-on: ubuntu-latest
-    steps:
-      # Actions pinned to full commit SHAs (see test.yml); Dependabot keeps them fresh.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.14
-      - name: Install dependencies
-        run: uv sync --group dev
-      # Advisory, not a gate. This integration ships no runtime requirements
-      # (manifest `requirements: []`) — HA owns the runtime dependency versions, so
-      # pip-audit here surfaces CVEs in the test toolchain and the HA version we test
-      # against (transitive aiohttp/pyjwt/zeroconf etc.), which we can't unilaterally
-      # fix. Findings go to the job summary for awareness (e.g. prompting a `homeassistant`
-      # dev-pin bump); they must not perma-red the build on upstream advisories.
-      - name: pip-audit (advisory)
-        continue-on-error: true
-        run: uv run --with pip-audit pip-audit --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
-
   npm-audit:
     runs-on: ubuntu-latest
     steps:
+      # The frontend devDependencies (vitest) are the only third-party tree this repo
+      # declares and controls. Python ships no runtime requirements (manifest
+      # `requirements: []`) — HA owns those versions — and the dashboard JS is itself
+      # dependency-free, so there is nothing else worth a CVE gate. Action SHA-pinned to
+      # match test.yml. `npm audit` reads package-lock.json directly — no install needed.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      # The frontend tree is tiny (vitest only) and entirely ours to control, so this
-      # IS a gate: fail on a high/critical advisory. `npm audit` reads package-lock.json
-      # directly — no install needed.
       - name: npm audit (high+)
         run: npm audit --audit-level=high
