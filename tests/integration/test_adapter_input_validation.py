@@ -14,9 +14,12 @@ from custom_components.energy_conductor.adapter import (
     EntityProblem,
     _max_attr,
     _read_float,
+    parse_hh_mm,
 )
 from custom_components.energy_conductor.const import (
     CONF_BATTERY_RESERVE_PERCENT,
+    CONF_OFF_PEAK_SENSOR,
+    CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_RESERVE_SOC_SENSOR,
 )
 
@@ -90,3 +93,49 @@ async def test_reserve_percent_clamped_to_0_100(hass, mock_config_entry, raw, ex
     )
 
     assert adapter._reserve_percent() == pytest.approx(expected)
+
+
+# --- L-1: time-string parsing -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("21:30", (21, 30)),
+        ("21:30:00", (21, 30)),
+        ("06:05", (6, 5)),
+        ("0:0", (0, 0)),
+        ("23:59", (23, 59)),
+    ],
+)
+def test_parse_hh_mm_valid(raw, expected):
+    assert parse_hh_mm(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["", "abc", "21", "21:xx", "25:00", "12:60", "-1:00", None, 21.5],
+)
+def test_parse_hh_mm_malformed_returns_none(raw):
+    # A hand-edited or migration-corrupted value must yield None (caller falls back), never raise.
+    assert parse_hh_mm(raw) is None
+
+
+async def test_off_peak_window_end_ignores_malformed_config_time(hass, caplog):
+    # No window-end attribute on the off-peak sensor, so the config time is consulted — a
+    # malformed stored value must degrade to "no window end", not raise (L-1).
+    from datetime import UTC, datetime
+
+    hass.states.async_set("binary_sensor.off_peak", "off")  # no current_end/next_end attrs
+    await hass.async_block_till_done()
+    adapter = Adapter(
+        hass,
+        {
+            CONF_OFF_PEAK_SENSOR: "binary_sensor.off_peak",
+            CONF_OVERNIGHT_WINDOW_END_TIME: "not-a-time",
+        },
+    )
+
+    now = datetime(2026, 6, 8, 21, 0, tzinfo=UTC)
+    assert adapter._off_peak_window_end(now, off_peak_now=False) is None
+    assert "malformed overnight window end time" in caplog.text.lower()

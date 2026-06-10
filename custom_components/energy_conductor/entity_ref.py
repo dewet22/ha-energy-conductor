@@ -14,6 +14,7 @@ watch-list keep reading plain entity_id strings unchanged.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import entity_registry as er
@@ -69,6 +70,8 @@ LIST_ENTITY_CONF_KEYS: frozenset[str] = frozenset({CONF_MANAGED_LOAD_SENSORS})
 
 ENTITY_REF_CONF_KEYS: frozenset[str] = SCALAR_ENTITY_CONF_KEYS | LIST_ENTITY_CONF_KEYS
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def capture_ref(hass: HomeAssistant, entity_id: str) -> dict[str, str] | None:
     """Return the ``{platform, unique_id}`` anchor for ``entity_id``.
@@ -92,6 +95,16 @@ def resolve_ref(hass: HomeAssistant, entity_id: str, ref: dict[str, str] | None)
         return entity_id
     domain = entity_id.split(".", 1)[0]
     found = er.async_get(hass).async_get_entity_id(domain, ref["platform"], ref["unique_id"])
+    if found and found != entity_id:
+        # A rename (the intended self-heal) or, less benignly, a unique_id collision between
+        # two instances — either way a write target has moved, so leave an audit trail (L-3).
+        _LOGGER.info(
+            "Entity reference redirected %s -> %s (platform=%s, unique_id=%s)",
+            entity_id,
+            found,
+            ref["platform"],
+            ref["unique_id"],
+        )
     return found or entity_id
 
 
