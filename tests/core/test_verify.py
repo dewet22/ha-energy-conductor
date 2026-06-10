@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.verify import check_actuation
+from energy_conductor.verify import check_actuation, check_write_landed
 
 from .builders import a_battery, a_grid_state, a_site_state, a_tariff
 
@@ -98,3 +98,27 @@ def test_not_applicable_for_other_decision_kinds():
     )
     assert check_actuation(state, charge, "applied") is None
     assert check_actuation(state, None, "applied") is None
+
+
+# --- write-readback (check_write_landed) -------------------------------------
+
+
+def test_write_landed_match():
+    result = check_write_landed("number.discharge", 0.0, 0.0)
+    assert result.ok is True
+    assert "as commanded" in result.detail
+
+
+def test_write_landed_within_tolerance():
+    # Setpoint registers are integers; allow float/rounding slack only.
+    assert check_write_landed("number.discharge", 50.0, 50.4).ok is True
+
+
+def test_write_landed_flip_back_mismatch():
+    result = check_write_landed("number.discharge", 0.0, 50.0)
+    assert result.ok is False
+    assert "commanded number.discharge=0 but entity reads 50" in result.detail
+
+
+def test_write_landed_unreadable_entity_no_verdict():
+    assert check_write_landed("number.discharge", 0.0, None) is None

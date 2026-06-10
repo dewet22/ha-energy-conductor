@@ -163,6 +163,8 @@ VERIFY_DISCHARGE_THRESHOLD_W = 150  # below this the battery is treated as effec
 VERIFY_MISMATCH_SECONDS = (
     90  # a mismatch must persist this long before flagging (settle + debounce)
 )
+# Write-readback: setpoint registers are integers (%/W); allow float/rounding slack only.
+VERIFY_READBACK_TOLERANCE = 0.5
 
 # Diagnostic sensor states
 STATUS_OK = "ok"

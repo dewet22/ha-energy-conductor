@@ -436,6 +436,74 @@ async def test_verification_skipped_in_dry_run(coordinator) -> None:
     assert coordinator.verification_status == "n/a"
 
 
+# ---- write-readback verification ---------------------------------------------------------
+
+_DISCHARGE_KEY = ("set_discharge_limit", "number.battery_discharge_limit")
+
+
+async def test_write_readback_not_recorded_in_dry_run(coordinator) -> None:
+    """Dry-run issues no real write — nothing to read back."""
+    assert coordinator.write_mode == "dry_run"
+    await _tick(coordinator, secs=0, battery_power=None)
+    assert coordinator._commanded == {}
+
+
+async def test_write_readback_ok_when_entity_reflects_command(coordinator, hass) -> None:
+    """A judgeable commanded write whose entity reads the commanded value → status ok."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)  # live write records _commanded
+    # Make it judgeable: pretend the write happened well before the tick clock (_T0).
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    hass.states.async_set("number.battery_discharge_limit", "0")  # echo landed
+
+    await _tick(coordinator, secs=0, battery_power=None)  # actuation n/a (no battery power)
+    assert coordinator.verification_status == "ok"
+    assert "as commanded" in coordinator.last_verification_detail
+
+
+async def test_write_readback_pending_during_settle(coordinator, hass) -> None:
+    """No verdict while the write-echo is still settling — an early read must not judge."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0  # just written
+    hass.states.async_set("number.battery_discharge_limit", "50")  # still the old value
+
+    await _tick(coordinator, secs=30, battery_power=None)  # 30s < VERIFY_MISMATCH_SECONDS
+    assert coordinator.verification_status == "n/a"
+    assert coordinator._commanded[_DISCHARGE_KEY].retries == 0
+
+
+async def test_write_readback_flip_back_retries_then_flags(coordinator, hass) -> None:
+    """The flip-back signature: entity reverts to the original value. First confirmation
+    re-issues the write once (self-heal); if the retry doesn't stick either, the mismatch
+    persists through the debounce window → flagged + notified."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)  # write 1 (applied)
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    hass.states.async_set("number.battery_discharge_limit", "50")  # flipped back
+
+    # First confirmation → re-issue scheduled (emit bookkeeping cleared), not yet flagged.
+    writes_before = coordinator.writer.write.await_count
+    await _tick(coordinator, secs=30, battery_power=None)
+    assert coordinator.verification_status != "mismatch"
+    assert coordinator._commanded[_DISCHARGE_KEY].retries == 1
+
+    # Next tick re-issues the same command (write 2) and starts a fresh settle window.
+    await _tick(coordinator, secs=60, battery_power=None)
+    assert coordinator.writer.write.await_count > writes_before
+
+    # The retry doesn't stick either: make it judgeable, entity still shows the old value.
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    await _tick(coordinator, secs=90, battery_power=None)
+    assert coordinator.verification_status != "mismatch"  # mismatch persistence window starts
+    n_before = coordinator.notifications_sent
+
+    await _tick(coordinator, secs=190, battery_power=None)  # >90s persisted → confirmed
+    assert coordinator.verification_status == "mismatch"
+    assert "entity reads 50" in coordinator.last_verification_detail
+    assert coordinator.notifications_sent == n_before + 1
+
+
 async def test_verification_renotifies_after_recovery(coordinator) -> None:
     """A second mismatch the same day, after recovery, is a fresh episode → notifies again
     (the per-episode dedupe key, not per-day; Codex review)."""
