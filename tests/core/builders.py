@@ -14,6 +14,7 @@ from energy_conductor.model import (
     Battery,
     EVCharger,
     ForecastSlot,
+    GridState,
     SiteState,
     SolarForecast,
     TariffState,
@@ -40,6 +41,11 @@ def an_ev_charger(**overrides: Any) -> EVCharger:
         is_plugged_in=False,
     )
     return EVCharger(**(defaults | overrides))
+
+
+def a_grid_state(**overrides: Any) -> GridState:
+    defaults: dict[str, Any] = dict(import_w=0.0, export_w=0.0)
+    return GridState(**(defaults | overrides))
 
 
 def a_tariff(**overrides: Any) -> TariffState:

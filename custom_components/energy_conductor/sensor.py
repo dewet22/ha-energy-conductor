@@ -109,6 +109,8 @@ class StatusSensor(_BaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.coordinator.last_site_state
+        grid = state.grid if state is not None else None
         return {
             "last_error": self.coordinator.last_error,
             "degraded_since": self.coordinator.degraded_since,
@@ -122,6 +124,11 @@ class StatusSensor(_BaseSensor):
             "notifications_sent": self.coordinator.notifications_sent,
             "notify_failures": self.coordinator.notify_failures,
             "last_notify_error": self.coordinator.last_notify_error,
+            # Meter view + actuation verification (None when the grid sensors aren't configured).
+            "grid_import_w": grid.import_w if grid is not None else None,
+            "grid_export_w": grid.export_w if grid is not None else None,
+            "verification": self.coordinator.verification_status,
+            "verification_detail": self.coordinator.last_verification_detail,
         }
 
 

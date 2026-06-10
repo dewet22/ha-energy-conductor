@@ -18,6 +18,13 @@ CONF_BATTERY_RESERVE_PERCENT = "battery_reserve_percent"
 # `number` or `sensor` entity. Falls back to CONF_BATTERY_RESERVE_PERCENT when unset.
 CONF_RESERVE_SOC_SENSOR = "reserve_soc_sensor"
 
+# Config keys — grid meter + actuation verification (all optional; feature inert when unset)
+CONF_GRID_IMPORT_SENSOR = "grid_import_sensor"
+CONF_GRID_EXPORT_SENSOR = "grid_export_sensor"
+CONF_BATTERY_POWER_SENSOR = "battery_power_sensor"
+# EC's convention is +ve = discharging; set this when the configured sensor reads +ve = charging.
+CONF_BATTERY_POWER_POSITIVE_IS_CHARGING = "battery_power_positive_is_charging"
+
 # Config keys — tariff
 CONF_OFF_PEAK_SENSOR = "off_peak_sensor"
 CONF_DISPATCHING_SENSOR = "dispatching_sensor"
@@ -150,6 +157,12 @@ HOTWATER_MAX_BOOST_HOURS = 2
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes
 STALE_FORECAST_SECONDS = 24 * 3600  # 24 hours
+
+# Actuation verification (anti-drain check)
+VERIFY_DISCHARGE_THRESHOLD_W = 150  # below this the battery is treated as effectively idle
+VERIFY_MISMATCH_SECONDS = (
+    90  # a mismatch must persist this long before flagging (settle + debounce)
+)
 
 # Diagnostic sensor states
 STATUS_OK = "ok"

@@ -32,6 +32,8 @@ from .const import (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
+    CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
+    CONF_BATTERY_POWER_SENSOR,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
     CONF_DAILY_ENERGY_SENSOR,
@@ -44,6 +46,8 @@ from .const import (
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_GRID_EXPORT_SENSOR,
+    CONF_GRID_IMPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
@@ -117,6 +121,12 @@ LOADS_KEYS = (
     CONF_DAILY_KWH_TARGET,
 )
 EV_KEYS = (CONF_EV_POWER_SENSOR, CONF_EV_MIN_ACTIVATION_W)
+GRID_KEYS = (
+    CONF_GRID_IMPORT_SENSOR,
+    CONF_GRID_EXPORT_SENSOR,
+    CONF_BATTERY_POWER_SENSOR,
+    CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
+)
 HOTWATER_KEYS = (
     CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_STATUS_SENSOR,
@@ -281,6 +291,29 @@ def battery_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
             _marker(CONF_RESERVE_SOC_SENSOR, options=options, defaults=defaults): (
                 _soc_floor_selector()
             ),
+        }
+    )
+
+
+def grid_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
+    """Optional meter-side input for read-only observability + actuation verification."""
+    return vol.Schema(
+        {
+            _marker(CONF_GRID_IMPORT_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="power")
+            ),
+            _marker(CONF_GRID_EXPORT_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="power")
+            ),
+            _marker(CONF_BATTERY_POWER_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="power")
+            ),
+            _marker(
+                CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
+                options=options,
+                defaults=defaults,
+                default=False,
+            ): BooleanSelector(),
         }
     )
 
@@ -563,6 +596,17 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_HOTWATER_STATUS_SENSOR
         ):
             self._data.update({k: v for k, v in user_input.items() if v is not None})
+        return await self.async_step_grid()
+
+    async def async_step_grid(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(step_id="grid", data_schema=grid_schema({}, options=False))
+        # Store the group only when at least one sensor is set. Grid import/export drive
+        # observability (both needed); battery power drives verification (independent) — so
+        # don't gate everything on the grid pair, and don't persist a lone default toggle.
+        sensors = (CONF_GRID_IMPORT_SENSOR, CONF_GRID_EXPORT_SENSOR, CONF_BATTERY_POWER_SENSOR)
+        if any(user_input.get(k) for k in sensors):
+            self._data.update({k: v for k, v in user_input.items() if v is not None})
         return await self.async_step_behaviour()
 
     async def async_step_behaviour(
@@ -618,7 +662,16 @@ class EnergyConductorOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["battery", "tariff", "solar", "loads", "ev", "hotwater", "behaviour"],
+            menu_options=[
+                "battery",
+                "tariff",
+                "solar",
+                "loads",
+                "ev",
+                "hotwater",
+                "grid",
+                "behaviour",
+            ],
         )
 
     async def async_step_battery(
@@ -680,6 +733,13 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 step_id="hotwater", data_schema=hotwater_schema(self._defaults(), options=True)
             )
         return self._save(user_input, HOTWATER_KEYS)
+
+    async def async_step_grid(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="grid", data_schema=grid_schema(self._defaults(), options=True)
+            )
+        return self._save(user_input, GRID_KEYS)
 
     async def async_step_behaviour(
         self, user_input: dict[str, Any] | None = None

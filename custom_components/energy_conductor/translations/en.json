@@ -73,6 +73,16 @@
           "hotwater_max_temp_state": "Status value meaning 'tank full' (default 'Max temp reached')"
         }
       },
+      "grid": {
+        "title": "Grid meter & verification (optional)",
+        "description": "Read-only meter input for observability and an actuation sanity-check. Set the two grid power sensors (import + export, always-positive) and/or the battery power sensor; EC then checks that a discharge cap actually idled the battery and raises a problem if not. No effect on planning.",
+        "data": {
+          "grid_import_sensor": "Grid import power sensor (W, always positive)",
+          "grid_export_sensor": "Grid export power sensor (W, always positive)",
+          "battery_power_sensor": "Battery power sensor (W)",
+          "battery_power_positive_is_charging": "Battery power: positive means charging (leave off if positive = discharging)"
+        }
+      },
       "behaviour": {
         "title": "Behaviour",
         "description": "Write mode, notification target and planning schedule.",
@@ -101,6 +111,7 @@
           "loads": "Loads & learning",
           "ev": "EV charger",
           "hotwater": "Hot water",
+          "grid": "Grid & verification",
           "behaviour": "Behaviour"
         }
       },
@@ -167,6 +178,15 @@
           "hotwater_threshold_percent": "Reserve threshold (%) — prompt when projected below this",
           "hotwater_depletion_kwh": "Daily depletion fallback (kWh/day) — used until learned",
           "hotwater_max_temp_state": "Status value meaning 'tank full' (default 'Max temp reached')"
+        }
+      },
+      "grid": {
+        "title": "Grid meter & verification",
+        "data": {
+          "grid_import_sensor": "Grid import power sensor (W, always positive)",
+          "grid_export_sensor": "Grid export power sensor (W, always positive)",
+          "battery_power_sensor": "Battery power sensor (W)",
+          "battery_power_positive_is_charging": "Battery power: positive means charging (leave off if positive = discharging)"
         }
       },
       "behaviour": {

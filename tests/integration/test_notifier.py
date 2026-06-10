@@ -103,3 +103,16 @@ def test_render_message_hot_water_boost_formats_hours() -> None:
     msg = render_message(decision, WRITE_MODE_LIVE)
     assert "Hot water boost recommended → ~2.0h" in msg
     assert "reserve low" in msg
+
+
+def test_render_message_verification_mismatch_formats_watts() -> None:
+    decision = Decision(
+        kind=DecisionKind.VERIFICATION_MISMATCH,
+        target_entity="actuation",
+        value=2000.0,
+        reason="discharge capped at 0 but battery discharging 2000 W",
+        dedupe_key="mismatch-2026-06-08",
+    )
+    msg = render_message(decision, WRITE_MODE_LIVE)
+    assert "Actuation mismatch → 2000W" in msg
+    assert "battery discharging" in msg

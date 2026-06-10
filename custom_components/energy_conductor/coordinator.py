@@ -35,6 +35,7 @@ from .const import (
     STATUS_DEGRADED,
     STATUS_ERROR,
     STATUS_OK,
+    VERIFY_MISMATCH_SECONDS,
     WRITE_MODE_DRY_RUN,
     WRITE_MODE_LIVE,
 )
@@ -45,6 +46,7 @@ from .jitter import hourly_jitter_offset
 from .model import SiteState
 from .notifier import Notifier
 from .overnight import plan_overnight
+from .verify import check_actuation
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
@@ -156,6 +158,12 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_overnight_plan_at: datetime | None = None
         self.last_discharge_decision: Decision | None = None
         self.last_site_state: SiteState | None = None
+        # Actuation verification (live-mode only): does the meter reflect what EC commanded?
+        # "ok" | "mismatch" (confirmed, persisted) | "n/a" (not applicable / dry-run).
+        self.verification_status: str = "n/a"
+        self.last_verification_detail: str | None = None
+        self.last_verification_at: datetime | None = None
+        self._mismatch_since: datetime | None = None
 
         self._unsubs: list = []
 
@@ -281,6 +289,57 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             and state.now - self.last_overnight_plan_at <= _PLAN_RETRY_MAX_AGE
         ):
             self.last_overnight_outcome = await self._emit(self.last_overnight_plan)
+
+        # Actuation verification: did the meter reflect the discharge cap we just emitted?
+        await self._verify_actuation(state)
+
+    async def _verify_actuation(self, state: SiteState) -> None:
+        """Check the last discharge actuation against the meter and flag a persistent mismatch.
+
+        Live-mode only (dry-run isn't actuating). A mismatch must persist VERIFY_MISMATCH_SECONDS
+        before it's confirmed — one timer serving as both settle window and debounce, robust to the
+        variable tick cadence (state-change events trigger extra refreshes). A confirmed mismatch
+        raises the actuation-mismatch binary sensor and notifies once per episode.
+        """
+        if self.write_mode != WRITE_MODE_LIVE:
+            self.verification_status = "n/a"
+            self.last_verification_detail = None
+            self._mismatch_since = None
+            return
+
+        result = check_actuation(state, self.last_discharge_decision, self.last_discharge_outcome)
+        if result is None:
+            self.verification_status = "n/a"
+            self.last_verification_detail = None
+            self._mismatch_since = None
+            return
+        if result.ok:
+            self.verification_status = "ok"
+            self.last_verification_detail = result.detail
+            self.last_verification_at = state.now
+            self._mismatch_since = None
+            return
+
+        # Mismatch — confirm only once it has persisted (settle + debounce in one window).
+        if self._mismatch_since is None:
+            self._mismatch_since = state.now
+        if state.now - self._mismatch_since < timedelta(seconds=VERIFY_MISMATCH_SECONDS):
+            return  # not yet persistent; leave the last confirmed verdict in place
+        self.verification_status = "mismatch"
+        self.last_verification_detail = result.detail
+        self.last_verification_at = state.now
+        # Notify via _emit, keyed on the episode start (_mismatch_since) — so a recovered-then-
+        # recurring mismatch the same day gets a fresh key and re-notifies, and _emit's own
+        # bookkeeping handles once-per-episode dedupe + notify-failure retry (no outer latch,
+        # which would both block re-notification and swallow a failed delivery — Codex review).
+        mismatch = Decision(
+            kind=DecisionKind.VERIFICATION_MISMATCH,
+            target_entity="actuation",
+            value=state.battery.power_w,
+            reason=result.detail,
+            dedupe_key=f"mismatch-{self._mismatch_since.isoformat()}",
+        )
+        await self._emit(mismatch)
 
     async def _run_overnight_plan(self, _now=None) -> None:
         try:

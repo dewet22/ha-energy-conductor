@@ -33,6 +33,7 @@ async def async_setup_entry(
             TariffCheapNowBinarySensor(coordinator, entry),
             TariffDispatchingNowBinarySensor(coordinator, entry),
             HotWaterBoostRecommendedBinarySensor(coordinator, entry),
+            ActuationMismatchBinarySensor(coordinator, entry),
         ]
     )
 
@@ -115,6 +116,29 @@ class HotWaterBoostRecommendedBinarySensor(_BaseBinarySensor):
         return {
             "suggested_boost_hours": hw.suggested_boost_hours,
             "reserve_percent": hw.reserve_percent,
+        }
+
+
+class ActuationMismatchBinarySensor(_BaseBinarySensor):
+    _attr_translation_key = "actuation_mismatch"
+    _attr_name = "Actuation mismatch"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-actuation-mismatch"
+
+    @property
+    def is_on(self) -> bool:
+        # PROBLEM device_class: on = a confirmed, persisted actuation mismatch (live mode only).
+        return self.coordinator.verification_status == "mismatch"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "status": self.coordinator.verification_status,
+            "detail": self.coordinator.last_verification_detail,
+            "last_verified_at": self.coordinator.last_verification_at,
         }
 
 

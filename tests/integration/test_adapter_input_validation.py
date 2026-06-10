@@ -17,7 +17,11 @@ from custom_components.energy_conductor.adapter import (
     parse_hh_mm,
 )
 from custom_components.energy_conductor.const import (
+    CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
+    CONF_BATTERY_POWER_SENSOR,
     CONF_BATTERY_RESERVE_PERCENT,
+    CONF_GRID_EXPORT_SENSOR,
+    CONF_GRID_IMPORT_SENSOR,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_RESERVE_SOC_SENSOR,
@@ -139,3 +143,84 @@ async def test_off_peak_window_end_ignores_malformed_config_time(hass, caplog):
     now = datetime(2026, 6, 8, 21, 0, tzinfo=UTC)
     assert adapter._off_peak_window_end(now, off_peak_now=False) is None
     assert "malformed overnight window end time" in caplog.text.lower()
+
+
+# --- grid meter + battery power (verification inputs) ------------------------
+
+
+async def test_grid_state_from_two_sensors(hass):
+    hass.states.async_set("sensor.grid_import", "1200")
+    hass.states.async_set("sensor.grid_export", "0")
+    await hass.async_block_till_done()
+    adapter = Adapter(
+        hass,
+        {
+            CONF_GRID_IMPORT_SENSOR: "sensor.grid_import",
+            CONF_GRID_EXPORT_SENSOR: "sensor.grid_export",
+        },
+    )
+    grid = adapter._grid_state()
+    assert grid is not None
+    assert grid.import_w == pytest.approx(1200.0)
+    assert grid.export_w == pytest.approx(0.0)
+    assert grid.net_w == pytest.approx(1200.0)
+
+
+async def test_grid_state_none_when_partial(hass):
+    hass.states.async_set("sensor.grid_import", "1200")
+    await hass.async_block_till_done()
+    adapter = Adapter(hass, {CONF_GRID_IMPORT_SENSOR: "sensor.grid_import"})  # no export sensor
+    assert adapter._grid_state() is None
+
+
+async def test_grid_state_none_when_unavailable(hass):
+    hass.states.async_set("sensor.grid_import", "unavailable")
+    hass.states.async_set("sensor.grid_export", "0")
+    await hass.async_block_till_done()
+    adapter = Adapter(
+        hass,
+        {
+            CONF_GRID_IMPORT_SENSOR: "sensor.grid_import",
+            CONF_GRID_EXPORT_SENSOR: "sensor.grid_export",
+        },
+    )
+    assert adapter._grid_state() is None
+
+
+async def test_battery_power_read(hass):
+    hass.states.async_set("sensor.battery_power", "1500")
+    await hass.async_block_till_done()
+    adapter = Adapter(hass, {CONF_BATTERY_POWER_SENSOR: "sensor.battery_power"})
+    assert adapter._battery_power_w() == pytest.approx(1500.0)
+
+
+async def test_battery_power_invert_toggle(hass):
+    # Sensor reads +ve = charging; the toggle flips it to EC's +ve = discharging convention.
+    hass.states.async_set("sensor.battery_power", "1500")
+    await hass.async_block_till_done()
+    adapter = Adapter(
+        hass,
+        {
+            CONF_BATTERY_POWER_SENSOR: "sensor.battery_power",
+            CONF_BATTERY_POWER_POSITIVE_IS_CHARGING: True,
+        },
+    )
+    assert adapter._battery_power_w() == pytest.approx(-1500.0)
+
+
+async def test_battery_power_none_when_unconfigured(hass):
+    assert Adapter(hass, {})._battery_power_w() is None
+
+
+async def test_battery_power_none_when_stale(hass, freezer):
+    # Stale state must not drive the active verifier: a frozen "discharging" reading from a
+    # stalled integration would otherwise confirm a false mismatch (Codex review).
+    from datetime import timedelta
+
+    from custom_components.energy_conductor.const import STALE_POWER_SECONDS
+
+    hass.states.async_set("sensor.battery_power", "2000")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(seconds=STALE_POWER_SECONDS + 60))
+    adapter = Adapter(hass, {CONF_BATTERY_POWER_SENSOR: "sensor.battery_power"})
+    assert adapter._battery_power_w() is None

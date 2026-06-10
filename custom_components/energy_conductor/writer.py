@@ -12,6 +12,11 @@ from .decisions import Decision, DecisionKind
 
 _LOGGER = logging.getLogger(__name__)
 
+# Decisions surfaced via the Notifier only — they never write to hardware.
+_NOTIFY_ONLY_KINDS = frozenset(
+    {DecisionKind.RECOMMEND_HOT_WATER_BOOST, DecisionKind.VERIFICATION_MISMATCH}
+)
+
 
 class WriteFailure(RuntimeError):
     """Raised when a service call to apply a decision fails."""
@@ -24,7 +29,7 @@ class Writer:
 
     async def write(self, decision: Decision) -> None:
         """Apply a decision via HA service call. No-op in dry-run mode."""
-        if decision.kind == DecisionKind.RECOMMEND_HOT_WATER_BOOST:
+        if decision.kind in _NOTIFY_ONLY_KINDS:
             return  # notify-only decision: surfaced via the Notifier, never written
         if self.write_mode != WRITE_MODE_LIVE:
             return

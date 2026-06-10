@@ -11,6 +11,7 @@ class DecisionKind(StrEnum):
     SET_CHARGE_TARGET = "set_charge_target"
     SET_DISCHARGE_LIMIT = "set_discharge_limit"
     RECOMMEND_HOT_WATER_BOOST = "recommend_hot_water_boost"  # notify-only; no write
+    VERIFICATION_MISMATCH = "verification_mismatch"  # notify-only; actuation didn't take effect
 
 
 @dataclass(frozen=True)

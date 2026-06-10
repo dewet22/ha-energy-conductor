@@ -319,6 +319,7 @@ from datetime import UTC, datetime  # noqa: E402
 from custom_components.energy_conductor.coordinator import _hot_water_decision  # noqa: E402
 from custom_components.energy_conductor.model import (  # noqa: E402
     Battery,
+    GridState,
     HotWaterState,
     SiteState,
     SolarForecast,
@@ -326,15 +327,23 @@ from custom_components.energy_conductor.model import (  # noqa: E402
 )
 
 
-def _site_state(hot_water: HotWaterState | None, *, now: datetime | None = None) -> SiteState:
+def _site_state(
+    hot_water: HotWaterState | None,
+    *,
+    now: datetime | None = None,
+    off_peak: bool = False,
+    battery_power: float | None = None,
+    grid: GridState | None = None,
+) -> SiteState:
     return SiteState(
         now=now or datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
-        battery=Battery(90.0, 11.0, 3000, 3000, 4.0),
+        battery=Battery(90.0, 11.0, 3000, 3000, 4.0, power_w=battery_power),
         ev_charger=None,
         solar_forecast=SolarForecast(slots=(), fallback_kwh=6.0, fallback_source="t"),
-        tariff=TariffState(False, False, None, None),
+        tariff=TariffState(off_peak, False, None, None),
         baseline_load_w=700.0,
         hot_water=hot_water,
+        grid=grid,
     )
 
 
@@ -366,3 +375,84 @@ def test_hot_water_decision_built_when_recommended() -> None:
     assert decision.value == 2.0
     assert "2026-06-08" in decision.dedupe_key
     assert "reserve" in decision.reason.lower()
+
+
+# ---- actuation verification (anti-drain) -----------------------------------------------
+
+from datetime import timedelta  # noqa: E402
+
+from custom_components.energy_conductor.const import WRITE_MODE_LIVE  # noqa: E402
+
+_T0 = datetime(2026, 6, 8, 23, 0, tzinfo=UTC)
+
+
+async def _tick(coordinator, *, secs: int, battery_power: float) -> None:
+    """Run one live off-peak tick with the given battery power, `secs` after _T0."""
+    coordinator.adapter.build_site_state = AsyncMock(
+        return_value=_site_state(
+            None, now=_T0 + timedelta(seconds=secs), off_peak=True, battery_power=battery_power
+        )
+    )
+    await coordinator._async_update_data()
+
+
+async def test_verification_flags_persistent_mismatch_and_notifies(coordinator) -> None:
+    """Live mode: a discharge cap that doesn't idle the battery is flagged only after it
+    persists VERIFY_MISMATCH_SECONDS, and notifies exactly once."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+
+    # Tick 1: mismatch detected but within the debounce window → not yet confirmed.
+    await _tick(coordinator, secs=0, battery_power=2000.0)
+    assert coordinator.verification_status != "mismatch"
+    n_before = coordinator.notifications_sent
+
+    # Tick 2: still mismatching 95 s later → confirmed + notified once.
+    await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+    assert "discharging" in coordinator.last_verification_detail
+    assert coordinator.notifications_sent == n_before + 1
+
+    # Tick 3: still mismatching → no repeat notification (deduped per episode).
+    await _tick(coordinator, secs=200, battery_power=2000.0)
+    assert coordinator.notifications_sent == n_before + 1
+
+
+async def test_verification_recovers_and_clears(coordinator) -> None:
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=2000.0)
+    await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+
+    # Battery goes idle → verdict clears.
+    await _tick(coordinator, secs=130, battery_power=30.0)
+    assert coordinator.verification_status == "ok"
+
+
+async def test_verification_skipped_in_dry_run(coordinator) -> None:
+    """Dry-run isn't actuating, so there's nothing to verify — status stays n/a."""
+    assert coordinator.write_mode == "dry_run"  # fixture default
+    await _tick(coordinator, secs=0, battery_power=2000.0)
+    await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "n/a"
+
+
+async def test_verification_renotifies_after_recovery(coordinator) -> None:
+    """A second mismatch the same day, after recovery, is a fresh episode → notifies again
+    (the per-episode dedupe key, not per-day; Codex review)."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+
+    # Episode 1: confirm + notify once.
+    await _tick(coordinator, secs=0, battery_power=2000.0)
+    await _tick(coordinator, secs=95, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+    n1 = coordinator.notifications_sent
+
+    # Recover.
+    await _tick(coordinator, secs=130, battery_power=30.0)
+    assert coordinator.verification_status == "ok"
+
+    # Episode 2 (same day): a fresh mismatch must notify again, not be deduped away.
+    await _tick(coordinator, secs=200, battery_power=2000.0)
+    await _tick(coordinator, secs=300, battery_power=2000.0)
+    assert coordinator.verification_status == "mismatch"
+    assert coordinator.notifications_sent == n1 + 1
