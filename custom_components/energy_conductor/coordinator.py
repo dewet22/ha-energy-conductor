@@ -17,7 +17,7 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .adapter import Adapter, EntityProblem
+from .adapter import Adapter, EntityProblem, parse_hh_mm
 from .const import (
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
@@ -158,7 +158,15 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         plan_time_raw = self.config.get(
             CONF_OVERNIGHT_PLAN_TIME, DEFAULT_OVERNIGHT_PLAN_TIME.isoformat()
         )
-        hh, mm, *_ = (int(p) for p in str(plan_time_raw).split(":"))
+        parsed = parse_hh_mm(plan_time_raw)
+        if parsed is None:
+            _LOGGER.warning(
+                "Malformed overnight plan time %r; falling back to %s",
+                plan_time_raw,
+                DEFAULT_OVERNIGHT_PLAN_TIME.isoformat(),
+            )
+            parsed = (DEFAULT_OVERNIGHT_PLAN_TIME.hour, DEFAULT_OVERNIGHT_PLAN_TIME.minute)
+        hh, mm = parsed
         self._unsubs.append(
             async_track_time_change(
                 self.hass, self._run_overnight_plan, hour=hh, minute=mm, second=0

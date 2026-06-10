@@ -1,0 +1,27 @@
+name: audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly-disclosed CVE against an unchanged dependency surfaces even
+    # when nothing in the repo has changed.
+    - cron: "0 6 * * 1"
+
+# Least-privilege GITHUB_TOKEN; nothing here writes to the repo.
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      # The frontend devDependencies (vitest) are the only third-party tree this repo
+      # declares and controls. Python ships no runtime requirements (manifest
+      # `requirements: []`) — HA owns those versions — and the dashboard JS is itself
+      # dependency-free, so there is nothing else worth a CVE gate. Action SHA-pinned to
+      # match test.yml. `npm audit` reads package-lock.json directly — no install needed.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high

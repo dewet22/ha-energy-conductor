@@ -146,6 +146,21 @@ def _read_off_peak_attr(hass: HomeAssistant, entity_id: str, attr: str) -> datet
     return dt_util.as_utc(parsed)
 
 
+def parse_hh_mm(raw: object) -> tuple[int, int] | None:
+    """Parse an "HH:MM[:SS]" time string to ``(hour, minute)``, or ``None`` if malformed.
+
+    TimeSelector stores well-formed values, but a hand-edited config or a future migration bug
+    must not raise an unhandled ValueError that aborts setup (audit L-1). Callers fall back to a
+    sensible default and warn. ``dt_time(hh, mm)`` also rejects out-of-range fields like "25:00".
+    """
+    try:
+        hh, mm, *_ = (int(p) for p in str(raw).split(":"))
+        dt_time(hh, mm)
+    except TypeError, ValueError:
+        return None
+    return hh, mm
+
+
 _MAX_POWER_W = 20_000  # no residential inverter exceeds ~20 kW; reject absurd/negative
 
 
@@ -318,8 +333,11 @@ class Adapter:
         raw = self.config.get(CONF_OVERNIGHT_WINDOW_END_TIME)
         if raw is None:
             return None
-        # raw is "HH:MM:SS" from TimeSelector
-        hh, mm, *_ = (int(p) for p in raw.split(":"))
+        parsed = parse_hh_mm(raw)
+        if parsed is None:
+            _LOGGER.warning("Ignoring malformed overnight window end time %r", raw)
+            return None
+        hh, mm = parsed
         local_now = dt_util.as_local(now)
         # Use combine+as_local so DST offset is recalculated from scratch for that wall-clock time
         candidate_local = dt_util.as_local(datetime.combine(local_now.date(), dt_time(hh, mm, 0)))

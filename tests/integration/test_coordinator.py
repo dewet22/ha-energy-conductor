@@ -201,6 +201,25 @@ async def test_tick_retries_pending_plan_across_midnight(coordinator) -> None:
     assert "number.battery_charge_target" in written
 
 
+async def test_async_start_survives_malformed_plan_time(coordinator, caplog) -> None:
+    """Audit L-1: a malformed stored overnight plan time must not abort setup. It falls back
+    to the default time with a warning, still registering the schedule + state listeners."""
+    import logging
+
+    from custom_components.energy_conductor.const import CONF_OVERNIGHT_PLAN_TIME
+
+    coordinator.config[CONF_OVERNIGHT_PLAN_TIME] = "not-a-time"
+    coordinator.last_overnight_plan = _decision()  # truthy → skip the immediate plan run
+
+    with caplog.at_level(logging.WARNING, logger="custom_components.energy_conductor.coordinator"):
+        await coordinator.async_start()
+    try:
+        assert coordinator._unsubs  # listeners registered despite the bad time
+        assert "malformed overnight plan time" in caplog.text.lower()
+    finally:
+        await coordinator.async_stop()
+
+
 async def test_emit_dedupes_repeated_decision(coordinator) -> None:
     await coordinator._emit(_decision(dedupe_key="d-0"))
     await coordinator._emit(_decision(dedupe_key="d-0"))

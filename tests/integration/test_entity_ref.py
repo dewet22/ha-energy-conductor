@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 from custom_components.energy_conductor import entity_ref
@@ -66,6 +67,28 @@ async def test_resolve_ref_miss_falls_back(hass):
     """Anchor present but no registry match (entity gone entirely) → stored id."""
     ref = {"platform": "givenergy", "unique_id": "vanished"}
     assert entity_ref.resolve_ref(hass, "sensor.gone", ref) == "sensor.gone"
+
+
+async def test_resolve_ref_logs_redirect(hass, caplog):
+    """L-3: a redirect (rename self-heal or a unique_id collision) must leave an audit trail."""
+    entity_id = _register(hass, "sensor", "givenergy", "soc-1", "battery_soc")
+    ref = entity_ref.capture_ref(hass, entity_id)
+    er.async_get(hass).async_update_entity(entity_id, new_entity_id="sensor.loft_battery_soc")
+
+    with caplog.at_level(logging.INFO, logger=entity_ref.__name__):
+        assert entity_ref.resolve_ref(hass, entity_id, ref) == "sensor.loft_battery_soc"
+    assert "redirected" in caplog.text
+    assert "sensor.loft_battery_soc" in caplog.text
+
+
+async def test_resolve_ref_no_log_when_unchanged(hass, caplog):
+    """No redirect (resolved id == stored id) → no log noise."""
+    entity_id = _register(hass, "sensor", "givenergy", "soc-1", "battery_soc")
+    ref = entity_ref.capture_ref(hass, entity_id)
+
+    with caplog.at_level(logging.INFO, logger=entity_ref.__name__):
+        assert entity_ref.resolve_ref(hass, entity_id, ref) == entity_id
+    assert "redirected" not in caplog.text
 
 
 async def test_capture_all_mixed(hass):
