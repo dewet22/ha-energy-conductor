@@ -146,15 +146,31 @@ def _read_off_peak_attr(hass: HomeAssistant, entity_id: str, attr: str) -> datet
     return dt_util.as_utc(parsed)
 
 
+_MAX_POWER_W = 20_000  # no residential inverter exceeds ~20 kW; reject absurd/negative
+
+
 def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     state = hass.states.get(entity_id)
     if state is None:
         return default
     raw = state.attributes.get("max")
     try:
-        return int(raw)
-    except TypeError, ValueError:
+        value = int(raw)
+    except TypeError, ValueError, OverflowError:
+        # OverflowError: int(float("inf")) — a float-valued `max` of inf from a
+        # buggy upstream integration would otherwise crash build_site_state.
         return default
+    # The discharge guard writes this verbatim to the limit entity — clamp to a
+    # plausible inverter range so a bogus `max` attribute can't drive a bad write.
+    clamped = max(1, min(_MAX_POWER_W, value))
+    if clamped != value:
+        _LOGGER.warning(
+            "%s: 'max' attribute %s out of plausible range; clamped to %s W",
+            entity_id,
+            value,
+            clamped,
+        )
+    return clamped
 
 
 class EntityProblem(RuntimeError):
@@ -270,7 +286,18 @@ class Adapter:
         sensor = self.config.get(CONF_RESERVE_SOC_SENSOR)
         if sensor:
             try:
-                return _read_float(self.hass, sensor, max_age_seconds=STALE_FORECAST_SECONDS)
+                raw = _read_float(self.hass, sensor, max_age_seconds=STALE_FORECAST_SECONDS)
+                # Fail-soft: a glitchy reserve sensor (0 on firmware reset, >100)
+                # must not feed a garbage floor into the overnight target — clamp it.
+                clamped = max(0.0, min(100.0, raw))
+                if clamped != raw:
+                    _LOGGER.warning(
+                        "Reserve SoC sensor %s out of range (%s%%); clamped to %s%%",
+                        sensor,
+                        raw,
+                        clamped,
+                    )
+                return clamped
             except EntityProblem as exc:
                 _LOGGER.warning("Reserve SoC sensor unreadable (%s); using config value", exc)
         return float(self.config.get(CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT))

@@ -25,6 +25,27 @@ def _battery(**overrides):
     return Battery(**(defaults | overrides))
 
 
+class TestBatteryInvariants:
+    """Security audit M-3: Battery rejects physically-impossible construction."""
+
+    def test_valid_battery_constructs(self):
+        assert _battery().capacity_kwh == 10.0
+
+    @pytest.mark.parametrize(
+        "bad_capacity", [0, 0.0, -5.0, float("nan"), float("inf"), float("-inf")]
+    )
+    def test_non_positive_or_non_finite_capacity_rejected(self, bad_capacity):
+        # nan/inf slip past `<= 0` (nan compares false) and would produce a bogus
+        # 100% charge target downstream — must be rejected here.
+        with pytest.raises(ValueError, match="capacity_kwh must be finite and > 0"):
+            _battery(capacity_kwh=bad_capacity)
+
+    @pytest.mark.parametrize("bad_reserve", [-1.0, 100.5, 150.0])
+    def test_out_of_range_reserve_rejected(self, bad_reserve):
+        with pytest.raises(ValueError, match="reserve_percent must be in"):
+            _battery(reserve_percent=bad_reserve)
+
+
 def _tariff(**overrides):
     defaults = dict(
         off_peak_now=False,

@@ -6,6 +6,7 @@ Naive datetimes are rejected in __post_init__.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -26,6 +27,21 @@ class Battery:
     max_charge_power_w: int
     max_discharge_power_w: int
     reserve_percent: float
+
+    def __post_init__(self) -> None:
+        # capacity_kwh comes straight from config with no clamp site; 0 would be a
+        # ZeroDivisionError deep in plan_overnight (swallowed → opaque silent stop), and
+        # nan/inf slip past `<= 0` (nan compares false) to produce a bogus 100% target.
+        if not math.isfinite(self.capacity_kwh) or self.capacity_kwh <= 0:
+            raise ValueError(
+                f"Battery.capacity_kwh must be finite and > 0 (got {self.capacity_kwh!r})"
+            )
+        # Invariant on the model; the adapter already clamps the live reserve sensor,
+        # so this guards other construction paths and documents the contract.
+        if not 0 <= self.reserve_percent <= 100:
+            raise ValueError(
+                f"Battery.reserve_percent must be in [0, 100] (got {self.reserve_percent!r})"
+            )
 
 
 @dataclass(frozen=True)
