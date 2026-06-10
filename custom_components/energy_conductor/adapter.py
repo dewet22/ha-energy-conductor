@@ -156,7 +156,7 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     raw = state.attributes.get("max")
     try:
         value = int(raw)
-    except TypeError, ValueError, OverflowError:
+    except (TypeError, ValueError, OverflowError):
         # OverflowError: int(float("inf")) — a float-valued `max` of inf from a
         # buggy upstream integration would otherwise crash build_site_state.
         return default
@@ -422,7 +422,7 @@ class Adapter:
                 if not math.isfinite(kwh):
                     continue  # a single inf/nan slot would poison the whole forecast total
                 slots.append(ForecastSlot(start=start_utc, energy_kwh=kwh))
-            except KeyError, TypeError, ValueError:
+            except (KeyError, TypeError, ValueError):
                 continue
         return slots
 
