@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import random
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -44,6 +46,16 @@ from .overnight import plan_overnight
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class _EmitState:
+    """Per-(kind, target) bookkeeping for _emit, tracking three independent facts so a
+    failed write retries every tick while notifications fire only once each (audit M-4)."""
+
+    notified: str | None = None  # dedupe_key whose primary notification was delivered
+    written: str | None = None  # dedupe_key whose write succeeded
+    notify_failed: str | None = None  # dedupe_key whose failure notification was delivered
 
 
 def _hot_water_decision(state: SiteState) -> Decision | None:
@@ -99,7 +111,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         )
         self.writer = Writer(hass, self.config.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN))
 
-        self._dedupe: dict[tuple[str, str], str] = {}
+        self._emit_state: dict[tuple[str, str], _EmitState] = defaultdict(_EmitState)
         self.status: str = STATUS_OK
         self.last_error: str | None = None
         self.ticks_total: int = 0
@@ -238,32 +250,39 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
     async def _emit(self, decision: Decision) -> None:
         key = (decision.kind.value, decision.target_entity)
-        if self._dedupe.get(key) == decision.dedupe_key:
+        st = self._emit_state[key]
+        dk = decision.dedupe_key
+
+        # Fully handled: written to hardware AND the user was told. Nothing to do.
+        if st.written == dk and st.notified == dk:
             return
-        notify_ok = await self._notify(decision)
-        try:
-            await self.writer.write(decision)
-        except WriteFailure as exc:
-            # Commit the dedupe key so the write (and its failure notification) does not
-            # retry every tick. A fresh write attempt happens when the decision value changes.
-            self._dedupe[key] = decision.dedupe_key
-            _LOGGER.warning("Write failed: %s", exc)
-            # Surface as a second notification (per spec §5)
-            failure_decision = Decision(
-                kind=decision.kind,
-                target_entity=decision.target_entity,
-                value=decision.value,
-                reason=f"WRITE FAILED — {exc}",
-                dedupe_key=f"{decision.dedupe_key}-failed",
-            )
-            await self._notify(failure_decision)
-            return
-        # Write succeeded. Only commit the dedupe key if the user was actually notified —
-        # otherwise a failed notification for a recurring decision would be suppressed
-        # forever. Leaving the key uncommitted retries the (idempotent) write + notify on
-        # the next tick until the notification gets through.
-        if notify_ok:
-            self._dedupe[key] = decision.dedupe_key
+
+        # Primary notification — once per decision, retried only until delivered (so a
+        # failed notify isn't suppressed forever; a retried write doesn't re-notify).
+        if st.notified != dk and await self._notify(decision):
+            st.notified = dk
+
+        # Write — retried every tick until it succeeds (number.set_value is idempotent).
+        # M-4: a failed write must NOT suppress the retry, or the actuator stays stale
+        # until the decision value next changes (hours, for discharge). Only the failure
+        # notification is deduped.
+        if st.written != dk:
+            try:
+                await self.writer.write(decision)
+            except WriteFailure as exc:
+                _LOGGER.warning("Write failed: %s", exc)
+                if st.notify_failed != dk:
+                    failure_decision = Decision(
+                        kind=decision.kind,
+                        target_entity=decision.target_entity,
+                        value=decision.value,
+                        reason=f"WRITE FAILED — {exc}",
+                        dedupe_key=f"{dk}-failed",
+                    )
+                    if await self._notify(failure_decision):
+                        st.notify_failed = dk
+                return  # NOT marked written → write retries on the next tick
+            st.written = dk
 
     async def _notify(self, decision: Decision) -> bool:
         """Dispatch a notification; record any failure on the diagnostic counters.

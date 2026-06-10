@@ -74,18 +74,32 @@ async def test_failed_notification_retries_next_tick(coordinator) -> None:
     assert coordinator.notifications_sent == 2
 
 
-async def test_write_failure_commits_dedupe_key(coordinator) -> None:
-    """A write failure commits the key (anti-spam) but emits a failure notification."""
+async def test_write_failure_retries_until_success(coordinator) -> None:
+    """Audit M-4: a failed write must RETRY every tick (not be suppressed), while the
+    notifications (primary + WRITE FAILED follow-up) fire only once each."""
     from custom_components.energy_conductor.writer import WriteFailure
 
     coordinator.writer.write = AsyncMock(side_effect=WriteFailure("set_value failed"))
 
+    # Tick 1: primary + failure notification; write attempted.
     await coordinator._emit(_decision(dedupe_key="d-0"))
-    # Two notifications: the decision + the WRITE FAILED follow-up.
+    assert coordinator.notifications_sent == 2
+    assert coordinator.writer.write.await_count == 1
+
+    # Tick 2: still failing — write RETRIED, but no notification spam.
+    await coordinator._emit(_decision(dedupe_key="d-0"))
+    assert coordinator.writer.write.await_count == 2
     assert coordinator.notifications_sent == 2
 
-    # Repeating the same decision is suppressed — no per-tick write/notify spam.
+    # Tick 3: write recovers and lands; no new notifications.
+    coordinator.writer.write = AsyncMock(return_value=None)
     await coordinator._emit(_decision(dedupe_key="d-0"))
+    assert coordinator.writer.write.await_count == 1  # the recovered mock
+    assert coordinator.notifications_sent == 2
+
+    # Tick 4: fully handled now — identical decision is deduped (no write, no notify).
+    await coordinator._emit(_decision(dedupe_key="d-0"))
+    assert coordinator.writer.write.await_count == 1
     assert coordinator.notifications_sent == 2
 
 
