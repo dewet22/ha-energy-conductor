@@ -29,6 +29,15 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def _redact_error(text: str | None) -> str | None:
+    """Error strings are free-form and re-leak identifiers the structured redaction removed —
+    WriteFailure embeds the target entity_id, notify errors carry the notify target, and HA
+    exception text can contain arbitrary entity IDs. Redact the text in the (publicly-attached)
+    dump while preserving None, so "is there an error?" still shows; full detail stays in the logs.
+    """
+    return REDACTED if text else None
+
+
 def _json_safe(value: Any) -> Any:
     """Round-trip through JSON so datetimes/enums/tuples become serialisable primitives."""
     return json.loads(json.dumps(value, default=str))
@@ -56,7 +65,7 @@ async def async_get_config_entry_diagnostics(
         "config": config,
         "coordinator": {
             "status": coord.status,
-            "last_error": coord.last_error,
+            "last_error": _redact_error(coord.last_error),
             "degraded_since": _iso(coord.degraded_since),
             "ticks_total": coord.ticks_total,
             "write_mode": coord.write_mode,
@@ -64,10 +73,10 @@ async def async_get_config_entry_diagnostics(
             "write_failures": coord.write_failures,
             "last_write_at": _iso(coord.last_write_at),
             "last_write_outcome": coord.last_write_outcome,
-            "last_write_error": coord.last_write_error,
+            "last_write_error": _redact_error(coord.last_write_error),
             "notifications_sent": coord.notifications_sent,
             "notify_failures": coord.notify_failures,
-            "last_notify_error": coord.last_notify_error,
+            "last_notify_error": _redact_error(coord.last_notify_error),
         },
         "last_decisions": {
             "discharge": _decision_dict(

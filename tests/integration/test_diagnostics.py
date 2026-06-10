@@ -59,6 +59,29 @@ async def test_diagnostics_dump(hass: HomeAssistant) -> None:
     json.dumps(diag)
 
 
+async def test_diagnostics_redacts_error_strings(hass: HomeAssistant) -> None:
+    """Error fields re-leak identifiers the structured redaction removed (entity ids in
+    WriteFailure text, the notify target in notify errors), so they're redacted too — while
+    None is preserved so "is there an error?" still shows (Codex review)."""
+    _arrange_entities(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="d3")
+    assert await _setup(hass, entry)
+
+    coord = hass.data[DOMAIN][entry.entry_id]
+    coord.last_error = "sensor.loft_battery_soc: stale (3600s)"
+    coord.last_write_error = "number.loft_battery_discharge_limit: set_value failed"
+    coord.last_notify_error = "notify.pixel_9a: boom"
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["coordinator"]["last_error"] == "**REDACTED**"
+    assert diag["coordinator"]["last_write_error"] == "**REDACTED**"
+    assert diag["coordinator"]["last_notify_error"] == "**REDACTED**"
+    # No leaked identifiers anywhere in the serialised dump.
+    blob = json.dumps(diag)
+    assert "loft_battery" not in blob
+    assert "pixel_9a" not in blob
+
+
 async def test_diagnostics_without_coordinator(hass: HomeAssistant) -> None:
     """If setup failed there's no coordinator — diagnostics must still return the redacted
     config rather than KeyError-ing on hass.data (Gemini review)."""
