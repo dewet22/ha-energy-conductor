@@ -317,6 +317,19 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         returns a mismatch verdict. Returns ok when all judgeable writes match, None when
         nothing is judgeable (settling / unreadable entities / no commands yet).
         """
+        # Stop verifying the charge target once the overnight plan is no longer fresh: EC has
+        # stopped re-enforcing it (the M-4 retry is freshness-gated), so the entity may
+        # legitimately diverge (a later change once the window is over) and verifying the stale
+        # value would false-flag — and the self-heal couldn't re-write it anyway (Gemini review).
+        # The discharge command needs no such cleanup: it's recomputed and re-asserted each tick.
+        if (
+            self.last_overnight_plan_at is not None
+            and now - self.last_overnight_plan_at > _PLAN_RETRY_MAX_AGE
+        ):
+            charge_entity = self.config.get(CONF_BATTERY_CHARGE_CONTROL)
+            if charge_entity is not None:
+                self._commanded.pop((DecisionKind.SET_CHARGE_TARGET.value, charge_entity), None)
+
         verdict: VerificationResult | None = None
         for key, cmd in self._commanded.items():
             if (now - cmd.written_at).total_seconds() < VERIFY_MISMATCH_SECONDS:

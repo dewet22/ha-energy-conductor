@@ -381,7 +381,14 @@ def test_hot_water_decision_built_when_recommended() -> None:
 
 from datetime import timedelta  # noqa: E402
 
-from custom_components.energy_conductor.const import WRITE_MODE_LIVE  # noqa: E402
+from custom_components.energy_conductor.const import (  # noqa: E402
+    CONF_BATTERY_CHARGE_CONTROL,
+    WRITE_MODE_LIVE,
+)
+from custom_components.energy_conductor.coordinator import (  # noqa: E402
+    _PLAN_RETRY_MAX_AGE,
+    _CommandedWrite,
+)
 
 _T0 = datetime(2026, 6, 8, 23, 0, tzinfo=UTC)
 
@@ -502,6 +509,25 @@ async def test_write_readback_flip_back_retries_then_flags(coordinator, hass) ->
     assert coordinator.verification_status == "mismatch"
     assert "entity reads 50" in coordinator.last_verification_detail
     assert coordinator.notifications_sent == n_before + 1
+
+
+async def test_write_readback_drops_stale_charge_target(coordinator, hass) -> None:
+    """A charge-target command must stop being verified once the overnight plan goes stale
+    (>_PLAN_RETRY_MAX_AGE) — EC no longer re-enforces it, so a later divergence on the entity
+    must NOT raise a false mismatch (Gemini review)."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    charge_entity = coordinator.config[CONF_BATTERY_CHARGE_CONTROL]
+    charge_key = ("set_charge_target", charge_entity)
+    # EC commanded a charge target long ago; the entity has since diverged (window over).
+    coordinator._commanded[charge_key] = _CommandedWrite(
+        value=80.0, written_at=_T0 - timedelta(hours=2)
+    )
+    coordinator.last_overnight_plan_at = _T0 - (_PLAN_RETRY_MAX_AGE + timedelta(hours=1))
+    hass.states.async_set(charge_entity, "20")  # changed since EC's stale command
+
+    await _tick(coordinator, secs=0, battery_power=None)
+    assert charge_key not in coordinator._commanded  # dropped, not verified
+    assert coordinator.verification_status == "n/a"
 
 
 async def test_verification_renotifies_after_recovery(coordinator) -> None:
