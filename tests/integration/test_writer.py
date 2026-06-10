@@ -41,3 +41,14 @@ async def test_writer_non_numeric_value_raises_write_failure(hass: MagicMock) ->
     with pytest.raises(WriteFailure, match="non-numeric"):
         await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, "not-a-number"))
     hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), "-inf"])
+async def test_writer_non_finite_value_raises_write_failure(hass: MagicMock, bad) -> None:
+    # float("nan")/float("inf") pass the float() conversion — the writer is the last
+    # boundary before a hardware write, so non-finite values must also be rejected
+    # (Gemini review on the L-2 fix; same class as audit H-3).
+    writer = Writer(hass, WRITE_MODE_LIVE)
+    with pytest.raises(WriteFailure, match="non-finite"):
+        await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, bad))
+    hass.services.async_call.assert_not_called()

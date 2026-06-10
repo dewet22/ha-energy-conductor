@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 
 from homeassistant.core import HomeAssistant
 
@@ -37,6 +38,13 @@ class Writer:
                 raise WriteFailure(
                     f"non-numeric decision value for {decision.target_entity}: {decision.value!r}"
                 ) from exc
+            # float("nan")/float("inf") parse fine — this is the last boundary
+            # before a hardware write, so reject non-finite values here too
+            # (defence-in-depth; the adapter already filters them at ingestion).
+            if not math.isfinite(value):
+                raise WriteFailure(
+                    f"non-finite decision value for {decision.target_entity}: {decision.value!r}"
+                )
             await self._set_number(decision.target_entity, value)
         else:
             _LOGGER.warning("Unhandled decision kind: %s", decision.kind)
