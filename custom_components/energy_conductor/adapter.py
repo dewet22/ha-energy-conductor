@@ -8,6 +8,7 @@ stats query for the seasonal fallback.
 from __future__ import annotations
 
 import logging
+import math
 import statistics
 from datetime import datetime, timedelta
 from datetime import time as dt_time
@@ -112,9 +113,14 @@ def _read_float(hass: HomeAssistant, entity_id: str, *, max_age_seconds: int) ->
     if age > max_age_seconds:
         raise EntityProblem(f"{entity_id}: stale ({age:.0f}s > {max_age_seconds}s)")
     try:
-        return float(state.state)
+        value = float(state.state)
     except (TypeError, ValueError) as exc:
         raise EntityProblem(f"{entity_id}: not a float ({state.state!r})") from exc
+    # float("inf")/float("nan") parse fine but poison downstream plan math and
+    # ultimately hardware writes — reject them like any other bad state.
+    if not math.isfinite(value):
+        raise EntityProblem(f"{entity_id}: non-finite value ({state.state!r})")
+    return value
 
 
 def _read_bool(hass: HomeAssistant, entity_id: str | None) -> bool:
@@ -386,6 +392,8 @@ class Adapter:
                 # pv_estimate is AVERAGE POWER (kW) over the 30-min slot, NOT energy.
                 # Energy for the slot = power * slot duration (0.5h).
                 kwh = float(item.get("pv_estimate", 0.0)) * SOLCAST_SLOT_HOURS
+                if not math.isfinite(kwh):
+                    continue  # a single inf/nan slot would poison the whole forecast total
                 slots.append(ForecastSlot(start=start_utc, energy_kwh=kwh))
             except KeyError, TypeError, ValueError:
                 continue
@@ -703,7 +711,10 @@ class Adapter:
             day = dt_util.as_local(ts).date()
             if day >= local_today:
                 continue  # skip today's partial day
-            daily[day] = float(change)
+            kwh = float(change)
+            if not math.isfinite(kwh):
+                continue  # recorder anomaly — don't let inf/nan into depletion learning
+            daily[day] = kwh
         return daily
 
     def _hot_water_steady_samples(self, daily_green: dict, full_dates: set) -> list[float]:
@@ -726,7 +737,7 @@ class Adapter:
             self.hass, last_full_at, now, {green_entity}, "hour", None, {"change"}
         )
         return sum(
-            float(row["change"])
+            kwh
             for row in stats.get(green_entity, [])
-            if row.get("change") is not None
+            if row.get("change") is not None and math.isfinite(kwh := float(row["change"]))
         )

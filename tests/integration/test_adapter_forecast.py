@@ -136,6 +136,31 @@ async def test_solcast_tomorrow_filter(hass, mock_config_entry, now_utc):
     assert abs(slots[0].energy_kwh - 0.75) < 0.001
 
 
+async def test_solcast_non_finite_slots_skipped(hass, mock_config_entry, now_utc):
+    """Security audit H-3: one inf/nan pv_estimate must not poison the forecast total.
+
+    sum() over slots propagates inf/nan, so a single bad slot used to corrupt
+    total_kwh_forecast for the whole night. Non-finite slots are now skipped.
+    """
+    base = datetime(2026, 6, 2, 8, 0, tzinfo=BST)
+    slots_bst = [
+        _solcast_slot(base, 2.0),  # good → 1.0 kWh
+        _solcast_slot(base + timedelta(minutes=30), float("inf")),  # skipped
+        _solcast_slot(base + timedelta(minutes=60), float("nan")),  # skipped
+        _solcast_slot(base + timedelta(minutes=90), 1.0),  # good → 0.5 kWh
+    ]
+    hass.states.async_set(SOLCAST, "1.5", {"detailedForecast": slots_bst})
+    await hass.async_block_till_done()
+
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(hass, {})
+
+    slots = adapter._slots_from_solcast(SOLCAST, now_utc)
+
+    assert len(slots) == 2
+    assert sum(s.energy_kwh for s in slots) == pytest.approx(1.5)
+
+
 async def test_daily_sensor_uses_fallback_kwh_not_synthetic_slot(hass, mock_config_entry, now_utc):
     """Bug 3: daily_total_sensor now stores value as fallback_kwh (not a synthetic slot).
 

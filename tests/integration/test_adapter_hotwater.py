@@ -140,6 +140,28 @@ async def test_recorder_failure_degrades_to_none(hass, now):
         assert adapter._hot_water_state(now, _forecast()) is None
 
 
+async def test_non_finite_recorder_rows_skipped(hass, now):
+    """Security audit H-3: inf/nan recorder `change` rows must not poison sums/learning."""
+    adapter = _adapter(hass)
+
+    hourly_rows = [
+        {"start": now, "change": 1.0},
+        {"start": now, "change": float("inf")},  # skipped
+        {"start": now, "change": float("nan")},  # skipped
+        {"start": now, "change": 0.5},
+    ]
+    with patch(_PATCH_STATS, return_value={GREEN: hourly_rows}):
+        assert adapter._hot_water_green_since(now, now, GREEN) == pytest.approx(1.5)
+
+    daily_rows = [
+        {"start": datetime(2026, 6, 1, 0, 0, tzinfo=UTC), "change": 2.5},
+        {"start": datetime(2026, 6, 2, 0, 0, tzinfo=UTC), "change": float("nan")},  # skipped
+    ]
+    with patch(_PATCH_STATS, return_value={GREEN: daily_rows}):
+        daily = adapter._hot_water_daily_kwh(now, GREEN)
+    assert list(daily.values()) == [2.5]
+
+
 TOTAL = "sensor.eddi_total"
 
 
