@@ -70,6 +70,9 @@ describe("dashboard structure", () => {
     expect(card.type).toBe("markdown");
     expect(card.content).toContain("write_mode");
     expect(card.content).toContain("writes_sent");
+    // Meter view + actuation verification lines.
+    expect(card.content).toContain("grid_import_w");
+    expect(card.content).toContain("verification");
     // References the resolved (registry) status entity id, not a constructed string.
     expect(card.content).toContain("energy_conductor_blithe_status");
   });

@@ -222,6 +222,23 @@
             "', 'outcome') }}",
         );
       }
+      // Live meter view (only rendered when the grid sensors are configured).
+      lines.push(
+        "{% set gi = state_attr('" +
+          statusId +
+          "', 'grid_import_w') %}{% set ge = state_attr('" +
+          statusId +
+          "', 'grid_export_w') %}{% if gi is not none %}**Grid now:** {{ gi | round(0) }} W in / " +
+          "{{ ge | round(0) }} W out{% endif %}",
+      );
+      // Actuation verification status (always present: ok / mismatch / n/a).
+      lines.push(
+        "**Actuation:** {{ state_attr('" +
+          statusId +
+          "', 'verification') }}{% set vd = state_attr('" +
+          statusId +
+          "', 'verification_detail') %}{% if vd %} - {{ vd }}{% endif %}",
+      );
       lines.push(
         "**Writes:** {{ state_attr('" +
           statusId +

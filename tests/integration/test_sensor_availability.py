@@ -134,3 +134,20 @@ async def test_discharge_sensor_exposes_outcome(hass: HomeAssistant) -> None:
     attrs = hass.states.get(eid).attributes
     assert attrs.get("outcome") in ("dry_run", "applied", "unchanged", "failed")
     assert attrs.get("write_mode") == "dry_run"
+
+
+async def test_actuation_mismatch_binary_sensor_registered(hass: HomeAssistant) -> None:
+    """The actuation-mismatch problem binary sensor exists and is off in dry-run (n/a)."""
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="t6")
+    assert await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    eid = registry.async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{entry.entry_id}-actuation-mismatch"
+    )
+    assert eid is not None
+    state = hass.states.get(eid)
+    assert state is not None
+    assert state.state == "off"  # dry-run → verification n/a → not a problem
+    assert state.attributes.get("status") == "n/a"

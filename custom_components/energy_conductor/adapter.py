@@ -29,6 +29,8 @@ from .const import (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
+    CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
+    CONF_BATTERY_POWER_SENSOR,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
     CONF_DAILY_ENERGY_SENSOR,
@@ -39,6 +41,8 @@ from .const import (
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_GRID_EXPORT_SENSOR,
+    CONF_GRID_IMPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
@@ -82,6 +86,7 @@ from .const import (
     HOTWATER_MIN_BOOST_HOURS,
     SOLCAST_SLOT_HOURS,
     STALE_FORECAST_SECONDS,
+    STALE_POWER_SECONDS,
     STATS_CALENDAR_WINDOW_DAYS,
     STATS_LOOKBACK_DAYS,
     STATS_MIN_DATA_POINTS,
@@ -94,6 +99,7 @@ from .model import (
     Battery,
     EVCharger,
     ForecastSlot,
+    GridState,
     HotWaterState,
     SiteState,
     SolarForecast,
@@ -218,6 +224,7 @@ class Adapter:
             max_charge_power_w=max_charge,
             max_discharge_power_w=max_discharge,
             reserve_percent=self._reserve_percent(),
+            power_w=self._battery_power_w(),
         )
 
         # Tariff
@@ -276,6 +283,9 @@ class Adapter:
         # Hot-water reserve — optional; None unless the Eddi green + status sensors are set.
         hot_water = self._hot_water_state(now, solar_forecast)
 
+        # Grid meter — optional; read-only observability + actuation verification.
+        grid = self._grid_state()
+
         return SiteState(
             now=now,
             battery=battery,
@@ -289,7 +299,43 @@ class Adapter:
             daily_kwh_target_source=daily_target_source,
             daily_kwh_target_qualifying_days=daily_target_qualifying_days,
             hot_water=hot_water,
+            grid=grid,
         )
+
+    def _battery_power_w(self) -> float | None:
+        """Live battery power normalised to EC's +ve=discharging convention, or None when no
+        sensor is configured/available. Read-only; never blocks a tick."""
+        sensor = self.config.get(CONF_BATTERY_POWER_SENSOR)
+        if not sensor:
+            return None
+        state = self.hass.states.get(sensor)
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
+            return None
+        try:
+            value = float(state.state)
+        except TypeError, ValueError:
+            _LOGGER.warning("Battery power sensor unreadable (%s): %r", sensor, state.state)
+            return None
+        if not math.isfinite(value):
+            return None
+        if self.config.get(CONF_BATTERY_POWER_POSITIVE_IS_CHARGING):
+            value = -value  # source reads +ve = charging; flip to EC's +ve = discharging
+        return value
+
+    def _grid_state(self) -> GridState | None:
+        """Build GridState from the two always-positive meter sensors, or None when either is
+        unconfigured/unavailable. Read-only observability — failure never blocks a tick."""
+        import_sensor = self.config.get(CONF_GRID_IMPORT_SENSOR)
+        export_sensor = self.config.get(CONF_GRID_EXPORT_SENSOR)
+        if not import_sensor or not export_sensor:
+            return None
+        try:
+            import_w = _read_float(self.hass, import_sensor, max_age_seconds=STALE_POWER_SECONDS)
+            export_w = _read_float(self.hass, export_sensor, max_age_seconds=STALE_POWER_SECONDS)
+        except EntityProblem as exc:
+            _LOGGER.debug("Grid meter unavailable: %s", exc)
+            return None
+        return GridState(import_w=import_w, export_w=export_w)
 
     def _reserve_percent(self) -> float:
         """Minimum-SoC reserve floor.

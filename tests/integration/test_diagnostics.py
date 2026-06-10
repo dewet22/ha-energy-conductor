@@ -51,7 +51,15 @@ async def test_diagnostics_dump(hass: HomeAssistant) -> None:
     # Write-observability fields are present on the coordinator snapshot.
     coord = diag["coordinator"]
     assert coord["write_mode"] == "dry_run"
-    for key in ("writes_sent", "write_failures", "last_write_outcome", "degraded_since", "status"):
+    for key in (
+        "writes_sent",
+        "write_failures",
+        "last_write_outcome",
+        "degraded_since",
+        "status",
+        "verification_status",
+        "last_verification_detail",
+    ):
         assert key in coord
     # A healthy tick populated the site-state snapshot.
     assert diag["last_site_state"] is not None

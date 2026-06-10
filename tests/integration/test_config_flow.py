@@ -91,6 +91,9 @@ async def test_wizard_creates_v3_entry_with_anchors(hass):
     assert result["step_id"] == "hotwater"
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "grid"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["step_id"] == "behaviour"
 
     result = await hass.config_entries.flow.async_configure(
@@ -137,6 +140,7 @@ async def test_options_menu_lists_groups(hass):
         "loads",
         "ev",
         "hotwater",
+        "grid",
         "behaviour",
     }
 

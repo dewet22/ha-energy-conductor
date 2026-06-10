@@ -27,6 +27,8 @@ class Battery:
     max_charge_power_w: int
     max_discharge_power_w: int
     reserve_percent: float
+    # Live battery power, EC convention +ve = discharging. None when no sensor is configured.
+    power_w: float | None = None
 
     def __post_init__(self) -> None:
         # capacity_kwh comes straight from config with no clamp site; 0 would be a
@@ -49,6 +51,20 @@ class EVCharger:
     power_w: float
     min_activation_power_w: int
     is_plugged_in: bool | None = None
+
+
+@dataclass(frozen=True)
+class GridState:
+    """Live meter-boundary flow from two always-positive sensors (the form givenergy-hass
+    exposes). Read-only observability — never feeds planning."""
+
+    import_w: float
+    export_w: float
+
+    @property
+    def net_w(self) -> float:
+        """Net grid flow, +ve = importing."""
+        return self.import_w - self.export_w
 
 
 @dataclass(frozen=True)
@@ -129,6 +145,7 @@ class SiteState:
     daily_kwh_target_source: str | None = None  # "stats" | "default"
     daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
     hot_water: HotWaterState | None = None  # None when the diverter isn't configured
+    grid: GridState | None = None  # None when the grid meter sensors aren't configured
 
     def __post_init__(self) -> None:
         _require_aware("SiteState.now", self.now)

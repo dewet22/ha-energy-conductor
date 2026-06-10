@@ -77,6 +77,9 @@ async def async_get_config_entry_diagnostics(
             "notifications_sent": coord.notifications_sent,
             "notify_failures": coord.notify_failures,
             "last_notify_error": _redact_error(coord.last_notify_error),
+            "verification_status": coord.verification_status,
+            "last_verification_detail": coord.last_verification_detail,
+            "last_verification_at": _iso(coord.last_verification_at),
         },
         "last_decisions": {
             "discharge": _decision_dict(

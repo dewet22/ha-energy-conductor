@@ -15,6 +15,7 @@ _KIND_LABEL = {
     DecisionKind.SET_CHARGE_TARGET: "Overnight charge target",
     DecisionKind.SET_DISCHARGE_LIMIT: "Discharge cap",
     DecisionKind.RECOMMEND_HOT_WATER_BOOST: "Hot water boost recommended",
+    DecisionKind.VERIFICATION_MISMATCH: "Actuation mismatch",
 }
 
 
@@ -25,6 +26,8 @@ def _format_value(decision: Decision) -> str:
         return f"{decision.value}W"
     if decision.kind == DecisionKind.RECOMMEND_HOT_WATER_BOOST:
         return f"~{decision.value}h"
+    if decision.kind == DecisionKind.VERIFICATION_MISMATCH:
+        return f"{decision.value:.0f}W"
     return str(decision.value)  # pragma: no cover - defensive; all kinds handled above
 
 
