@@ -19,15 +19,22 @@ def _first_meaningful_slot_start(state: SiteState):
 
 
 def _morning_gap_hours(state: SiteState) -> float:
-    """Hours between off_peak_window_end and first meaningful solar, clamped to [0, cap]."""
+    """Hours between the overnight boundary and first meaningful solar, clamped to [0, cap].
+
+    The boundary prefers the CONFIGURED overnight end: the off-peak sensor's period
+    end can belong to a short Intelligent dispatch slot (e.g. ending 22:30), which
+    would inflate the gap to the cap and substantially over-provision the written
+    target. Falls back to the sensor-derived end when no configured boundary exists.
+    """
     if not state.solar_forecast.slots:
         return float(MISSING_FORECAST_GAP_H)
-    if state.tariff.off_peak_window_end is None:
+    boundary = state.tariff.overnight_window_end or state.tariff.off_peak_window_end
+    if boundary is None:
         return float(MISSING_FORECAST_GAP_H)
     first = _first_meaningful_slot_start(state)
     if first is None:
         return float(MORNING_GAP_CAP_H)
-    delta = first - state.tariff.off_peak_window_end
+    delta = first - boundary
     hours = max(0.0, delta.total_seconds() / 3600)
     return min(hours, float(MORNING_GAP_CAP_H))
 

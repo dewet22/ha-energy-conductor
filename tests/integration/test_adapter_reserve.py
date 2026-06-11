@@ -7,6 +7,8 @@ inverter's actual floor. Falls back to config when unset or unreadable.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
@@ -48,8 +50,6 @@ async def test_reserve_survives_a_never_changing_sensor(hass, mock_config_entry,
     config fallback, shifting every plan target by the difference. Like the EV power
     sensor, rely on unavailable/unknown only.
     """
-    from datetime import timedelta
-
     hass.states.async_set(RESERVE_SENSOR, "4")
     await hass.async_block_till_done()
     freezer.tick(timedelta(days=3))

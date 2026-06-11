@@ -1,8 +1,10 @@
 """Tests for plan_overnight covering every algorithm branch.
 
 Algorithm recap (reserve-aware):
-  morning_gap_hours = clamp(0, hours(off_peak_window_end → first_solar), 6)
-                      where first_solar = first slot with energy >= 0.25 kWh (≈500W half-hour)
+  morning_gap_hours = clamp(0, hours(overnight_boundary → first_solar), 6)
+                      where overnight_boundary = configured overnight_window_end, falling
+                      back to the sensor-derived off_peak_window_end, and first_solar =
+                      first slot with energy >= 0.25 kWh (≈500W half-hour)
                       defaults to MISSING_FORECAST_GAP_H (4) when no slots
   morning_gap_kwh   = baseline_load_w * morning_gap_hours / 1000
   forecast_kwh      = total_kwh_forecast (slots) or fallback_kwh
@@ -99,6 +101,30 @@ class TestOvernightAlgorithm:
         # gap = 6h * 400W = 2.4 kWh; forecast 2.0 covers target → deficit 0
         # usable 2.4 kWh = 24%; target = reserve 10 + 24 = 34%
         assert decision.value == 34
+
+    def test_morning_gap_measured_from_configured_dawn_not_dispatch_end(self):
+        # Codex review case: the sensor's next period is a dispatch slot ending
+        # 22:30, so off_peak_window_end pairs hours before the real dawn. The gap
+        # must measure from the configured 05:30 to first solar at 07:00 (1.5h),
+        # not from 22:30 (8.5h → capped 6h) — that difference moves the WRITTEN
+        # target, not just the advisory note.
+        forecast = a_forecast_with_slots(
+            first_slot_at=utc(2026, 6, 2, 7, 0),
+            slot_count=8,
+            kwh_per_slot=2.0,  # surplus → deficit 0, gap is the only driver
+        )
+        state = _state(
+            solar_forecast=forecast,
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 1, 22, 30),  # dispatch slot end
+                next_off_peak_window_start=utc(2026, 6, 1, 22, 0),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
+            ),
+        )
+        decision = _plan(state)
+        assert "Morning gap 1.5h" in decision.reason
+        # gap 1.5h * 400W = 0.6 kWh < 1.5 kWh floor → usable 15% → target 10 + 15
+        assert decision.value == 25
 
     def test_missing_forecast_uses_default_gap_and_fallback(self):
         state = _state(solar_forecast=a_forecast_with_fallback(kwh=3.0))

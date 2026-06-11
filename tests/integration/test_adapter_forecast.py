@@ -21,8 +21,10 @@ import pytest
 from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
     CONF_FORECAST_DAILY_SENSOR,
+    CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
     FORECAST_SOURCE_DAILY,
+    FORECAST_SOURCE_SOLCAST,
 )
 
 SOLCAST = "sensor.solcast_forecast_tomorrow"
@@ -194,11 +196,6 @@ async def test_solcast_zero_slots_warns_once_per_episode(hass, mock_config_entry
     by the tomorrow filter, and the seasonal fallback masked it for nine days. Warn on
     entering the zero-slot state — once, not every 30s tick — and re-arm on recovery.
     """
-    from custom_components.energy_conductor.const import (
-        CONF_FORECAST_SOLCAST_SENSOR,
-        FORECAST_SOURCE_SOLCAST,
-    )
-
     # All slots dated today → tomorrow filter drops everything.
     today_bst = datetime(2026, 6, 1, 10, 0, tzinfo=BST)
     hass.states.async_set(SOLCAST, "20.0", {"detailedForecast": [_solcast_slot(today_bst, 2.0)]})
@@ -237,20 +234,16 @@ async def test_solcast_zero_slots_warns_once_per_episode(hass, mock_config_entry
     assert len(warnings) == 2
 
 
+@pytest.mark.parametrize("offline_state", ["unavailable", "unknown"])
 async def test_solcast_offline_warning_does_not_blame_sensor_variant(
-    hass, mock_config_entry, now_utc, caplog
+    hass, mock_config_entry, now_utc, caplog, offline_state
 ):
-    """An unavailable sensor must not trigger the wrong-variant advice (PR #18 review).
+    """An unavailable/unknown sensor must not trigger the wrong-variant advice (PR #18 review).
 
     Zero slots from an offline sensor is an availability problem, not a configuration
     one — the warning should say so rather than sending the user to check the picker.
     """
-    from custom_components.energy_conductor.const import (
-        CONF_FORECAST_SOLCAST_SENSOR,
-        FORECAST_SOURCE_SOLCAST,
-    )
-
-    hass.states.async_set(SOLCAST, "unavailable")
+    hass.states.async_set(SOLCAST, offline_state)
     await hass.async_block_till_done()
     mock_config_entry.add_to_hass(hass)
     adapter = _adapter(
