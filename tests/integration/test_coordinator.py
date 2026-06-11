@@ -213,6 +213,31 @@ async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
     assert "number.battery_charge_target" in written
 
 
+async def test_first_healthy_tick_runs_missed_startup_plan(coordinator) -> None:
+    """A startup plan that lost the race against slower-loading integrations (e.g. the
+    GivEnergy entities register after EC on restart) must run on the first healthy tick
+    — not leave the plan empty until the next hourly slot (live find 2026-06-11)."""
+    from custom_components.energy_conductor.adapter import EntityProblem
+
+    # Startup: dependencies not registered yet → the immediate plan run skips.
+    coordinator.adapter.build_site_state = AsyncMock(
+        side_effect=EntityProblem("sensor.soc: not found")
+    )
+    await coordinator._run_overnight_plan()
+    assert coordinator.last_overnight_plan is None
+
+    # Dependencies appear → the next tick (~30s) fills the plan in.
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
+    await coordinator._async_update_data()
+    assert coordinator.last_overnight_plan is not None
+    assert coordinator.last_overnight_plan.kind == DecisionKind.SET_CHARGE_TARGET
+
+    # Subsequent ticks leave refreshes to the scheduled evaluations.
+    coordinator._run_overnight_plan = AsyncMock()
+    await coordinator._async_update_data()
+    coordinator._run_overnight_plan.assert_not_awaited()
+
+
 async def test_tick_does_not_retry_stale_overnight_plan(coordinator) -> None:
     """Audit M-4 (Codex): a pending charge-target write from a PAST planning cycle must not
     be applied when the entity recovers. Once the cached plan is older than _PLAN_RETRY_MAX_AGE
@@ -521,6 +546,15 @@ async def test_write_readback_drops_stale_charge_target(coordinator, hass) -> No
     # EC commanded a charge target long ago; the entity has since diverged (window over).
     coordinator._commanded[charge_key] = _CommandedWrite(
         value=80.0, written_at=_T0 - timedelta(hours=2)
+    )
+    # The stale plan object itself is still cached (planning succeeded hours ago, then
+    # stopped refreshing) — without it the tick's startup catch-up would plan afresh.
+    coordinator.last_overnight_plan = Decision(
+        kind=DecisionKind.SET_CHARGE_TARGET,
+        target_entity=charge_entity,
+        value=80,
+        reason="overnight plan",
+        dedupe_key="overnight-stale-80",
     )
     coordinator.last_overnight_plan_at = _T0 - (_PLAN_RETRY_MAX_AGE + timedelta(hours=1))
     hass.states.async_set(charge_entity, "20")  # changed since EC's stale command

@@ -271,6 +271,14 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.degraded_since = None
         self.last_site_state = state
 
+        # Startup catch-up: the immediate plan run in async_start can lose the race
+        # against slower-loading integrations (EntityProblem → skipped, observed live
+        # on restart when the inverter entities register after EC). Rather than sit
+        # planless for up to an hour until the next scheduled evaluation, run it from
+        # the first healthy tick that finds no cached plan.
+        if self.last_overnight_plan is None:
+            await self._run_overnight_plan()
+
         try:
             decision = discharge_limit(
                 state, target_entity=self.config[CONF_BATTERY_DISCHARGE_LIMIT]
