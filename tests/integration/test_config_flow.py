@@ -179,6 +179,40 @@ async def test_options_battery_substep_persists_and_preserves(hass):
     assert entry.data[CONF_NOTIFY_TARGET] == "notify.test"
 
 
+async def test_options_form_shows_resolved_entity_not_stored(hass):
+    """The form must show what the runtime reads, not the raw stored id (live find 2026-06-11).
+
+    A stale anchor redirected the Solcast reference at resolve time while the form kept
+    rendering the innocent stored entity_id — the mismatch was invisible everywhere
+    (diagnostics redact entity_refs). Defaults now pass through resolve_config so a
+    redirect or rename surfaces in the picker.
+    """
+    current_soc = _register(hass, "sensor", "givenergy", "soc", "loft_battery_soc")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        data={
+            **_v3_entry().data,
+            # Stored id predates a rename; the anchor resolves to the current entity.
+            CONF_BATTERY_SOC_SENSOR: "sensor.battery_soc",
+            CONF_ENTITY_REFS: {
+                CONF_BATTERY_SOC_SENSOR: {"platform": "givenergy", "unique_id": "soc"}
+            },
+        },
+        entry_id="resolved_entry",
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "battery"}
+    )
+
+    markers = {str(k): k for k in result["data_schema"].schema}
+    suggested = markers[CONF_BATTERY_SOC_SENSOR].description["suggested_value"]
+    assert suggested == current_soc, "form must render the resolved entity, not the stale id"
+
+
 async def test_migrate_v2_to_v3_backfills_anchors(hass):
     soc = _register(hass, "sensor", "givenergy", "soc", "battery_soc")
     entry = MockConfigEntry(

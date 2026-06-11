@@ -183,6 +183,48 @@ class TestDawnProjectionNote:
         decision = _plan(state)
         assert "no charge needed" not in decision.reason
 
+    def test_discharge_stops_at_off_peak_start(self):
+        # The discharge guard idles the battery once off-peak begins, so only the
+        # 2.5h from 21:00 until the 23:30 start drains it — not the 8.5h to dawn.
+        # 90% - (711W * 2.5h / 17.7 kWh / 10) ≈ 90 - 10 = 80%, not ~56%.
+        state = _state(
+            battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=711.0,
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 2, 5, 30),
+                next_off_peak_window_start=utc(2026, 6, 1, 23, 30),
+            ),
+        )
+        decision = _plan(state)
+        assert "~80% at dawn" in decision.reason
+
+    def test_no_discharge_when_already_off_peak(self):
+        # Plan running inside the off-peak window: battery is already idled, so
+        # the dawn projection is simply the current SoC.
+        state = _state(
+            now=utc(2026, 6, 2, 0, 30),
+            battery=a_battery(soc_percent=85.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=711.0,
+            tariff=a_tariff(
+                off_peak_now=True,
+                off_peak_window_end=utc(2026, 6, 2, 5, 30),
+            ),
+        )
+        decision = _plan(state)
+        assert "~85% at dawn" in decision.reason
+
+    def test_full_drain_assumed_when_off_peak_start_unknown(self):
+        # Without a known off-peak start, fall back to draining all the way to
+        # dawn — the conservative direction (suppresses the note more often).
+        # 86% - (709W * 8.5h / 17.7 kWh / 10) ≈ 86 - 34 = 52%.
+        state = _state(
+            battery=a_battery(soc_percent=86.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=709.0,
+            tariff=a_tariff(off_peak_window_end=utc(2026, 6, 2, 5, 30)),
+        )
+        decision = _plan(state)
+        assert "~52% at dawn" in decision.reason
+
 
 class TestNamedConstants:
     def test_meaningful_slot_kwh_is_reasonable(self):

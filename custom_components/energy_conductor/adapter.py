@@ -109,15 +109,19 @@ from .model import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _read_float(hass: HomeAssistant, entity_id: str, *, max_age_seconds: int) -> float:
+def _read_float(hass: HomeAssistant, entity_id: str, *, max_age_seconds: int | None) -> float:
     state = hass.states.get(entity_id)
     if state is None:
         raise EntityProblem(f"{entity_id}: not found")
     if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
         raise EntityProblem(f"{entity_id}: state {state.state!r}")
-    age = (dt_util.utcnow() - state.last_updated).total_seconds()
-    if age > max_age_seconds:
-        raise EntityProblem(f"{entity_id}: stale ({age:.0f}s > {max_age_seconds}s)")
+    # None disables the staleness check, for entities that only write state when
+    # their value changes (control numbers, myenergi-style sensors) and can
+    # legitimately sit unchanged for days.
+    if max_age_seconds is not None:
+        age = (dt_util.utcnow() - state.last_updated).total_seconds()
+        if age > max_age_seconds:
+            raise EntityProblem(f"{entity_id}: stale ({age:.0f}s > {max_age_seconds}s)")
     try:
         value = float(state.state)
     except (TypeError, ValueError) as exc:
@@ -204,6 +208,8 @@ class Adapter:
     def __init__(self, hass: HomeAssistant, config: dict[str, Any]) -> None:
         self.hass = hass
         self.config = config
+        # Episode latch for the zero-slot Solcast warning (warn once, re-arm on recovery).
+        self._solcast_zero_slots_warned = False
 
     async def build_site_state(self) -> SiteState:
         """Read entities and assemble a SiteState. Raises EntityProblem on hard failures."""
@@ -345,7 +351,10 @@ class Adapter:
         sensor = self.config.get(CONF_RESERVE_SOC_SENSOR)
         if sensor:
             try:
-                raw = _read_float(self.hass, sensor, max_age_seconds=STALE_FORECAST_SECONDS)
+                # No staleness window: a reserve number only writes state when its
+                # value changes, and 4% can sit untouched for weeks. Rely on
+                # unavailable/unknown to detect the integration going away.
+                raw = _read_float(self.hass, sensor, max_age_seconds=None)
                 # Fail-soft: a glitchy reserve sensor (0 on firmware reset, >100)
                 # must not feed a garbage floor into the overnight target — clamp it.
                 clamped = max(0.0, min(100.0, raw))
@@ -399,6 +408,19 @@ class Adapter:
             sensor_id = self.config.get(CONF_FORECAST_SOLCAST_SENSOR)
             if sensor_id:
                 slots = self._slots_from_solcast(sensor_id, now)
+                if slots:
+                    self._solcast_zero_slots_warned = False
+                elif not self._solcast_zero_slots_warned:
+                    # A wrong sensor variant (e.g. 'forecast today') parses fine but is
+                    # filtered to nothing, and the seasonal fallback masks it — make the
+                    # degradation visible instead of silent.
+                    _LOGGER.warning(
+                        "Solcast sensor %s yielded no forecast slots for tomorrow; using "
+                        "fallback. If this persists, check it is the 'Forecast Tomorrow' "
+                        "sensor — a 'today' or aggregate sensor is filtered to nothing.",
+                        sensor_id,
+                    )
+                    self._solcast_zero_slots_warned = True
         elif source == FORECAST_SOURCE_DAILY:
             sensor_id = self.config.get(CONF_FORECAST_DAILY_SENSOR)
             if sensor_id:

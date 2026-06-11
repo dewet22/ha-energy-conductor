@@ -75,7 +75,22 @@ def plan_overnight(
         hours_until_dawn = max(
             0.0, (state.tariff.off_peak_window_end - state.now).total_seconds() / 3600
         )
-        discharge_pct = state.baseline_load_w * hours_until_dawn / state.battery.capacity_kwh / 10
+        # The discharge guard idles the battery once off-peak begins, so it only
+        # drains at baseline until the window STARTS, then holds until dawn. With
+        # no known start, assume full drain to dawn — the conservative direction
+        # (under-projects dawn SoC, so the note is suppressed rather than wrong).
+        hours_discharging = hours_until_dawn
+        if state.tariff.off_peak_now:
+            hours_discharging = 0.0
+        elif state.tariff.next_off_peak_window_start is not None:
+            hours_discharging = min(
+                hours_until_dawn,
+                max(
+                    0.0,
+                    (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
+                ),
+            )
+        discharge_pct = state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
         expected_soc = round(state.battery.soc_percent - discharge_pct)
         if expected_soc > target_percent:
             dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"
