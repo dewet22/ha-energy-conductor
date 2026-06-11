@@ -54,6 +54,7 @@ def a_tariff(**overrides: Any) -> TariffState:
         ev_dispatching_now=False,
         off_peak_window_end=None,
         next_off_peak_window_start=None,
+        overnight_window_end=None,
     )
     return TariffState(**(defaults | overrides))
 

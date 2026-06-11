@@ -7,6 +7,8 @@ inverter's actual floor. Falls back to config when unset or unreadable.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
@@ -38,6 +40,26 @@ async def test_reserve_falls_back_to_config_when_sensor_unset(hass, mock_config_
     adapter = _adapter(hass, {CONF_BATTERY_RESERVE_PERCENT: 10})
 
     assert adapter._reserve_percent() == pytest.approx(10.0)
+
+
+async def test_reserve_survives_a_never_changing_sensor(hass, mock_config_entry, freezer):
+    """A reserve number that never changes must not go 'stale' (live regression 2026-06-11).
+
+    GivEnergy number entities only write state when the value changes; a static 4%
+    reserve crossed the old 24h staleness threshold and EC silently switched to the
+    config fallback, shifting every plan target by the difference. Like the EV power
+    sensor, rely on unavailable/unknown only.
+    """
+    hass.states.async_set(RESERVE_SENSOR, "4")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(days=3))
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {CONF_RESERVE_SOC_SENSOR: RESERVE_SENSOR, CONF_BATTERY_RESERVE_PERCENT: 10},
+    )
+
+    assert adapter._reserve_percent() == pytest.approx(4.0)
 
 
 async def test_reserve_falls_back_to_config_when_sensor_unreadable(hass, mock_config_entry):

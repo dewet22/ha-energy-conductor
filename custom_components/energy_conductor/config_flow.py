@@ -92,6 +92,7 @@ from .entity_ref import (
     SCALAR_ENTITY_CONF_KEYS,
     capture_all,
     capture_ref,
+    resolve_config,
 )
 
 # Keys persisted by each options sub-step (the single source of truth for group membership;
@@ -637,7 +638,10 @@ class EnergyConductorOptionsFlow(OptionsFlow):
 
     def _defaults(self) -> dict[str, Any]:
         # Merge here (not in __init__) — config_entry is injected after __init__ in 2026.5+.
-        return {**self.config_entry.data, **self.config_entry.options}
+        # Resolved (not raw): the form must show what the runtime actually reads, so a
+        # redirected anchor or renamed-away stored id surfaces in the picker instead of
+        # hiding behind the stored value. Submitting re-anchors from the live registry.
+        return resolve_config(self.hass, {**self.config_entry.data, **self.config_entry.options})
 
     def _save(self, user_input: dict[str, Any], group_keys: tuple[str, ...]) -> ConfigFlowResult:
         """Persist a single group's keys into options, preserving all other groups.

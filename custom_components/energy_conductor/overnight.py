@@ -19,15 +19,22 @@ def _first_meaningful_slot_start(state: SiteState):
 
 
 def _morning_gap_hours(state: SiteState) -> float:
-    """Hours between off_peak_window_end and first meaningful solar, clamped to [0, cap]."""
+    """Hours between the overnight boundary and first meaningful solar, clamped to [0, cap].
+
+    The boundary prefers the CONFIGURED overnight end: the off-peak sensor's period
+    end can belong to a short Intelligent dispatch slot (e.g. ending 22:30), which
+    would inflate the gap to the cap and substantially over-provision the written
+    target. Falls back to the sensor-derived end when no configured boundary exists.
+    """
     if not state.solar_forecast.slots:
         return float(MISSING_FORECAST_GAP_H)
-    if state.tariff.off_peak_window_end is None:
+    boundary = state.tariff.overnight_window_end or state.tariff.off_peak_window_end
+    if boundary is None:
         return float(MISSING_FORECAST_GAP_H)
     first = _first_meaningful_slot_start(state)
     if first is None:
         return float(MORNING_GAP_CAP_H)
-    delta = first - state.tariff.off_peak_window_end
+    delta = first - boundary
     hours = max(0.0, delta.total_seconds() / 3600)
     return min(hours, float(MORNING_GAP_CAP_H))
 
@@ -71,11 +78,33 @@ def plan_overnight(
     )
 
     dawn_note = ""
-    if state.tariff.off_peak_window_end is not None:
-        hours_until_dawn = max(
-            0.0, (state.tariff.off_peak_window_end - state.now).total_seconds() / 3600
-        )
-        discharge_pct = state.baseline_load_w * hours_until_dawn / state.battery.capacity_kwh / 10
+    dawn = state.tariff.overnight_window_end
+    if dawn is not None:
+        hours_until_dawn = max(0.0, (dawn - state.now).total_seconds() / 3600)
+        # Dawn is anchored to the CONFIGURED overnight end — never to the off-peak
+        # sensor's current/next period end, which can belong to a short Intelligent
+        # dispatch slot. The discharge guard idles the battery during any off-peak
+        # period, but a hold (no further drain) is only credited when the sensor's
+        # period provably reaches dawn (period end >= dawn). A dispatch slot's end
+        # falls hours short, dropping to the conservative full-drain projection —
+        # where unseen holds only raise the real dawn SoC above the claim. A stale
+        # next-start (in the past) is treated the same way.
+        period_end = state.tariff.off_peak_window_end
+        reaches_dawn = period_end is not None and period_end >= dawn
+        hours_discharging = hours_until_dawn
+        if state.tariff.off_peak_now:
+            if reaches_dawn:
+                hours_discharging = 0.0
+        elif (
+            reaches_dawn
+            and state.tariff.next_off_peak_window_start is not None
+            and state.tariff.next_off_peak_window_start >= state.now
+        ):
+            hours_discharging = min(
+                hours_until_dawn,
+                (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
+            )
+        discharge_pct = state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
         expected_soc = round(state.battery.soc_percent - discharge_pct)
         if expected_soc > target_percent:
             dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"

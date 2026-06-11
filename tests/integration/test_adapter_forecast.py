@@ -21,8 +21,10 @@ import pytest
 from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
     CONF_FORECAST_DAILY_SENSOR,
+    CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
     FORECAST_SOURCE_DAILY,
+    FORECAST_SOURCE_SOLCAST,
 )
 
 SOLCAST = "sensor.solcast_forecast_tomorrow"
@@ -185,3 +187,80 @@ async def test_daily_sensor_uses_fallback_kwh_not_synthetic_slot(hass, mock_conf
     assert solar.fallback_kwh == pytest.approx(8.5)
     assert solar.fallback_source == "daily_sensor"
     assert solar.total_kwh_forecast == pytest.approx(8.5)
+
+
+async def test_solcast_zero_slots_warns_once_per_episode(hass, mock_config_entry, now_utc, caplog):
+    """A configured Solcast sensor that parses to zero slots must say so (live find 2026-06-11).
+
+    The wrong sensor variant (e.g. 'forecast today') is silently filtered to nothing
+    by the tomorrow filter, and the seasonal fallback masked it for nine days. Warn on
+    entering the zero-slot state — once, not every 30s tick — and re-arm on recovery.
+    """
+    # All slots dated today → tomorrow filter drops everything.
+    today_bst = datetime(2026, 6, 1, 10, 0, tzinfo=BST)
+    hass.states.async_set(SOLCAST, "20.0", {"detailedForecast": [_solcast_slot(today_bst, 2.0)]})
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {
+            CONF_FORECAST_SOURCE: FORECAST_SOURCE_SOLCAST,
+            CONF_FORECAST_SOLCAST_SENSOR: SOLCAST,
+        },
+    )
+
+    solar = await adapter._build_forecast(now_utc)
+    assert solar.slots == ()
+    assert solar.fallback_source is not None
+    warnings = [r for r in caplog.records if "no forecast slots" in r.message]
+    assert len(warnings) == 1, "zero-slot fallback must be visible in the log"
+
+    # Second build in the same episode: no repeat spam.
+    await adapter._build_forecast(now_utc)
+    warnings = [r for r in caplog.records if "no forecast slots" in r.message]
+    assert len(warnings) == 1
+
+    # Recovery (tomorrow's slots appear), then breakage again → warns afresh.
+    tomorrow_bst = datetime(2026, 6, 2, 10, 0, tzinfo=BST)
+    hass.states.async_set(SOLCAST, "1.0", {"detailedForecast": [_solcast_slot(tomorrow_bst, 2.0)]})
+    await hass.async_block_till_done()
+    solar = await adapter._build_forecast(now_utc)
+    assert len(solar.slots) == 1
+
+    hass.states.async_set(SOLCAST, "20.0", {"detailedForecast": [_solcast_slot(today_bst, 2.0)]})
+    await hass.async_block_till_done()
+    await adapter._build_forecast(now_utc)
+    warnings = [r for r in caplog.records if "no forecast slots" in r.message]
+    assert len(warnings) == 2
+
+
+@pytest.mark.parametrize("offline_state", ["unavailable", "unknown"])
+async def test_solcast_offline_warning_does_not_blame_sensor_variant(
+    hass, mock_config_entry, now_utc, caplog, offline_state
+):
+    """An unavailable/unknown sensor must not trigger the wrong-variant advice (PR #18 review).
+
+    Zero slots from an offline sensor is an availability problem, not a configuration
+    one — the warning should say so rather than sending the user to check the picker.
+    """
+    hass.states.async_set(SOLCAST, offline_state)
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {
+            CONF_FORECAST_SOURCE: FORECAST_SOURCE_SOLCAST,
+            CONF_FORECAST_SOLCAST_SENSOR: SOLCAST,
+        },
+    )
+
+    solar = await adapter._build_forecast(now_utc)
+    assert solar.slots == ()
+    offline = [r for r in caplog.records if "unavailable" in r.message and SOLCAST in r.message]
+    assert len(offline) == 1, "offline sensor must be visible in the log"
+    assert not any("no forecast slots" in r.message for r in caplog.records)
+
+    # Same episode latch applies: no repeat on the next build.
+    await adapter._build_forecast(now_utc)
+    offline = [r for r in caplog.records if "unavailable" in r.message and SOLCAST in r.message]
+    assert len(offline) == 1

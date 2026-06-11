@@ -125,10 +125,15 @@ class TariffState:
     ev_dispatching_now: bool
     off_peak_window_end: datetime | None
     next_off_peak_window_start: datetime | None
+    # The CONFIGURED overnight end (HH:MM rolled forward), independent of the off-peak
+    # sensor — whose current/next period end can belong to a short dispatch slot. This
+    # is the only trustworthy "dawn" for projections.
+    overnight_window_end: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_aware("TariffState.off_peak_window_end", self.off_peak_window_end)
         _require_aware("TariffState.next_off_peak_window_start", self.next_off_peak_window_start)
+        _require_aware("TariffState.overnight_window_end", self.overnight_window_end)
 
 
 @dataclass(frozen=True)
