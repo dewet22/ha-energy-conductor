@@ -243,6 +243,7 @@ class Adapter:
             ev_dispatching_now=dispatching_now,
             off_peak_window_end=self._off_peak_window_end(now, off_peak_now),
             next_off_peak_window_start=next_off_peak_start,
+            overnight_window_end=self._configured_overnight_end(now),
         )
 
         # EV charger — optional.
@@ -375,13 +376,19 @@ class Adapter:
 
         Prefers next_end/current_end attributes on the off-peak sensor (present in
         integrations like Octopus Energy), falling back to the configured HH:MM time.
+        NOTE: when the sensor's current/next period is a short Intelligent dispatch
+        slot, this is that slot's end — not the overnight boundary. Consumers that
+        need a guaranteed dawn must use ``_configured_overnight_end``.
         """
-        from .const import CONF_OVERNIGHT_WINDOW_END_TIME
-
         attr = "current_end" if off_peak_now else "next_end"
         ts = _read_off_peak_attr(self.hass, self.config[CONF_OFF_PEAK_SENSOR], attr)
         if ts is not None:
             return ts
+        return self._configured_overnight_end(now)
+
+    def _configured_overnight_end(self, now: datetime) -> datetime | None:
+        """The configured overnight window end (HH:MM) rolled forward to its next occurrence."""
+        from .const import CONF_OVERNIGHT_WINDOW_END_TIME
 
         raw = self.config.get(CONF_OVERNIGHT_WINDOW_END_TIME)
         if raw is None:

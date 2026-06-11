@@ -44,6 +44,7 @@ def _state(**overrides):
         battery=a_battery(soc_percent=20.0, capacity_kwh=10.0, reserve_percent=10.0),
         tariff=a_tariff(
             off_peak_window_end=utc(2026, 6, 2, 5, 30),  # Intelligent Go: 23:30-05:30
+            overnight_window_end=utc(2026, 6, 2, 5, 30),  # configured 05:30
         ),
         baseline_load_w=400.0,
     )
@@ -186,21 +187,23 @@ class TestDawnProjectionNote:
     def test_discharge_stops_at_off_peak_start(self):
         # The discharge guard idles the battery once off-peak begins, so only the
         # 2.5h from 21:00 until the 23:30 start drains it — not the 8.5h to dawn.
-        # 90% - (711W * 2.5h / 17.7 kWh / 10) ≈ 90 - 10 = 80%, not ~56%.
+        # The hold is credited because the sensor period (ending 05:30) provably
+        # reaches the configured dawn. 90% - (711W * 2.5h / 17.7 kWh / 10) ≈ 80%.
         state = _state(
             battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
             baseline_load_w=711.0,
             tariff=a_tariff(
                 off_peak_window_end=utc(2026, 6, 2, 5, 30),
                 next_off_peak_window_start=utc(2026, 6, 1, 23, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
             ),
         )
         decision = _plan(state)
         assert "~80% at dawn" in decision.reason
 
     def test_no_discharge_when_already_off_peak(self):
-        # Plan running inside the off-peak window: battery is already idled, so
-        # the dawn projection is simply the current SoC.
+        # Plan running inside the overnight window (period end == configured dawn):
+        # battery is already idled, so the dawn projection is the current SoC.
         state = _state(
             now=utc(2026, 6, 2, 0, 30),
             battery=a_battery(soc_percent=85.0, capacity_kwh=17.7, reserve_percent=4.0),
@@ -208,42 +211,71 @@ class TestDawnProjectionNote:
             tariff=a_tariff(
                 off_peak_now=True,
                 off_peak_window_end=utc(2026, 6, 2, 5, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
             ),
         )
         decision = _plan(state)
         assert "~85% at dawn" in decision.reason
 
-    def test_note_suppressed_during_short_dispatch_slot(self):
+    def test_active_dispatch_slot_projects_full_drain(self):
         # Plan fires while a 30-min Intelligent dispatch is active: off_peak_now is
-        # True but the period end (= "dawn" here) is minutes away, so the projection
-        # frame is not the overnight window. Projecting "current SoC at dawn" would
-        # overstate — discharge resumes when the slot ends. Suppress the note.
+        # True but the period end (21:30) falls hours short of the configured dawn,
+        # so the hold is NOT credited — drain is projected all the way to 05:30.
+        # The real battery holds during the slot and the overnight window, so the
+        # claim under-states dawn SoC: 90 - (711W * 8.5h / 17.7 / 10) ≈ 56%.
         state = _state(
             battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
             baseline_load_w=711.0,
             tariff=a_tariff(
                 off_peak_now=True,
                 off_peak_window_end=utc(2026, 6, 1, 21, 30),  # slot end, 0.5h away
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
             ),
         )
         decision = _plan(state)
-        assert "no charge needed" not in decision.reason
+        assert "~56% at dawn" in decision.reason
 
-    def test_note_suppressed_when_next_period_is_a_short_slot(self):
-        # The sensor's next period is a pre-window dispatch slot (22:30-23:00), so
-        # off_peak_window_end pairs with the slot, not the overnight window. The
-        # frame check (< 3h to "dawn") suppresses the note rather than projecting
-        # a hold through a window we cannot see.
+    def test_next_short_slot_does_not_earn_the_hold(self):
+        # The sensor's next period is a pre-window dispatch slot (22:30-23:00):
+        # its end falls short of the configured dawn, so no hold is credited and
+        # the projection drains to 05:30 — conservative, since the real battery
+        # holds during the slot and the window. NOT the hold-credited ~84%.
         state = _state(
             battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
             baseline_load_w=711.0,
             tariff=a_tariff(
                 off_peak_window_end=utc(2026, 6, 1, 23, 0),
                 next_off_peak_window_start=utc(2026, 6, 1, 22, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
             ),
         )
         decision = _plan(state)
-        assert "no charge needed" not in decision.reason
+        assert "~56% at dawn" in decision.reason
+
+    def test_early_plan_with_future_dispatch_slot_stays_conservative(self):
+        # Codex review case: a configurable 18:00 plan time with a 21:30-22:00
+        # dispatch as the sensor's next period. The slot start is hours away but
+        # its end (22:00) is not dawn, so the hold must not be credited — the
+        # projection drains the full 11.5h to the configured 05:30:
+        # 90 - (711W * 11.5h / 17.7 / 10) ≈ 44%, not the hold-credited ~76%.
+        state = _state(
+            now=utc(2026, 6, 1, 18, 0),
+            battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=711.0,
+            solar_forecast=a_forecast_with_slots(
+                first_slot_at=utc(2026, 6, 2, 9, 30),
+                slot_count=20,
+                kwh_per_slot=0.5,
+            ),
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 1, 22, 0),
+                next_off_peak_window_start=utc(2026, 6, 1, 21, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
+            ),
+        )
+        decision = _plan(state)
+        assert "~44% at dawn" in decision.reason
+        assert "~76%" not in decision.reason
 
     def test_stale_off_peak_start_falls_back_to_full_drain(self):
         # A next-start in the past (stale sensor attribute) must not zero the
@@ -255,6 +287,7 @@ class TestDawnProjectionNote:
             tariff=a_tariff(
                 off_peak_window_end=utc(2026, 6, 2, 5, 30),
                 next_off_peak_window_start=utc(2026, 6, 1, 20, 0),  # before now=21:00
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
             ),
         )
         decision = _plan(state)
@@ -267,10 +300,23 @@ class TestDawnProjectionNote:
         state = _state(
             battery=a_battery(soc_percent=86.0, capacity_kwh=17.7, reserve_percent=4.0),
             baseline_load_w=709.0,
-            tariff=a_tariff(off_peak_window_end=utc(2026, 6, 2, 5, 30)),
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 2, 5, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),
+            ),
         )
         decision = _plan(state)
         assert "~52% at dawn" in decision.reason
+
+    def test_note_absent_when_overnight_end_unknown(self):
+        # No configured overnight end → no trustworthy dawn → no projection,
+        # even when the sensor offers a period end.
+        state = _state(
+            battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
+            tariff=a_tariff(off_peak_window_end=utc(2026, 6, 2, 5, 30)),
+        )
+        decision = _plan(state)
+        assert "no charge needed" not in decision.reason
 
 
 class TestNamedConstants:
