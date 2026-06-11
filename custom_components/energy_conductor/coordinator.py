@@ -275,9 +275,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # against slower-loading integrations (EntityProblem → skipped, observed live
         # on restart when the inverter entities register after EC). Rather than sit
         # planless for up to an hour until the next scheduled evaluation, run it from
-        # the first healthy tick that finds no cached plan.
+        # the first healthy tick that finds no cached plan, reusing this tick's state.
         if self.last_overnight_plan is None:
-            await self._run_overnight_plan()
+            await self._run_overnight_plan(state=state)
 
         try:
             decision = discharge_limit(
@@ -430,17 +430,21 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         )
         await self._emit(mismatch)
 
-    async def _run_overnight_plan(self, _now=None) -> None:
-        try:
-            state = await self.adapter.build_site_state()
-        except EntityProblem as exc:
-            _LOGGER.warning("Skipping overnight plan: %s", exc)
-            return
-        except Exception:
-            self.status = STATUS_ERROR
-            self.last_error = "Overnight plan failed (see logs)"
-            _LOGGER.exception("Unexpected error building SiteState for overnight plan")
-            return
+    async def _run_overnight_plan(self, _now=None, *, state: SiteState | None = None) -> None:
+        # The tick-loop catch-up passes its already-built state so build_site_state
+        # (several recorder queries) isn't run twice in that tick; the scheduled runs
+        # build their own.
+        if state is None:
+            try:
+                state = await self.adapter.build_site_state()
+            except EntityProblem as exc:
+                _LOGGER.warning("Skipping overnight plan: %s", exc)
+                return
+            except Exception:
+                self.status = STATUS_ERROR
+                self.last_error = "Overnight plan failed (see logs)"
+                _LOGGER.exception("Unexpected error building SiteState for overnight plan")
+                return
         self.last_site_state = state
         try:
             decision = plan_overnight(

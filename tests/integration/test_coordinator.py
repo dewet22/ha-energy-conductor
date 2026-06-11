@@ -226,11 +226,13 @@ async def test_first_healthy_tick_runs_missed_startup_plan(coordinator) -> None:
     await coordinator._run_overnight_plan()
     assert coordinator.last_overnight_plan is None
 
-    # Dependencies appear → the next tick (~30s) fills the plan in.
+    # Dependencies appear → the next tick (~30s) fills the plan in, reusing the
+    # tick's own SiteState rather than rebuilding it (recorder queries are dear).
     coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
     await coordinator._async_update_data()
     assert coordinator.last_overnight_plan is not None
     assert coordinator.last_overnight_plan.kind == DecisionKind.SET_CHARGE_TARGET
+    assert coordinator.adapter.build_site_state.await_count == 1
 
     # Subsequent ticks leave refreshes to the scheduled evaluations.
     coordinator._run_overnight_plan = AsyncMock()
