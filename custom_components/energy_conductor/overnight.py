@@ -9,6 +9,10 @@ from .model import SiteState
 MEANINGFUL_SLOT_KWH = 0.25  # 500W average over a 30min slot
 MORNING_GAP_CAP_H = 6  # absolute cap on morning_gap_hours
 MISSING_FORECAST_GAP_H = 4  # default gap when no forecast slots are present
+# Minimum hours to off_peak_window_end for the dawn projection to be emitted: a short
+# Intelligent dispatch slot ends minutes away, the overnight window hours away — only
+# the latter is a meaningful "dawn" to project against.
+OVERNIGHT_FRAME_MIN_H = 3.0
 
 
 def _first_meaningful_slot_start(state: SiteState):
@@ -75,32 +79,35 @@ def plan_overnight(
         hours_until_dawn = max(
             0.0, (state.tariff.off_peak_window_end - state.now).total_seconds() / 3600
         )
-        # The discharge guard idles the battery once off-peak begins, so it only
-        # drains at baseline until the window STARTS, then holds until dawn. With
-        # no known start — or a stale one in the past — assume full drain to dawn,
-        # the conservative direction (under-projects dawn SoC, so the note is
-        # suppressed rather than wrong). Known caveat: the off-peak sensor also
-        # covers short Intelligent dispatch slots, so an early dispatch can stop
-        # the projected drain before the main window resumes it; the overstatement
-        # is bounded by the inter-slot gap (an hour or two of baseline, a few
-        # percent SoC) and this note is advisory-only — it never changes the
-        # written target. Proper interval data arrives with the SoC-setpoint
-        # redesign.
-        hours_discharging = hours_until_dawn
-        if state.tariff.off_peak_now:
-            hours_discharging = 0.0
-        elif (
-            state.tariff.next_off_peak_window_start is not None
-            and state.tariff.next_off_peak_window_start >= state.now
-        ):
-            hours_discharging = min(
-                hours_until_dawn,
-                (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
+        # The off-peak sensor covers both the overnight window and short Intelligent
+        # dispatch slots, and `off_peak_window_end` pairs with whichever period is
+        # current/next. The projection is only meaningful when that end is the
+        # overnight boundary — so require an overnight-sized frame before emitting
+        # the note at all. Dispatch slots (ends minutes-to-an-hour away) fail the
+        # check and suppress the note; any credited hold therefore runs through to
+        # a genuine dawn. Within a valid frame, drain is projected at baseline
+        # until the window STARTS (the discharge guard idles the battery from
+        # then on); unseen interleaved dispatch slots only ADD holds, so the
+        # projection under-states dawn SoC — the conservative direction. With no
+        # known start — or a stale one in the past — assume full drain to dawn.
+        if hours_until_dawn >= OVERNIGHT_FRAME_MIN_H:
+            hours_discharging = hours_until_dawn
+            if state.tariff.off_peak_now:
+                hours_discharging = 0.0
+            elif (
+                state.tariff.next_off_peak_window_start is not None
+                and state.tariff.next_off_peak_window_start >= state.now
+            ):
+                hours_discharging = min(
+                    hours_until_dawn,
+                    (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
+                )
+            discharge_pct = (
+                state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
             )
-        discharge_pct = state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
-        expected_soc = round(state.battery.soc_percent - discharge_pct)
-        if expected_soc > target_percent:
-            dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"
+            expected_soc = round(state.battery.soc_percent - discharge_pct)
+            if expected_soc > target_percent:
+                dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"
 
     reason = (
         f"Morning gap {morning_gap_hours:.1f}h x {state.baseline_load_w:.0f}W "

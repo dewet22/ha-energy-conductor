@@ -213,6 +213,38 @@ class TestDawnProjectionNote:
         decision = _plan(state)
         assert "~85% at dawn" in decision.reason
 
+    def test_note_suppressed_during_short_dispatch_slot(self):
+        # Plan fires while a 30-min Intelligent dispatch is active: off_peak_now is
+        # True but the period end (= "dawn" here) is minutes away, so the projection
+        # frame is not the overnight window. Projecting "current SoC at dawn" would
+        # overstate — discharge resumes when the slot ends. Suppress the note.
+        state = _state(
+            battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=711.0,
+            tariff=a_tariff(
+                off_peak_now=True,
+                off_peak_window_end=utc(2026, 6, 1, 21, 30),  # slot end, 0.5h away
+            ),
+        )
+        decision = _plan(state)
+        assert "no charge needed" not in decision.reason
+
+    def test_note_suppressed_when_next_period_is_a_short_slot(self):
+        # The sensor's next period is a pre-window dispatch slot (22:30-23:00), so
+        # off_peak_window_end pairs with the slot, not the overnight window. The
+        # frame check (< 3h to "dawn") suppresses the note rather than projecting
+        # a hold through a window we cannot see.
+        state = _state(
+            battery=a_battery(soc_percent=90.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=711.0,
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 1, 23, 0),
+                next_off_peak_window_start=utc(2026, 6, 1, 22, 30),
+            ),
+        )
+        decision = _plan(state)
+        assert "no charge needed" not in decision.reason
+
     def test_stale_off_peak_start_falls_back_to_full_drain(self):
         # A next-start in the past (stale sensor attribute) must not zero the
         # projected drain — that would overstate dawn SoC. Fall back to the
