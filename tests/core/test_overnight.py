@@ -213,6 +213,21 @@ class TestDawnProjectionNote:
         decision = _plan(state)
         assert "~85% at dawn" in decision.reason
 
+    def test_stale_off_peak_start_falls_back_to_full_drain(self):
+        # A next-start in the past (stale sensor attribute) must not zero the
+        # projected drain — that would overstate dawn SoC. Fall back to the
+        # conservative full-drain assumption instead (PR #18 review).
+        state = _state(
+            battery=a_battery(soc_percent=86.0, capacity_kwh=17.7, reserve_percent=4.0),
+            baseline_load_w=709.0,
+            tariff=a_tariff(
+                off_peak_window_end=utc(2026, 6, 2, 5, 30),
+                next_off_peak_window_start=utc(2026, 6, 1, 20, 0),  # before now=21:00
+            ),
+        )
+        decision = _plan(state)
+        assert "~52% at dawn" in decision.reason
+
     def test_full_drain_assumed_when_off_peak_start_unknown(self):
         # Without a known off-peak start, fall back to draining all the way to
         # dawn — the conservative direction (suppresses the note more often).

@@ -235,3 +235,39 @@ async def test_solcast_zero_slots_warns_once_per_episode(hass, mock_config_entry
     await adapter._build_forecast(now_utc)
     warnings = [r for r in caplog.records if "no forecast slots" in r.message]
     assert len(warnings) == 2
+
+
+async def test_solcast_offline_warning_does_not_blame_sensor_variant(
+    hass, mock_config_entry, now_utc, caplog
+):
+    """An unavailable sensor must not trigger the wrong-variant advice (PR #18 review).
+
+    Zero slots from an offline sensor is an availability problem, not a configuration
+    one — the warning should say so rather than sending the user to check the picker.
+    """
+    from custom_components.energy_conductor.const import (
+        CONF_FORECAST_SOLCAST_SENSOR,
+        FORECAST_SOURCE_SOLCAST,
+    )
+
+    hass.states.async_set(SOLCAST, "unavailable")
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {
+            CONF_FORECAST_SOURCE: FORECAST_SOURCE_SOLCAST,
+            CONF_FORECAST_SOLCAST_SENSOR: SOLCAST,
+        },
+    )
+
+    solar = await adapter._build_forecast(now_utc)
+    assert solar.slots == ()
+    offline = [r for r in caplog.records if "unavailable" in r.message and SOLCAST in r.message]
+    assert len(offline) == 1, "offline sensor must be visible in the log"
+    assert not any("no forecast slots" in r.message for r in caplog.records)
+
+    # Same episode latch applies: no repeat on the next build.
+    await adapter._build_forecast(now_utc)
+    offline = [r for r in caplog.records if "unavailable" in r.message and SOLCAST in r.message]
+    assert len(offline) == 1

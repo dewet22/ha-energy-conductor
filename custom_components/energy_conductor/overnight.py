@@ -77,18 +77,25 @@ def plan_overnight(
         )
         # The discharge guard idles the battery once off-peak begins, so it only
         # drains at baseline until the window STARTS, then holds until dawn. With
-        # no known start, assume full drain to dawn — the conservative direction
-        # (under-projects dawn SoC, so the note is suppressed rather than wrong).
+        # no known start — or a stale one in the past — assume full drain to dawn,
+        # the conservative direction (under-projects dawn SoC, so the note is
+        # suppressed rather than wrong). Known caveat: the off-peak sensor also
+        # covers short Intelligent dispatch slots, so an early dispatch can stop
+        # the projected drain before the main window resumes it; the overstatement
+        # is bounded by the inter-slot gap (an hour or two of baseline, a few
+        # percent SoC) and this note is advisory-only — it never changes the
+        # written target. Proper interval data arrives with the SoC-setpoint
+        # redesign.
         hours_discharging = hours_until_dawn
         if state.tariff.off_peak_now:
             hours_discharging = 0.0
-        elif state.tariff.next_off_peak_window_start is not None:
+        elif (
+            state.tariff.next_off_peak_window_start is not None
+            and state.tariff.next_off_peak_window_start >= state.now
+        ):
             hours_discharging = min(
                 hours_until_dawn,
-                max(
-                    0.0,
-                    (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
-                ),
+                (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
             )
         discharge_pct = state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
         expected_soc = round(state.battery.soc_percent - discharge_pct)

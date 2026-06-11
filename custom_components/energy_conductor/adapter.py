@@ -411,15 +411,23 @@ class Adapter:
                 if slots:
                     self._solcast_zero_slots_warned = False
                 elif not self._solcast_zero_slots_warned:
-                    # A wrong sensor variant (e.g. 'forecast today') parses fine but is
-                    # filtered to nothing, and the seasonal fallback masks it — make the
-                    # degradation visible instead of silent.
-                    _LOGGER.warning(
-                        "Solcast sensor %s yielded no forecast slots for tomorrow; using "
-                        "fallback. If this persists, check it is the 'Forecast Tomorrow' "
-                        "sensor — a 'today' or aggregate sensor is filtered to nothing.",
-                        sensor_id,
-                    )
+                    state = self.hass.states.get(sensor_id)
+                    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                        # An offline sensor is an availability problem, not a
+                        # configuration one — don't send the user to the picker.
+                        _LOGGER.warning(
+                            "Solcast sensor %s is unavailable; using fallback.", sensor_id
+                        )
+                    else:
+                        # A wrong sensor variant (e.g. 'forecast today') parses fine but is
+                        # filtered to nothing, and the seasonal fallback masks it — make the
+                        # degradation visible instead of silent.
+                        _LOGGER.warning(
+                            "Solcast sensor %s yielded no forecast slots for tomorrow; using "
+                            "fallback. If this persists, check it is the 'Forecast Tomorrow' "
+                            "sensor — a 'today' or aggregate sensor is filtered to nothing.",
+                            sensor_id,
+                        )
                     self._solcast_zero_slots_warned = True
         elif source == FORECAST_SOURCE_DAILY:
             sensor_id = self.config.get(CONF_FORECAST_DAILY_SENSOR)
