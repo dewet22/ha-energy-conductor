@@ -763,12 +763,12 @@ class EVChargeCostSensor(_DailyMoneySensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        attrs = super().extra_state_attributes
-        # The ledger's vs-public-charging comparator rate (config scalar; None hides it).
-        attrs["public_charging_rate_gbp_per_kwh"] = self.coordinator.config.get(
-            CONF_PUBLIC_CHARGING_RATE
-        )
-        return attrs
+        return {
+            **super().extra_state_attributes,
+            "public_charging_rate_gbp_per_kwh": self.coordinator.config.get(
+                CONF_PUBLIC_CHARGING_RATE
+            ),
+        }
 
 
 class SavingsTodaySensor(_MoneySensorBase):

@@ -65,13 +65,18 @@
 
   // Net cost today from the read-through values: costs minus credits. Null when
   // no cost component is readable - an export-only net would be misleading.
+  // A key present in `values` means the source is configured; a null value means
+  // the entity is temporarily unavailable — return null rather than a partial total.
   function netToday(values) {
     if (!values) return null;
     var costKeys = ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas"];
     var net = null;
-    costKeys.forEach(function (k) {
-      if (typeof values[k] === "number" && !isNaN(values[k])) net = (net || 0) + values[k];
-    });
+    for (var i = 0; i < costKeys.length; i++) {
+      var k = costKeys[i];
+      if (!(k in values)) continue;
+      if (typeof values[k] !== "number" || isNaN(values[k])) return null;
+      net = (net || 0) + values[k];
+    }
     if (net === null) return null;
     if (typeof values.export_earnings === "number" && !isNaN(values.export_earnings)) {
       net -= values.export_earnings;
@@ -81,14 +86,18 @@
 
   // Month-to-date net from per-entity LTS sums (same structure as netToday but
   // using statistics rather than current sensor states). Null when no cost
-  // component is present — absence is not free energy.
+  // component is present — absence is not free energy. A key present in
+  // `mtdValues` means the source is configured; null means no statistics yet.
   function mtdNet(mtdValues) {
     if (!mtdValues) return null;
     var costKeys = ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas"];
     var net = null;
-    costKeys.forEach(function (k) {
-      if (typeof mtdValues[k] === "number" && !isNaN(mtdValues[k])) net = (net || 0) + mtdValues[k];
-    });
+    for (var i = 0; i < costKeys.length; i++) {
+      var k = costKeys[i];
+      if (!(k in mtdValues)) continue;
+      if (typeof mtdValues[k] !== "number" || isNaN(mtdValues[k])) return null;
+      net = (net || 0) + mtdValues[k];
+    }
     if (net === null) return null;
     if (typeof mtdValues.export_earnings === "number" && !isNaN(mtdValues.export_earnings)) {
       net -= mtdValues.export_earnings;
@@ -101,10 +110,14 @@
   function sumChanges(rows) {
     if (!rows || !rows.length) return null;
     var sum = 0;
+    var hasValid = false;
     rows.forEach(function (r) {
-      if (typeof r.change === "number" && r.change > 0) sum += r.change;
+      if (typeof r.change === "number" && r.change > 0) {
+        sum += r.change;
+        hasValid = true;
+      }
     });
-    return sum;
+    return hasValid ? sum : null;
   }
 
   function evComparator(monthKwh, monthCostGbp, publicRateGbpPerKwh) {
@@ -244,13 +257,13 @@
           var savings = this._num(c.savings_entity);
 
           // Month-to-date net from LTS statistics, same components as netToday.
-          var mtd = mtdNet({
-            import_cost: this._mtd(sources.import_cost),
-            standing_charge_electricity: this._mtd(sources.standing_charge_electricity),
-            gas_cost: this._mtd(sources.gas_cost),
-            standing_charge_gas: this._mtd(sources.standing_charge_gas),
-            export_earnings: this._mtd(sources.export_earnings),
+          // Only pass configured sources (keys in sources) so mtdNet can
+          // distinguish "not configured" (absent key) from "no stats yet" (null).
+          var mtdInput = {};
+          ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas", "export_earnings"].forEach(function (k) {
+            if (sources[k]) mtdInput[k] = self._mtd(sources[k]);
           });
+          var mtd = mtdNet(mtdInput);
 
           var html = '<ha-card style="padding:12px 16px 16px;">';
           html += '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Ledger</div>';

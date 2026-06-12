@@ -50,15 +50,20 @@ describe("actualRows", () => {
 });
 
 describe("netToday", () => {
-  test("costs minus credits, ignoring unavailable parts", () => {
+  test("costs minus credits, all components present", () => {
     expect(
       L.netToday({ import_cost: 1.03, standing_charge_electricity: 0.58, gas_cost: 1.01, standing_charge_gas: 0.29, export_earnings: 0.31 })
     ).toBeCloseTo(2.6, 10);
   });
 
-  test("null when no cost component is available", () => {
+  test("null when no cost component is configured (key absent)", () => {
     expect(L.netToday({ export_earnings: 0.31 })).toBe(null);
     expect(L.netToday({})).toBe(null);
+  });
+
+  test("null when a configured cost source is temporarily unavailable (key present, value null)", () => {
+    // import_cost IS in values (configured) but the entity is unavailable
+    expect(L.netToday({ import_cost: null, standing_charge_electricity: 0.58 })).toBe(null);
   });
 });
 
@@ -71,6 +76,10 @@ describe("sumChanges", () => {
   test("empty input sums to null (not zero - absence is not free energy)", () => {
     expect(L.sumChanges([])).toBe(null);
     expect(L.sumChanges(undefined)).toBe(null);
+  });
+
+  test("all-null changes return null, not zero (no valid data is not free energy)", () => {
+    expect(L.sumChanges([{ change: null }, { change: null }])).toBe(null);
   });
 });
 
@@ -106,5 +115,10 @@ describe("mtdNet", () => {
   test("null when no cost component is present (absence is not free energy)", () => {
     expect(L.mtdNet({ export_earnings: 2.0 })).toBe(null);
     expect(L.mtdNet({})).toBe(null);
+  });
+
+  test("null when a configured source has no statistics data yet (key present, value null)", () => {
+    // import_cost IS configured (key present) but stats haven't loaded (null)
+    expect(L.mtdNet({ import_cost: null, standing_charge_electricity: 5.0 })).toBe(null);
   });
 });
