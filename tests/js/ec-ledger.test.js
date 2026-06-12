@@ -19,6 +19,37 @@ describe("fmtGbp", () => {
   });
 });
 
+describe("fmtGbpSigned", () => {
+  test("credits carry an explicit plus, debits a minus", () => {
+    expect(L.fmtGbpSigned(7.171)).toBe("+&#163;7.17");
+    expect(L.fmtGbpSigned(-2.444)).toBe("-&#163;2.44");
+  });
+
+  test("zero (including round-to-zero) is unsigned", () => {
+    expect(L.fmtGbpSigned(0)).toBe("&#163;0.00");
+    expect(L.fmtGbpSigned(0.001)).toBe("&#163;0.00");
+    expect(L.fmtGbpSigned(-0.004)).toBe("&#163;0.00");
+  });
+
+  test("non-numbers render as a dash", () => {
+    expect(L.fmtGbpSigned(null)).toBe("-");
+    expect(L.fmtGbpSigned(NaN)).toBe("-");
+  });
+});
+
+describe("fmtMonthYear", () => {
+  test("an ISO date softens to month + year", () => {
+    expect(L.fmtMonthYear("2031-01-09")).toBe("Jan 2031");
+    expect(L.fmtMonthYear("2030-12-31")).toBe("Dec 2030");
+  });
+
+  test("garbage gives null", () => {
+    expect(L.fmtMonthYear("soon")).toBe(null);
+    expect(L.fmtMonthYear(null)).toBe(null);
+    expect(L.fmtMonthYear("2031-13-09")).toBe(null);
+  });
+});
+
 describe("actualRows", () => {
   test("uses the off-peak/peak split when both are configured", () => {
     const rows = L.actualRows({
