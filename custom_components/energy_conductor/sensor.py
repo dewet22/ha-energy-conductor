@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -636,7 +636,9 @@ class _DailyMoneySensor(_MoneySensorBase, RestoreEntity):
     @property
     def last_reset(self) -> datetime | None:
         acc = self._money.daily.get(self._acc) if self._money is not None else None
-        return None if acc is None else dt_util.start_of_local_day(acc.day)
+        if acc is None:
+            return None
+        return dt_util.start_of_local_day(datetime.combine(acc.day, time()))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -686,6 +688,10 @@ class SavingsTodaySensor(_MoneySensorBase):
         self._attr_unique_id = f"{entry.entry_id}-savings-today"
 
     @property
+    def available(self) -> bool:
+        return super().available and self._money is not None and self._money.rate_available
+
+    @property
     def native_value(self) -> float | None:
         return None if self._money is None else self._money.savings_today
 
@@ -733,6 +739,10 @@ class CumulativeSavingsSensor(_MoneySensorBase, RestoreEntity):
             return
         self._money.seed_cumulative(restored)
         self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._money is not None and self._money.cumulative is not None
 
     @property
     def native_value(self) -> float | None:

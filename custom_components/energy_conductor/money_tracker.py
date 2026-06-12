@@ -110,24 +110,25 @@ class MoneyTracker:
         """
         current = self.daily.get(name)
         if current is None:
-            if not self._ticked:
-                self.daily[name] = restored
+            # No live baseline yet (first tick ran but this accumulator had no inputs).
+            # Always adopt the restored snapshot so a post-outage restart doesn't lose today.
+            self.daily[name] = restored
             return
         if restored.day != current.day or current.cost_gbp != 0.0:
             return
+        rate_key = CONF_GAS_RATE_SENSOR if name == ACC_HOTWATER_GAS else CONF_IMPORT_RATE_SENSOR
         merged = accumulate_daily_cost(
             restored,
             day=current.day,
             counter_kwh=current.last_counter_kwh,
-            rate_gbp_per_kwh=self._read_rate(CONF_IMPORT_RATE_SENSOR),
+            rate_gbp_per_kwh=self._read_rate(rate_key),
         )
         self.daily[name] = merged if merged is not None else restored
 
     def seed_cumulative(self, restored: CumulativeSavings) -> None:
         """Adopt the restored lifetime bank (see seed_daily for the ordering caveat)."""
         if self.cumulative is None:
-            if not self._ticked:
-                self.cumulative = restored
+            self.cumulative = restored
             return
         if self.cumulative.base_gbp == 0.0:
             # Fresh boot: keep this boot's today-value, restore the bank and start date
@@ -223,6 +224,8 @@ class MoneyTracker:
 
     @property
     def savings_today(self) -> float | None:
+        if not self.rate_available:
+            return None
         counterfactual = self.daily_cost(ACC_COUNTERFACTUAL)
         if not self.config.get(CONF_IMPORT_COST_SENSOR):
             return None

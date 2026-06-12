@@ -84,7 +84,29 @@ class TestAccumulateDailyCost:
         state = DailyCost(day=DAY, last_counter_kwh=5.0, cost_gbp=1.0)
         state = accumulate_daily_cost(state, day=DAY, counter_kwh=4.97, rate_gbp_per_kwh=0.30)
         assert state.cost_gbp == 1.0
-        assert state.last_counter_kwh == 4.97
+        assert state.last_counter_kwh == 5.0  # baseline preserved so rebound is not double-priced
+
+    def test_jitter_rebound_not_priced_as_fresh_energy(self):
+        # 9.9 is jitter (not a reset); next tick returns to 10.0 → delta must be 0, not 0.1.
+        state = DailyCost(day=DAY, last_counter_kwh=10.0, cost_gbp=1.0)
+        state = accumulate_daily_cost(state, day=DAY, counter_kwh=9.9, rate_gbp_per_kwh=0.30)
+        assert state.last_counter_kwh == 10.0
+        state = accumulate_daily_cost(state, day=DAY, counter_kwh=10.0, rate_gbp_per_kwh=0.30)
+        assert state.cost_gbp == pytest.approx(1.0)  # unchanged
+
+    def test_outage_spanning_midnight_prices_at_resumed_rate(self):
+        # Rate goes away; the day rolls; rate returns later on the new day.
+        # The whole overnight delta (from outage-start counter) must be priced on
+        # the new day at the resumed rate — not dropped.
+        state = DailyCost(day=DAY, last_counter_kwh=10.0, cost_gbp=0.50)
+        # midnight: day changes, rate still None → advance day, keep baseline
+        mid = accumulate_daily_cost(state, day=NEXT_DAY, counter_kwh=11.0, rate_gbp_per_kwh=None)
+        assert mid.day == NEXT_DAY
+        assert mid.last_counter_kwh == 10.0  # outage-start baseline preserved
+        assert mid.cost_gbp == 0.0  # fresh day
+        # rate resumes: 15.0 - 10.0 = 5.0 kWh at resumed rate
+        resumed = accumulate_daily_cost(mid, day=NEXT_DAY, counter_kwh=15.0, rate_gbp_per_kwh=0.10)
+        assert resumed.cost_gbp == pytest.approx(5.0 * 0.10)
 
     def test_none_counter_leaves_state_unchanged(self):
         before = DailyCost(day=DAY, last_counter_kwh=5.0, cost_gbp=1.0)

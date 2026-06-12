@@ -69,7 +69,14 @@ def accumulate_daily_cost(
     20% of its previous value mid-day is a source reset (priced from zero); smaller
     negative deltas are jitter and contribute nothing.
     """
-    if counter_kwh is None or rate_gbp_per_kwh is None:
+    if counter_kwh is None:
+        return state
+    if rate_gbp_per_kwh is None:
+        # Hold the baseline; if the calendar day changes during an outage, advance
+        # the day (resetting cost to 0) so the overnight delta is priced at the
+        # resumed rate rather than dropped when the day-change branch fires next.
+        if state is not None and day != state.day:
+            return DailyCost(day=day, last_counter_kwh=state.last_counter_kwh, cost_gbp=0.0)
         return state
     if state is None or day != state.day:
         return DailyCost(day=day, last_counter_kwh=counter_kwh, cost_gbp=0.0)
@@ -79,7 +86,14 @@ def accumulate_daily_cost(
             state.last_counter_kwh > _RESET_MIN_KWH
             and counter_kwh < _RESET_FRACTION * state.last_counter_kwh
         )
-        delta = counter_kwh if is_reset else 0.0
+        if is_reset:
+            delta = counter_kwh
+        else:
+            # Jitter: ignore and preserve the previous baseline so the rebound on
+            # the next tick is not priced as fresh energy.
+            return DailyCost(
+                day=day, last_counter_kwh=state.last_counter_kwh, cost_gbp=state.cost_gbp
+            )
     return DailyCost(
         day=day,
         last_counter_kwh=counter_kwh,
@@ -165,7 +179,7 @@ def payback_projection(
     elif per_day <= 0:
         breakeven = None
     else:
-        breakeven = today + timedelta(days=(capital_cost_gbp - recovered_gbp) / per_day)
+        breakeven = today + timedelta(days=round((capital_cost_gbp - recovered_gbp) / per_day))
     return PaybackProjection(
         recovered_pct=recovered_pct,
         run_rate_gbp_per_year=per_day * DAYS_PER_YEAR,

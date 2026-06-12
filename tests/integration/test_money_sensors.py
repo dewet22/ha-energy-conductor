@@ -116,15 +116,17 @@ async def test_money_sensor_unavailable_during_rate_outage(hass: HomeAssistant) 
     entry = MockConfigEntry(domain=DOMAIN, data=COSTS_CONFIG, entry_id="m2")
     assert await _setup(hass, entry)
 
-    counterfactual = hass.states.get(_money_entity_id(hass, entry, "counterfactual-cost-today"))
-    assert counterfactual.state == "unavailable"
+    for key in ("counterfactual-cost-today", "savings-today", "cumulative-savings"):
+        state = hass.states.get(_money_entity_id(hass, entry, key))
+        assert state.state == "unavailable", f"{key} should be unavailable during rate outage"
 
     hass.states.async_set(RATE, "0.30", {"unit_of_measurement": "GBP/kWh"})
     coordinator = hass.data[DOMAIN][entry.entry_id]
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    counterfactual = hass.states.get(_money_entity_id(hass, entry, "counterfactual-cost-today"))
-    assert counterfactual.state not in ("unavailable", "unknown")
+    for key in ("counterfactual-cost-today", "savings-today"):
+        state = hass.states.get(_money_entity_id(hass, entry, key))
+        assert state.state not in ("unavailable", "unknown"), f"{key} should recover"
 
 
 async def test_counterfactual_restores_running_total(hass: HomeAssistant) -> None:
