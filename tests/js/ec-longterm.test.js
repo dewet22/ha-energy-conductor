@@ -172,3 +172,26 @@ describe("monthMarks", () => {
     expect(LT.monthMarks(undefined)).toEqual([]);
   });
 });
+
+describe("weeklySvg", () => {
+  // Six weeks of dailies spanning the May->June boundary.
+  const series = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(2026, 4, 4 + i);
+    const pad = (n) => (n < 10 ? "0" : "") + n;
+    series.push({
+      day: d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()),
+      kwh: 5,
+    });
+  }
+
+  test("renders a taller chart with month-start gridlines", () => {
+    const svg = LT.weeklySvg(series);
+    expect(svg).toContain("height:140px");
+    expect(svg).toContain("<line");
+  });
+
+  test("empty series renders nothing", () => {
+    expect(LT.weeklySvg([])).toBe("");
+  });
+});

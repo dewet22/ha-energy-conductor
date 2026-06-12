@@ -194,8 +194,11 @@
   // Teal ramp. The lowest stop is a faint but VISIBLE green for true-zero
   // days; cells with no statistics at all get the neutral grey base coat -
   // an outage must not read the same as a day of zero energy.
+  // RAMP[0] is the faint-but-visible "true zero" green; missing data paints
+  // nothing at all (the card background shows through), so an outage still
+  // never reads the same as a day of zero energy.
   var RAMP = ["rgba(29,158,117,0.14)", "#bfe8d9", "#8fd6bb", "#54bd96", "#1d9e75", "#0f6e56"];
-  var C_MISSING = "rgba(127,127,127,0.20)";
+  var C_GRIDLINE = "rgba(127,127,127,0.25)";
 
   function fmtKwh(v) {
     if (v >= 1000) return (v / 1000).toFixed(1) + " MWh";
@@ -210,13 +213,6 @@
     canvas.height = grid.rows * (cell + gap);
     var ctx = canvas.getContext("2d");
     if (!ctx) return;
-    // Base coat: every position is "missing" until data paints over it.
-    ctx.fillStyle = C_MISSING;
-    for (var col = 0; col < grid.cols; col++) {
-      for (var row = 0; row < grid.rows; row++) {
-        ctx.fillRect(col * (cell + gap), row * (cell + gap), cell, cell);
-      }
-    }
     var stops = quantileStops(
       series.map(function (s) {
         return s.kwh;
@@ -224,9 +220,15 @@
       RAMP.length - 1
     );
     grid.cells.forEach(function (c) {
-      ctx.clearRect(c.col * (cell + gap), c.row * (cell + gap), cell, cell);
       ctx.fillStyle = c.kwh <= 0 ? RAMP[0] : RAMP[bucket(c.kwh, stops)];
       ctx.fillRect(c.col * (cell + gap), c.row * (cell + gap), cell, cell);
+    });
+    // Month-start gridlines, after the cells so missing-data gaps keep them:
+    // they anchor the (start-aligned) month labels above.
+    ctx.fillStyle = C_GRIDLINE;
+    monthMarks(grid.weeks).forEach(function (m) {
+      if (m.frac <= 0) return;
+      ctx.fillRect(Math.round(m.frac * grid.cols) * (cell + gap) - 1, 0, 1, canvas.height);
     });
   }
 
@@ -240,8 +242,6 @@
     canvas.height = 24 * h;
     var ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.fillStyle = C_MISSING;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
     var dayIndex = {};
     grid.days.forEach(function (d, i) {
       dayIndex[d] = i;
@@ -257,9 +257,14 @@
       RAMP.length - 1
     );
     grid.cells.forEach(function (c) {
-      ctx.clearRect(dayIndex[c.day] * w, c.hour * h, w, h - 1);
       ctx.fillStyle = c.kwh <= 0 ? RAMP[0] : RAMP[bucket(c.kwh, stops)];
       ctx.fillRect(dayIndex[c.day] * w, c.hour * h, w, h - 1);
+    });
+    // Month-start gridlines anchoring the labels above.
+    ctx.fillStyle = C_GRIDLINE;
+    monthMarks(grid.days).forEach(function (m) {
+      if (m.frac <= 0) return;
+      ctx.fillRect(Math.round(m.frac * grid.days.length) * w, 0, 1, canvas.height);
     });
     return { days: grid.days, maxKwh: grid.maxKwh };
   }
@@ -283,12 +288,26 @@
     var weekly = weeklySeries(series);
     if (!weekly.length) return "";
     var W = 640;
-    var H = 80;
+    var H = 140; // a chart, not a sparkline: enough height to read the shape
     var max = 0;
     weekly.forEach(function (p) {
       if (p.kwh > max) max = p.kwh;
     });
     if (max <= 0) max = 1;
+    var inner = "";
+    // Month-start gridlines anchoring the labels above. non-scaling-stroke
+    // keeps them hairline despite the preserveAspectRatio="none" stretch.
+    monthMarks(
+      weekly.map(function (p) {
+        return p.weekStart;
+      })
+    ).forEach(function (m) {
+      if (m.frac <= 0) return;
+      var x = (m.frac * W).toFixed(1);
+      inner +=
+        '<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + H +
+        '" stroke="' + C_GRIDLINE + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+    });
     var pts = weekly
       .map(function (p, i) {
         var x = (i / Math.max(1, weekly.length - 1)) * W;
@@ -304,9 +323,10 @@
       '" preserveAspectRatio="none" style="width:100%;height:' +
       H +
       'px;display:block;">' +
+      inner +
       '<polyline points="' +
       pts +
-      '" fill="none" stroke="#1d9e75" stroke-width="2"/></svg>'
+      '" fill="none" stroke="#1d9e75" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>'
     );
   }
 
@@ -429,9 +449,16 @@
                     color + ';vertical-align:middle;"></span>'
                   );
                 };
+                // White = no data (outlined swatch); the gradient runs
+                // 0 -> max with the bounds at its ends. kWh in an hour bucket
+                // IS the hour's average kW, so the unit is plain kW.
+                var swEmpty =
+                  '<span style="display:inline-block;width:14px;height:10px;' +
+                  'border:1px solid rgba(127,127,127,0.45);box-sizing:border-box;' +
+                  'vertical-align:middle;"></span>';
                 scale.innerHTML =
-                  sw(C_MISSING) + " no data &nbsp; " + RAMP.map(sw).join("") +
-                  " 0 &#8594; " + info.maxKwh.toFixed(1) + " kWh/hour";
+                  swEmpty + " no data &nbsp;&nbsp; 0 " + RAMP.map(sw).join("") +
+                  " " + info.maxKwh.toFixed(1) + " kW";
               }
             })
             .catch(function () {
@@ -455,6 +482,9 @@
 
         // Instant frame while the recorder aggregates a year of statistics
         // server-side - a blank card for several seconds reads as broken.
+        // The skeleton mirrors the real chip exactly (same grid template,
+        // padding, label row, month-row spacer, and a pulse block at the
+        // painted calendar's aspect ratio) so data fills in without a pop.
         _renderSkeleton() {
           var flows = this._flows();
           var chips = "";
@@ -465,18 +495,20 @@
             : ["", "", "", ""];
           labels.forEach(function (label) {
             chips +=
-              '<div style="border:1px solid var(--divider-color, #444);border-radius:8px;padding:8px 10px;">' +
-              '<div style="font-size:0.85em;padding-bottom:6px;' +
+              '<div style="border:1px solid var(--divider-color, #444);border-radius:8px;padding:10px 12px;">' +
+              '<div style="font-size:0.95em;padding-bottom:6px;' +
               (label ? '">' + label : 'opacity:0.4;">loading') +
               "</div>" +
-              '<div style="height:64px;border-radius:4px;background:var(--divider-color, #444);' +
+              '<div style="height:13px;"></div>' +
+              '<div style="margin-left:14px;aspect-ratio:636/84;border-radius:4px;' +
+              'background:var(--divider-color, #444);' +
               'animation:ec-lt-pulse 1.2s ease-in-out infinite;"></div></div>';
           });
           this.innerHTML =
             "<style>@keyframes ec-lt-pulse{0%,100%{opacity:0.15;}50%{opacity:0.35;}}</style>" +
             '<ha-card style="padding:12px 16px 16px;">' +
             '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Long-term energy</div>' +
-            '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;">' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;">' +
             chips +
             "</div></ha-card>";
         }
@@ -545,16 +577,18 @@
               " - 12 months</div>" +
               '<div style="font-size:0.8em;opacity:0.6;">Density - hour of day x day' +
               ' <span style="opacity:0.8;">(colour = energy in that hour)</span></div>' +
-              '<div data-density-months style="margin-left:24px;"></div>' +
+              // Fixed heights reserve the deep-view layout before the hourly
+              // fetch returns, so nothing reflows when the canvas paints.
+              '<div data-density-months style="margin-left:24px;min-height:13px;"></div>' +
               '<div style="display:flex;gap:2px;">' +
               '<div style="position:relative;width:22px;font-size:0.65em;opacity:0.5;align-self:stretch;">' +
               '<span style="position:absolute;top:0;">00</span>' +
               '<span style="position:absolute;top:25%;">06</span>' +
               '<span style="position:absolute;top:50%;">12</span>' +
               '<span style="position:absolute;top:75%;">18</span></div>' +
-              '<canvas data-density style="width:100%;image-rendering:pixelated;flex:1;min-width:0;"></canvas>' +
+              '<canvas data-density style="width:100%;height:288px;image-rendering:pixelated;flex:1;min-width:0;"></canvas>' +
               "</div>" +
-              '<div data-density-scale style="font-size:0.75em;opacity:0.7;padding-top:4px;"></div>' +
+              '<div data-density-scale style="font-size:0.75em;opacity:0.7;padding-top:4px;min-height:1.4em;"></div>' +
               '<div data-density-note style="font-size:0.8em;opacity:0.6;"></div>' +
               '<div style="font-size:0.8em;opacity:0.6;padding-top:10px;">Weekly energy' +
               (weeklyPeak > 0
@@ -602,6 +636,7 @@
     flowsFromSources: flowsFromSources,
     monthMarks: monthMarks,
     annualTotal: annualTotal,
+    weeklySvg: weeklySvg,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = API;
