@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    DateSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -31,6 +32,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_CONTROL,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
     CONF_BATTERY_POWER_SENSOR,
@@ -41,12 +43,21 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_DISPATCHING_SENSOR,
     CONF_ENTITY_REFS,
+    CONF_EV_ENERGY_SENSOR,
+    CONF_EV_GREEN_ENERGY_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
+    CONF_EXPORT_EARNINGS_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_GAS_COST_SENSOR,
+    CONF_GAS_ENERGY_SENSOR,
+    CONF_GAS_RATE_SENSOR,
+    CONF_GRID_EXPORT_ENERGY_SENSOR,
     CONF_GRID_EXPORT_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
     CONF_GRID_IMPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_CAPACITY_KWH,
@@ -57,15 +68,25 @@ from .const import (
     CONF_HOTWATER_MAX_TEMP_STATE,
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_THRESHOLD_PERCENT,
+    CONF_IMPORT_COST_OFF_PEAK_SENSOR,
+    CONF_IMPORT_COST_PEAK_SENSOR,
+    CONF_IMPORT_COST_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_PUBLIC_CHARGING_RATE,
+    CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
+    CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
+    CONF_STANDING_CHARGE_GAS_SENSOR,
     CONF_SUMMER_MAX_KWH,
+    CONF_SYSTEM_CAPITAL_COST,
+    CONF_SYSTEM_INSTALL_DATE,
     CONF_WINTER_MIN_KWH,
     CONF_WRITE_MODE,
     DEFAULT_DAILY_KWH_TARGET,
@@ -137,6 +158,28 @@ HOTWATER_KEYS = (
     CONF_HOTWATER_THRESHOLD_PERCENT,
     CONF_HOTWATER_DEPLETION_KWH,
     CONF_HOTWATER_MAX_TEMP_STATE,
+)
+COSTS_KEYS = (
+    CONF_IMPORT_COST_SENSOR,
+    CONF_IMPORT_COST_OFF_PEAK_SENSOR,
+    CONF_IMPORT_COST_PEAK_SENSOR,
+    CONF_EXPORT_EARNINGS_SENSOR,
+    CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
+    CONF_STANDING_CHARGE_GAS_SENSOR,
+    CONF_GAS_COST_SENSOR,
+    CONF_GAS_ENERGY_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
+    CONF_GAS_RATE_SENSOR,
+    CONF_PV_ENERGY_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
+    CONF_GRID_EXPORT_ENERGY_SENSOR,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
+    CONF_EV_ENERGY_SENSOR,
+    CONF_EV_GREEN_ENERGY_SENSOR,
+    CONF_SYSTEM_CAPITAL_COST,
+    CONF_SYSTEM_INSTALL_DATE,
+    CONF_PUBLIC_CHARGING_RATE,
 )
 BEHAVIOUR_KEYS = (
     CONF_WRITE_MODE,
@@ -475,6 +518,50 @@ def hotwater_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
     )
 
 
+def _gbp_selector(*, max_value: float = 100000, step: float = 1) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=0, max=max_value, step=step, mode=NumberSelectorMode.BOX, unit_of_measurement="GBP"
+        )
+    )
+
+
+def costs_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
+    """Costs / money inputs. Everything optional — each money sensor and ledger line is
+    created only when its own sources are configured, so any subset is useful."""
+    monetary = _sensor_selector(device_class="monetary")
+    energy = _sensor_selector(device_class="energy")
+    # Rate entities carry inconsistent device classes across integrations; don't filter.
+    rate = _sensor_selector()
+    fields: dict[Any, Any] = {}
+    for key, selector in (
+        (CONF_IMPORT_COST_SENSOR, monetary),
+        (CONF_IMPORT_COST_OFF_PEAK_SENSOR, monetary),
+        (CONF_IMPORT_COST_PEAK_SENSOR, monetary),
+        (CONF_EXPORT_EARNINGS_SENSOR, monetary),
+        (CONF_STANDING_CHARGE_ELECTRICITY_SENSOR, monetary),
+        (CONF_STANDING_CHARGE_GAS_SENSOR, monetary),
+        (CONF_GAS_COST_SENSOR, monetary),
+        (CONF_GAS_ENERGY_SENSOR, energy),
+        (CONF_IMPORT_RATE_SENSOR, rate),
+        (CONF_EXPORT_RATE_SENSOR, rate),
+        (CONF_GAS_RATE_SENSOR, rate),
+        (CONF_PV_ENERGY_SENSOR, energy),
+        (CONF_GRID_IMPORT_ENERGY_SENSOR, energy),
+        (CONF_GRID_EXPORT_ENERGY_SENSOR, energy),
+        (CONF_BATTERY_DISCHARGE_ENERGY_SENSOR, energy),
+        (CONF_EV_ENERGY_SENSOR, energy),
+        (CONF_EV_GREEN_ENERGY_SENSOR, energy),
+    ):
+        fields[_marker(key, options=options, defaults=defaults)] = selector
+    fields[_marker(CONF_SYSTEM_CAPITAL_COST, options=options, defaults=defaults)] = _gbp_selector()
+    fields[_marker(CONF_SYSTEM_INSTALL_DATE, options=options, defaults=defaults)] = DateSelector()
+    fields[_marker(CONF_PUBLIC_CHARGING_RATE, options=options, defaults=defaults)] = _gbp_selector(
+        max_value=5, step=0.01
+    )
+    return vol.Schema(fields)
+
+
 def behaviour_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
     return vol.Schema(
         {
@@ -608,6 +695,15 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
         sensors = (CONF_GRID_IMPORT_SENSOR, CONF_GRID_EXPORT_SENSOR, CONF_BATTERY_POWER_SENSOR)
         if any(user_input.get(k) for k in sensors):
             self._data.update({k: v for k, v in user_input.items() if v is not None})
+        return await self.async_step_costs()
+
+    async def async_step_costs(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="costs", data_schema=costs_schema({}, options=False)
+            )
+        # Store whatever subset was provided; every field is independent and optional.
+        self._data.update({k: v for k, v in user_input.items() if v is not None})
         return await self.async_step_behaviour()
 
     async def async_step_behaviour(
@@ -674,6 +770,7 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 "ev",
                 "hotwater",
                 "grid",
+                "costs",
                 "behaviour",
             ],
         )
@@ -744,6 +841,13 @@ class EnergyConductorOptionsFlow(OptionsFlow):
                 step_id="grid", data_schema=grid_schema(self._defaults(), options=True)
             )
         return self._save(user_input, GRID_KEYS)
+
+    async def async_step_costs(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is None:
+            return self.async_show_form(
+                step_id="costs", data_schema=costs_schema(self._defaults(), options=True)
+            )
+        return self._save(user_input, COSTS_KEYS)
 
     async def async_step_behaviour(
         self, user_input: dict[str, Any] | None = None
