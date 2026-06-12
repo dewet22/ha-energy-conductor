@@ -126,9 +126,10 @@ async def test_lovelace_resources_dataclass_items_handled() -> None:
     loop must use attribute access for non-dict items.
     """
     items: list = [
-        _LovelaceItem("abc", f"{_STRATEGY_URL}?v=0"),
+        _LovelaceItem("abc", f"{_STRATEGY_URL}?v=0"),  # stale
         _LovelaceItem("def", f"{_LONGTERM_URL}?v={_STRATEGY_VERSION}"),
         _LovelaceItem("ghi", f"{_TAPE_URL}?v={_STRATEGY_VERSION}"),
+        _LovelaceItem("jkl", f"{_LEDGER_URL}?v={_STRATEGY_VERSION}"),
     ]
     resources = _FakeResources(items=items)
     await _async_register_lovelace_resources(_hass_with_resources(resources))
