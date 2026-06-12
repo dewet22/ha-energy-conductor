@@ -2,22 +2,26 @@
 // as a Lovelace resource - no manual install).
 //
 // custom:ec-tape renders a rolling -12h -> +12h timeline with "now" pinned at
-// the centre:
-//   - context bands: off-peak tariff tints (past from the off-peak sensor's
-//     history, upcoming from EC's window sensors), planned EV dispatch windows
-//     (the Octopus planned_dispatches attribute - the committed plan, not
-//     inference), and EC's charge-to-target plan block
+// the centre. Shading means operating regime, events mean schedule + decisions:
+//   - regime tints (full-height): PV charge teal / grid charge blue (SoC climbs
+//     split by off-peak coverage; past from history, future from the modelled
+//     projection) and exporting orange (sustained grid export)
 //   - energy curves: solar actual area to now + forecast line across the whole
 //     window (the gap between them over the past half IS the
-//     performance-vs-forecast story); house load area behind
+//     performance-vs-forecast story); consumption dashed on top
 //   - SoC: history solid (with isolated-spike rejection), projection dashed,
 //     served by EC's own plan model via the overnight-plan sensor attribute
-//   - decision rail: EC guard flips and plan writes, plus export began/stopped
-//     derived from already-fetched history
+//   - schedule rail: off-peak tariff and EV-dispatch windows as start-stop
+//     segments (past from history, upcoming from EC's window sensors and the
+//     Octopus planned_dispatches attribute - the committed plan, not inference)
+//   - decision rail: EC guard flips (hold battery / battery released, paired
+//     holds connected) and plan writes
+//   - stat strip: the strategy passes glance rows; values render bold in
+//     their semantic colour, live from hass.states
 //
 // Config (all entity ids resolved by the strategy from the registry):
 //   { status_entity, soc_entity, plan_entity, decision_entity,
-//     window_start_entity, window_end_entity }
+//     window_start_entity, window_end_entity, glance: [{entity, name, color}] }
 //
 // Each missing feed drops its layer with a legend note; a failed fetch costs a
 // layer, never the card.
@@ -187,6 +191,35 @@
     return out;
   }
 
+  // Classify battery-charging climbs by off-peak coverage: under EC's regime
+  // the grid only ever charges the battery inside the cheap window, so
+  // climb-inside-off-peak = grid charge and the remainder = PV charge.
+  function regimeBands(rising, offPeakBands) {
+    return {
+      grid: intersectBands(rising, offPeakBands),
+      pv: subtractBands(rising, offPeakBands),
+    };
+  }
+
+  // Pair discharge-guard flips into hold intervals: a decision to 0 W opens a
+  // hold, the next non-zero decision releases it. A hold still open at the end
+  // of history has a null end (the release hasn't happened yet).
+  function holdIntervals(changes) {
+    var out = [];
+    var open = null;
+    changes.forEach(function (e) {
+      if (e.to === 0 && !open) {
+        open = { start: e.t, end: null };
+      } else if (e.to !== 0 && open) {
+        open.end = e.t;
+        out.push(open);
+        open = null;
+      }
+    });
+    if (open) out.push(open);
+    return out;
+  }
+
   function forecastCurve(attr, win) {
     if (!Array.isArray(attr)) return [];
     var out = [];
@@ -199,12 +232,25 @@
     return out;
   }
 
+  // Bucket-MEAN downsampling, not stride-picking: averaging each bucket is the
+  // light smoothing pass that takes the shark teeth off the power curves while
+  // keeping the endpoints exact (the NOW reading must be the real reading).
   function downsample(points, maxPoints) {
     if (points.length <= maxPoints) return points;
-    var stride = Math.ceil(points.length / (maxPoints - 1));
-    var out = [];
-    for (var i = 0; i < points.length; i += stride) out.push(points[i]);
-    if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1]);
+    var stride = Math.ceil((points.length - 2) / (maxPoints - 2));
+    var out = [points[0]];
+    for (var i = 1; i < points.length - 1; i += stride) {
+      var sumV = 0;
+      var sumT = 0;
+      var n = 0;
+      for (var j = i; j < Math.min(i + stride, points.length - 1); j++) {
+        sumV += points[j].v;
+        sumT += points[j].t.getTime();
+        n++;
+      }
+      if (n) out.push({ t: new Date(sumT / n), v: sumV / n });
+    }
+    out.push(points[points.length - 1]);
     return out;
   }
 
@@ -222,44 +268,67 @@
 
   // HA Energy colour language: solar orange, grid blue, battery teal.
   // Consumption renders as a plain dashed line in the theme text colour.
+  // Dispatch cyan is deliberately distinct from the grid blue so an IG bonus
+  // slot never reads as plain off-peak.
   var C_SOLAR = "#ff9800";
   var C_GRID = "#488fc2";
   var C_BATTERY = "#009688";
   var C_EVENT = "#534ab7";
+  var C_DISPATCH = "#00acc1";
 
   // Legend entries for the configured layers only - an unconfigured feed has
-  // no colour on the tape, so it earns no legend row.
+  // no colour on the tape, so it earns no legend row. Grouped by function:
+  // shading = operating regime, lines = the curves, events = schedule windows
+  // and EC decisions on the rail.
   function legendItems(sources, config) {
     var s = sources || {};
     var c = config || {};
     var out = [];
-    if (s.solar_power) out.push({ key: "solar", label: "solar", color: C_SOLAR, style: "area" });
-    if (s.solar_forecast || s.solar_forecast_today) {
-      out.push({ key: "forecast", label: "forecast", color: C_SOLAR, style: "dash" });
-    }
-    if (s.home_load) {
-      out.push({ key: "consumption", label: "consumption", color: "currentColor", style: "dash" });
-    }
-    if (c.soc_entity) out.push({ key: "soc", label: "battery SoC", color: C_BATTERY, style: "line" });
-    // Mode ribbon lanes: charging modes derive from SoC (split into PV vs grid
-    // by the off-peak bands); the export lane derives from the export feed.
+    // shading: what the system is doing (full-height background tints)
     if (c.soc_entity) {
-      out.push({ key: "pv_charge", label: "PV charge", color: C_BATTERY, style: "band" });
+      out.push({ key: "pv_charge", group: "shading", label: "PV charge", color: C_BATTERY, style: "band" });
       if (s.off_peak) {
-        out.push({ key: "grid_charge", label: "grid charge", color: C_GRID, style: "band" });
+        out.push({ key: "grid_charge", group: "shading", label: "grid charge", color: C_GRID, style: "band" });
       }
     }
     if (s.grid_export_w) {
-      out.push({ key: "export", label: "exporting", color: C_SOLAR, style: "band" });
+      out.push({ key: "export", group: "shading", label: "exporting", color: C_SOLAR, style: "band" });
     }
-    if (s.off_peak) out.push({ key: "off_peak", label: "off-peak", color: C_GRID, style: "band" });
+    // lines: the curves themselves
+    if (s.solar_power) out.push({ key: "solar", group: "lines", label: "solar", color: C_SOLAR, style: "area" });
+    if (s.solar_forecast || s.solar_forecast_today) {
+      out.push({ key: "forecast", group: "lines", label: "forecast", color: C_SOLAR, style: "dash" });
+    }
+    if (s.home_load) {
+      out.push({ key: "consumption", group: "lines", label: "consumption", color: "currentColor", style: "dash" });
+    }
+    if (c.soc_entity) out.push({ key: "soc", group: "lines", label: "battery SoC", color: C_BATTERY, style: "line" });
+    // events: schedule windows (start-stop segments) and decision diamonds
+    if (s.off_peak) out.push({ key: "off_peak", group: "events", label: "off-peak", color: C_GRID, style: "segment" });
     if (s.dispatching) {
-      out.push({ key: "dispatch", label: "EV dispatch", color: C_GRID, style: "band" });
+      out.push({ key: "dispatch", group: "events", label: "EV dispatch", color: C_DISPATCH, style: "segment" });
     }
     if (c.decision_entity) {
-      out.push({ key: "decisions", label: "decisions", color: C_EVENT, style: "diamond" });
+      out.push({ key: "decisions", group: "events", label: "decisions", color: C_EVENT, style: "diamond" });
     }
     return out;
+  }
+
+  // Stat-strip value formatting. The state string is entity-supplied, so only
+  // clean numerics (formatted + unit-checked) or allowlisted plain words reach
+  // the markup; anything else renders as a dash. GBP gets the pound entity
+  // (ASCII-only source - the static path mangles multibyte UTF-8).
+  function fmtGlanceValue(state, unit) {
+    if (state == null) return "-";
+    var s = String(state).trim();
+    if (/^-?\d+(\.\d+)?$/.test(s)) {
+      var n = parseFloat(s);
+      if (unit === "GBP") return "&#163;" + n.toFixed(2);
+      var v = String(Math.round(n * 100) / 100);
+      if (!unit || !/^[\w%/]{1,10}$/.test(String(unit))) return v;
+      return unit === "%" ? v + "%" : v + " " + unit;
+    }
+    return /^[\w .-]{1,32}$/.test(s) ? s : "-";
   }
 
   // Swatch markup per legend style. Inputs are hardcoded legendItems entries
@@ -278,6 +347,12 @@
       sw =
         '<span style="display:inline-block;width:14px;height:11px;background:' + item.color +
         ';opacity:0.25;vertical-align:middle;"></span>';
+    } else if (item.style === "segment") {
+      // Start-stop segment: end caps joined by a line, like the schedule rail.
+      sw =
+        '<span style="display:inline-block;width:18px;height:9px;border-left:2px solid ' +
+        item.color + ";border-right:2px solid " + item.color + ";background:linear-gradient(" +
+        item.color + "," + item.color + ') center/100% 3px no-repeat;vertical-align:middle;"></span>';
     } else if (item.style === "diamond") {
       sw =
         '<span style="display:inline-block;width:8px;height:8px;background:' + item.color +
@@ -294,9 +369,10 @@
   // ---- rendering ----------------------------------------------------------
 
   var W = 960;
-  var H = 290;
+  var H = 292;
   var AX = 218; // power/area baseline
-  var RAIL = 238; // event diamond rail
+  var SCHED = 242; // schedule rail (off-peak / dispatch segments)
+  var RAIL = 258; // event diamond rail
   var SOC_TOP = 26;
   var EXPORT_THRESHOLD_W = 50;
   var EXPORT_DEBOUNCE_MS = 10 * 60 * 1000;
@@ -399,6 +475,7 @@
             sources.solar_power,
             sources.home_load,
             sources.off_peak,
+            sources.dispatching,
             sources.grid_export_w,
           ].forEach(function (id) {
             if (id) ids.push(id);
@@ -467,7 +544,7 @@
           var notes = [];
           var svg = "";
 
-          // --- context bands: off-peak (past + upcoming) -------------------
+          // --- schedule data: off-peak bands (past + upcoming) --------------
           var offPeakSeries = this._series(sources.off_peak);
           var bands = bandsFromBinary(offPeakSeries, {
             start: win.start,
@@ -483,32 +560,66 @@
               bands.push({ start: bStart < win.now ? win.now : bStart, end: bEnd });
             }
           }
-          bands.forEach(function (b) {
-            var x0 = timeToX(b.start, win, W);
-            var x1 = timeToX(b.end, win, W);
-            svg +=
-              '<rect x="' + x0.toFixed(1) + '" y="14" width="' + (x1 - x0).toFixed(1) +
-              '" height="' + (AX - 14) + '" fill="' + C_GRID + '" opacity="0.10"/>';
-          });
           if (!sources.off_peak) notes.push("off-peak");
 
-          // --- dispatch windows (the committed Octopus plan) ----------------
+          // --- schedule data: EV dispatch (past history + committed plan) ---
           var dispatching = this._state(sources.dispatching);
+          var dispatchBands = bandsFromBinary(this._series(sources.dispatching), {
+            start: win.start,
+            end: win.now,
+          });
           if (dispatching) {
             parseDispatches(dispatching.attributes.planned_dispatches).forEach(function (d) {
-              if (d.end < win.start || d.start > win.end) return;
-              var x0 = timeToX(d.start, win, W);
-              var x1 = timeToX(d.end, win, W);
-              svg +=
-                '<rect x="' + x0.toFixed(1) + '" y="14" width="' + (x1 - x0).toFixed(1) +
-                '" height="' + (AX - 14) + '" fill="' + C_GRID + '" opacity="0.25"/>';
+              if (d.end < win.now || d.start > win.end) return;
+              dispatchBands.push({ start: d.start < win.now ? win.now : d.start, end: d.end });
             });
           } else if (sources.dispatching) {
             notes.push("dispatch");
           }
 
-          // --- EC plan block ------------------------------------------------
+          // --- SoC data (needed before the regime tints draw) ----------------
           var plan = this._state(c.plan_entity);
+          var socClean = rejectSocSpikes(this._numSeries(c.soc_entity), SOC_SPIKE_PTS);
+          var socPts = downsample(socClean, 300);
+          var projection = plan ? projectionPoints(plan.attributes.soc_projection) : [];
+
+          // --- regime shading: what the system is doing ----------------------
+          // Past from observed SoC climbs, future from the modelled projection;
+          // off-peak coverage splits grid charge from PV charge in both halves.
+          var drawRegime = function (regime, color) {
+            regime.forEach(function (b) {
+              if (b.end < win.start || b.start > win.end) return;
+              var x0 = timeToX(b.start < win.start ? win.start : b.start, win, W);
+              var x1 = timeToX(b.end > win.end ? win.end : b.end, win, W);
+              svg +=
+                '<rect x="' + x0.toFixed(1) + '" y="14" width="' + (x1 - x0).toFixed(1) +
+                '" height="' + (AX - 14) + '" fill="' + color + '" opacity="0.10"/>';
+            });
+          };
+          var socRising = risingIntervals(socClean, {
+            gapMs: 10 * 60 * 1000,
+            minMs: 15 * 60 * 1000,
+            minRise: 2,
+          });
+          // The projection is coarser-grained than history, so the gap/run
+          // thresholds widen accordingly.
+          var projRising = risingIntervals(projection, {
+            gapMs: 45 * 60 * 1000,
+            minMs: 30 * 60 * 1000,
+            minRise: 2,
+          });
+          var pastRegime = regimeBands(socRising, bands);
+          var futureRegime = regimeBands(projRising, bands);
+          drawRegime(pastRegime.pv.concat(futureRegime.pv), C_BATTERY);
+          drawRegime(pastRegime.grid.concat(futureRegime.grid), C_GRID);
+          var exportBands = seriesAbove(
+            this._numSeries(sources.grid_export_w),
+            EXPORT_THRESHOLD_W,
+            EXPORT_DEBOUNCE_MS
+          );
+          drawRegime(exportBands, C_SOLAR);
+
+          // --- EC plan block ------------------------------------------------
           if (plan && ws && we) {
             var pStart = new Date(Date.parse(ws.state));
             var pEnd = new Date(Date.parse(we.state));
@@ -557,7 +668,7 @@
             svg += '<path d="' + areaPath(solarKw, win, yPow) + '" fill="' + C_SOLAR + '" opacity="0.25"/>';
             svg +=
               '<path d="' + linePath(solarKw, win, yPow) +
-              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="2"/>';
+              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="1.5"/>';
           } else if (sources.solar_power) {
             notes.push("solar");
           }
@@ -566,7 +677,7 @@
           if (loadKw.length) {
             svg +=
               '<path d="' + linePath(loadKw, win, yPow) +
-              '" fill="none" stroke="currentColor" stroke-width="1.75" ' +
+              '" fill="none" stroke="currentColor" stroke-width="1.25" ' +
               'stroke-dasharray="6 3" opacity="0.8"/>';
           } else if (sources.home_load) {
             notes.push("load");
@@ -577,73 +688,68 @@
             });
             svg +=
               '<path d="' + linePath(fPts, win, yPow) +
-              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="1.5" stroke-dasharray="4 3"/>';
+              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="1.25" stroke-dasharray="4 3"/>';
           } else if (sources.solar_forecast || sources.solar_forecast_today) {
             notes.push("forecast");
           }
 
           // --- SoC: history + projection -------------------------------------
-          var socClean = rejectSocSpikes(this._numSeries(c.soc_entity), SOC_SPIKE_PTS);
-          var socPts = downsample(socClean, 300);
           if (socPts.length) {
             svg +=
               '<path d="' + linePath(socPts, win, socY) +
-              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="2.5"/>';
+              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="2"/>';
           } else {
             notes.push("SoC");
           }
-          var projection = plan ? projectionPoints(plan.attributes.soc_projection) : [];
           if (projection.length) {
             svg +=
               '<path d="' + linePath(projection, win, socY) +
-              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="2" stroke-dasharray="5 4"/>';
+              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
           } else {
             notes.push("projection");
           }
 
-          // --- mode ribbon: two slim lanes above the axis --------------------
-          // Lane 1 (battery): what is charging it - teal = PV, blue = grid.
-          // Lane 2 (export): orange while power flows out. Replaces the old
-          // export began/stopped diamonds, which fired continually on any
-          // sunny day and drowned the decision rail.
-          var laneY1 = AX - 13;
-          var laneY2 = AX - 6;
-          var drawLane = function (bands, y, color) {
-            bands.forEach(function (b) {
+          // --- schedule rail: start-stop segments below the axis --------------
+          // Off-peak (minus dispatch overlap, so an IG bonus slot reads as
+          // dispatch cyan, not plain off-peak blue) and EV dispatch windows.
+          var drawSegments = function (segBands, color) {
+            segBands.forEach(function (b) {
               if (b.end < win.start || b.start > win.end) return;
               var x0 = timeToX(b.start < win.start ? win.start : b.start, win, W);
               var x1 = timeToX(b.end > win.end ? win.end : b.end, win, W);
               svg +=
-                '<rect x="' + x0.toFixed(1) + '" y="' + y + '" width="' +
-                (x1 - x0).toFixed(1) + '" height="5" rx="1" fill="' + color +
-                '" opacity="0.8"/>';
+                '<line x1="' + x0.toFixed(1) + '" y1="' + SCHED + '" x2="' + x1.toFixed(1) +
+                '" y2="' + SCHED + '" stroke="' + color + '" stroke-width="3" opacity="0.85"/>';
+              [x0, x1].forEach(function (x) {
+                svg +=
+                  '<line x1="' + x.toFixed(1) + '" y1="' + (SCHED - 4) + '" x2="' + x.toFixed(1) +
+                  '" y2="' + (SCHED + 4) + '" stroke="' + color + '" stroke-width="1.5" opacity="0.85"/>';
+              });
             });
           };
-          var socRising = risingIntervals(socClean, {
-            gapMs: 10 * 60 * 1000,
-            minMs: 15 * 60 * 1000,
-            minRise: 2,
-          });
-          // Off-peak coverage classifies the charge source: under EC's regime
-          // the grid only ever charges the battery inside the cheap window.
-          drawLane(intersectBands(socRising, bands), laneY1, C_GRID);
-          drawLane(subtractBands(socRising, bands), laneY1, C_BATTERY);
-          drawLane(
-            seriesAbove(this._numSeries(sources.grid_export_w), EXPORT_THRESHOLD_W, EXPORT_DEBOUNCE_MS),
-            laneY2,
-            C_SOLAR
-          );
+          drawSegments(subtractBands(bands, dispatchBands), C_GRID);
+          drawSegments(dispatchBands, C_DISPATCH);
 
           // --- decision rail --------------------------------------------------
           var events = [];
-          valueChanges(this._numSeries(c.decision_entity)).forEach(function (e) {
-            events.push({ t: e.t, label: e.to === 0 ? "guard 0 W" : "guard max", color: C_EVENT });
+          var decisionChanges = valueChanges(this._numSeries(c.decision_entity));
+          decisionChanges.forEach(function (e) {
+            events.push({ t: e.t, label: e.to === 0 ? "hold battery" : "battery released", color: C_EVENT });
           });
           valueChanges(this._numSeries(c.plan_entity)).forEach(function (e) {
             events.push({ t: e.t, label: "plan " + Math.round(e.to) + "%", color: C_EVENT });
           });
           events.sort(function (a, b) {
             return a.t - b.t;
+          });
+          // A hold and its release are one story: connect the paired diamonds.
+          // An unreleased hold runs to NOW.
+          holdIntervals(decisionChanges).forEach(function (hold) {
+            var x0 = timeToX(hold.start, win, W);
+            var x1 = timeToX(hold.end || win.now, win, W);
+            svg +=
+              '<line x1="' + x0.toFixed(1) + '" y1="' + RAIL + '" x2="' + x1.toFixed(1) +
+              '" y2="' + RAIL + '" stroke="' + C_EVENT + '" stroke-width="1.5" opacity="0.6"/>';
           });
           var lastLabelX = -Infinity;
           events.forEach(function (e, i) {
@@ -726,18 +832,62 @@
               '<div style="opacity:0.6;font-size:0.8em;">No data: ' + notes.join(", ") + "</div>";
           }
 
+          // Stat strip: bold values in their semantic colour, live from
+          // hass.states. Names/colours come from the strategy (hardcoded
+          // labels + palette) but are allowlisted anyway; values go through
+          // fmtGlanceValue. The status row carries no colour - it goes green
+          // on "ok", red on anything else.
+          var glanceHtml = "";
+          if (Array.isArray(c.glance)) {
+            var cells = "";
+            for (var gi = 0; gi < c.glance.length; gi++) {
+              var g = c.glance[gi] || {};
+              var gState = this._state(g.entity);
+              var gText = fmtGlanceValue(
+                gState ? gState.state : null,
+                gState ? gState.attributes.unit_of_measurement : null
+              );
+              var gName = /^[\w .-]{1,32}$/.test(String(g.name || "")) ? g.name : "";
+              var gColor = /^#[0-9a-f]{3,8}$/i.test(String(g.color || ""))
+                ? g.color
+                : gText === "ok" ? "#0f6e56" : "#c62828";
+              cells +=
+                '<div style="text-align:center;min-width:90px;">' +
+                '<div style="font-size:0.82em;opacity:0.6;">' + gName + "</div>" +
+                '<div style="font-size:1.4em;font-weight:600;color:' + gColor + ';">' +
+                gText + "</div></div>";
+            }
+            if (cells) {
+              glanceHtml =
+                '<div style="display:flex;justify-content:space-around;flex-wrap:wrap;' +
+                'gap:6px 16px;padding:2px 0 10px;">' + cells + "</div>";
+            }
+          }
+
+          // Legend: one centred row per function group.
           var legendHtml = "";
           var legend = legendItems(sources, c);
           if (legend.length) {
+            var groupRows = "";
+            ["shading", "lines", "events"].forEach(function (gname) {
+              var items = legend.filter(function (i) {
+                return i.group === gname;
+              });
+              if (!items.length) return;
+              groupRows +=
+                '<div style="display:flex;justify-content:center;align-items:center;' +
+                'gap:4px 14px;flex-wrap:wrap;">' +
+                '<span style="opacity:0.45;min-width:56px;text-align:right;">' + gname +
+                "</span>" + items.map(_swatchHtml).join("") + "</div>";
+            });
             legendHtml =
-              '<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:0.78em;' +
-              'opacity:0.75;padding:2px 0 4px;">' +
-              legend.map(_swatchHtml).join("") +
-              "</div>";
+              '<div style="font-size:0.78em;opacity:0.8;padding:2px 0 4px;' +
+              'display:flex;flex-direction:column;gap:3px;">' + groupRows + "</div>";
           }
 
           this.innerHTML =
             '<ha-card style="padding:12px 16px 8px;">' +
+            glanceHtml +
             '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block;">' +
             svg +
             "</svg>" +
@@ -765,6 +915,9 @@
     risingIntervals: risingIntervals,
     intersectBands: intersectBands,
     subtractBands: subtractBands,
+    regimeBands: regimeBands,
+    holdIntervals: holdIntervals,
+    fmtGlanceValue: fmtGlanceValue,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = API;

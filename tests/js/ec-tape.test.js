@@ -159,6 +159,23 @@ describe("downsample", () => {
     const pts = [{ t: NOW, v: 1 }];
     expect(T.downsample(pts, 100)).toEqual(pts);
   });
+
+  test("buckets are averaged, attenuating single-sample teeth", () => {
+    // 100 flat-zero points with one 100 W spike: stride-picking either drops
+    // it or keeps it at full height; bucket-averaging spreads it thin.
+    const pts = [];
+    for (let i = 0; i < 100; i++) pts.push({ t: at(-12 + i * 0.1), v: i === 50 ? 100 : 0 });
+    const out = T.downsample(pts, 10);
+    expect(Math.max(...out.map((p) => p.v))).toBeGreaterThan(0);
+    expect(Math.max(...out.map((p) => p.v))).toBeLessThan(50);
+  });
+
+  test("a monotone ramp stays monotone through averaging", () => {
+    const pts = [];
+    for (let i = 0; i < 90; i++) pts.push({ t: at(-12 + i * 0.1), v: i });
+    const out = T.downsample(pts, 9);
+    for (let i = 1; i < out.length; i++) expect(out[i].v).toBeGreaterThanOrEqual(out[i - 1].v);
+  });
 });
 
 describe("projectionPoints", () => {
@@ -199,28 +216,38 @@ describe("legendItems", () => {
   };
   const FULL_CONFIG = { soc_entity: "sensor.soc", decision_entity: "sensor.dec" };
 
-  test("full config yields every legend entry once", () => {
+  test("full config yields every legend entry once, shading first then lines then events", () => {
     const keys = T.legendItems(FULL_SOURCES, FULL_CONFIG).map((i) => i.key);
     expect(keys).toEqual([
-      "solar", "forecast", "consumption", "soc",
       "pv_charge", "grid_charge", "export",
+      "solar", "forecast", "consumption", "soc",
       "off_peak", "dispatch", "decisions",
     ]);
   });
 
-  test("charging-mode entries need the SoC entity; export needs the export feed", () => {
-    // SoC configured but no export feed: charge lanes only.
+  test("every entry carries its display group", () => {
+    const byGroup = {};
+    T.legendItems(FULL_SOURCES, FULL_CONFIG).forEach((i) => {
+      (byGroup[i.group] = byGroup[i.group] || []).push(i.key);
+    });
+    expect(byGroup.shading).toEqual(["pv_charge", "grid_charge", "export"]);
+    expect(byGroup.lines).toEqual(["solar", "forecast", "consumption", "soc"]);
+    expect(byGroup.events).toEqual(["off_peak", "dispatch", "decisions"]);
+  });
+
+  test("charging-regime entries need the SoC entity; export needs the export feed", () => {
+    // SoC configured but no export feed: charge regimes only.
     const charge = T.legendItems({ off_peak: "binary_sensor.op" }, { soc_entity: "sensor.soc" });
     expect(charge.map((i) => i.key)).toContain("pv_charge");
     expect(charge.map((i) => i.key)).toContain("grid_charge");
     expect(charge.map((i) => i.key)).not.toContain("export");
-    // Export feed but no SoC: export lane only.
+    // Export feed but no SoC: export regime only.
     const exp = T.legendItems({ grid_export_w: "sensor.exp" }, {});
     expect(exp.map((i) => i.key)).toContain("export");
     expect(exp.map((i) => i.key)).not.toContain("pv_charge");
   });
 
-  test("without an off-peak feed the charge lane cannot split modes - single charging entry", () => {
+  test("without an off-peak feed the charge regime cannot split modes - single charging entry", () => {
     const items = T.legendItems({}, { soc_entity: "sensor.soc" });
     expect(items.map((i) => i.key)).toContain("pv_charge");
     expect(items.map((i) => i.key)).not.toContain("grid_charge");
@@ -240,16 +267,110 @@ describe("legendItems", () => {
     ).toEqual(["forecast"]);
   });
 
+  test("schedule entries render as start-stop segments, not background bands", () => {
+    const items = T.legendItems(FULL_SOURCES, FULL_CONFIG);
+    const style = (k) => items.find((i) => i.key === k).style;
+    expect(style("off_peak")).toBe("segment");
+    expect(style("dispatch")).toBe("segment");
+    expect(style("pv_charge")).toBe("band");
+  });
+
   test("every item carries a label and a swatch style", () => {
     T.legendItems(FULL_SOURCES, FULL_CONFIG).forEach((i) => {
       expect(typeof i.label).toBe("string");
-      expect(["area", "line", "dash", "band", "diamond"]).toContain(i.style);
+      expect(["area", "line", "dash", "band", "diamond", "segment"]).toContain(i.style);
     });
   });
 
   test("empty inputs give an empty legend", () => {
     expect(T.legendItems({}, {})).toEqual([]);
     expect(T.legendItems(null, null)).toEqual([]);
+  });
+});
+
+describe("regimeBands", () => {
+  const b = (s, e) => ({ start: at(s), end: at(e) });
+
+  test("a climb spanning the off-peak boundary splits into grid inside, PV outside", () => {
+    const out = T.regimeBands([b(-4, 0)], [b(-6, -2)]);
+    expect(out.grid.length).toBe(1);
+    expect(out.grid[0].start.getTime()).toBe(at(-4).getTime());
+    expect(out.grid[0].end.getTime()).toBe(at(-2).getTime());
+    expect(out.pv.length).toBe(1);
+    expect(out.pv[0].start.getTime()).toBe(at(-2).getTime());
+    expect(out.pv[0].end.getTime()).toBe(at(0).getTime());
+  });
+
+  test("no off-peak coverage means every climb is PV charge", () => {
+    const out = T.regimeBands([b(-3, -1)], []);
+    expect(out.grid).toEqual([]);
+    expect(out.pv.length).toBe(1);
+  });
+
+  test("no climbs means no regimes", () => {
+    const out = T.regimeBands([], [b(-6, -2)]);
+    expect(out.grid).toEqual([]);
+    expect(out.pv).toEqual([]);
+  });
+});
+
+describe("fmtGlanceValue", () => {
+  test("numeric states carry their unit (no space before %)", () => {
+    expect(T.fmtGlanceValue("78.0", "%")).toBe("78%");
+    expect(T.fmtGlanceValue("13.1", "kWh")).toBe("13.1 kWh");
+    expect(T.fmtGlanceValue("26.987", "kWh")).toBe("26.99 kWh");
+  });
+
+  test("GBP renders as pounds", () => {
+    expect(T.fmtGlanceValue("7.081", "GBP")).toBe("&#163;7.08");
+  });
+
+  test("plain word states pass the allowlist", () => {
+    expect(T.fmtGlanceValue("ok", null)).toBe("ok");
+  });
+
+  test("markup-ish, missing, or oversized states render as a dash", () => {
+    expect(T.fmtGlanceValue("<img src=x>", null)).toBe("-");
+    expect(T.fmtGlanceValue(null, "%")).toBe("-");
+    expect(T.fmtGlanceValue("x".repeat(40), null)).toBe("-");
+  });
+
+  test("a hostile unit string is dropped, not rendered", () => {
+    expect(T.fmtGlanceValue("5", '"><script>')).toBe("5");
+  });
+});
+
+describe("holdIntervals", () => {
+  test("a 0 W decision opens a hold; the next non-zero decision closes it", () => {
+    const changes = [
+      { t: at(-5), from: 6000, to: 0 },
+      { t: at(-2), from: 0, to: 6000 },
+    ];
+    const out = T.holdIntervals(changes);
+    expect(out.length).toBe(1);
+    expect(out[0].start.getTime()).toBe(at(-5).getTime());
+    expect(out[0].end.getTime()).toBe(at(-2).getTime());
+  });
+
+  test("a hold still open at the end has a null end", () => {
+    const out = T.holdIntervals([{ t: at(-1), from: 6000, to: 0 }]);
+    expect(out.length).toBe(1);
+    expect(out[0].end).toBe(null);
+  });
+
+  test("a leading release without a hold is ignored", () => {
+    const changes = [
+      { t: at(-6), from: 0, to: 6000 },
+      { t: at(-4), from: 6000, to: 0 },
+      { t: at(-3), from: 0, to: 6000 },
+    ];
+    const out = T.holdIntervals(changes);
+    expect(out.length).toBe(1);
+    expect(out[0].start.getTime()).toBe(at(-4).getTime());
+  });
+
+  test("empty input gives no holds", () => {
+    expect(T.holdIntervals([])).toEqual([]);
   });
 });
 
