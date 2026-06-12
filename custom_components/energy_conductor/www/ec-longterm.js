@@ -267,6 +267,10 @@
   }
 
   var LOOKBACK_DAYS = 366;
+  // Statistics move hourly; re-fetch on that cadence so an always-on kiosk
+  // page rolls over at midnight instead of freezing at page-load.
+  var LT_REFRESH_MS = 60 * 60 * 1000;
+  var LT_RETRY_MS = 30 * 1000;
 
   if (typeof customElements !== "undefined" && !customElements.get("ec-longterm")) {
     customElements.define(
@@ -280,6 +284,7 @@
           this._selected = null;
           this._daily = null; // { entity_id: [rows] } once fetched
           this._fetching = false;
+          this._fetchedAt = 0;
         }
 
         getCardSize() {
@@ -288,8 +293,11 @@
 
         set hass(hass) {
           this._hass = hass;
-          // Statistics move hourly; one fetch per page load is plenty.
-          if (!this._daily && !this._fetching) this._fetchDaily();
+          if (!this._fetching && Date.now() - this._fetchedAt > LT_REFRESH_MS) {
+            this._fetchedAt = Date.now();
+            if (!this._daily) this._renderSkeleton();
+            this._fetchDaily();
+          }
         }
 
         _flows() {
@@ -323,10 +331,16 @@
               self._daily = result || {};
               self._fetching = false;
               self._render();
+              // A refresh re-renders the deep view with a fresh (blank)
+              // density canvas - repaint it for the selected flow.
+              if (self._selected) self._fetchHourly();
             })
             .catch(function () {
               self._fetching = false;
-              self._renderNote("Could not load long-term statistics. Try reloading the page.");
+              self._fetchedAt = Date.now() - (LT_REFRESH_MS - LT_RETRY_MS);
+              self._renderNote(
+                "Could not load long-term statistics (recorder may be starting up) - retrying shortly."
+              );
             });
         }
 
@@ -371,6 +385,34 @@
         _renderNote(text) {
           this.innerHTML =
             '<ha-card><div style="padding:16px;opacity:0.7;">' + text + "</div></ha-card>";
+        }
+
+        // Instant frame while the recorder aggregates a year of statistics
+        // server-side - a blank card for several seconds reads as broken.
+        _renderSkeleton() {
+          var flows = this._flows();
+          var chips = "";
+          var labels = flows.length
+            ? flows.map(function (f) {
+                return f.label;
+              })
+            : ["", "", "", ""];
+          labels.forEach(function (label) {
+            chips +=
+              '<div style="border:1px solid var(--divider-color, #444);border-radius:8px;padding:8px 10px;">' +
+              '<div style="font-size:0.85em;padding-bottom:6px;' +
+              (label ? '">' + label : 'opacity:0.4;">loading') +
+              "</div>" +
+              '<div style="height:64px;border-radius:4px;background:var(--divider-color, #444);' +
+              'animation:ec-lt-pulse 1.2s ease-in-out infinite;"></div></div>';
+          });
+          this.innerHTML =
+            "<style>@keyframes ec-lt-pulse{0%,100%{opacity:0.15;}50%{opacity:0.35;}}</style>" +
+            '<ha-card style="padding:12px 16px 16px;">' +
+            '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Long-term energy</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;">' +
+            chips +
+            "</div></ha-card>";
         }
 
         _render() {
