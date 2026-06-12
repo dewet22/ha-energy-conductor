@@ -41,18 +41,20 @@ async function regSet(hass) {
   return new Set(ents.filter((e) => e.platform === "energy_conductor").map((e) => e.entity_id));
 }
 
-const view = (dash) => dash.views[0];
+const view = (dash) => dash.views.find((v) => v.path === "overview") || dash.views[0];
 const cardTypes = (dash) => view(dash).cards.map((c) => c.type);
 const cardByType = (dash, t) => view(dash).cards.find((c) => c.type === t);
 
 // --- tests ------------------------------------------------------------------
 
 describe("dashboard structure", () => {
-  it("builds a single Overview view with the five cards for a full install", async () => {
+  it("builds Mission entry + Tonight views for a full install", async () => {
     const dash = await EC.generateDashboard({}, makeHass({}));
     expect(dash.title).toBe("Energy Conductor");
-    expect(dash.views.length).toBe(1);
-    expect(view(dash).title).toBe("Overview");
+    expect(dash.views.length).toBe(2);
+    expect(dash.views[0].title).toBe("Mission");
+    expect(dash.views[0].path).toBe("mission");
+    expect(view(dash).title).toBe("Tonight");
     expect(cardTypes(dash)).toEqual([
       "entities",
       "markdown",
@@ -253,7 +255,8 @@ describe("long-term view", () => {
 
   it("emits the Long-term view when the status sensor carries flow sources", async () => {
     const dash = await EC.generateDashboard({}, makeHass({ moneySources: SOURCES }));
-    expect(dash.views.length).toBe(2);
+    expect(dash.views.length).toBe(3);
+    expect(dash.views.map((v) => v.path)).toEqual(["mission", "long-term", "overview"]);
     const lt = dash.views[1];
     expect(lt.path).toBe("long-term");
     expect(lt.panel).toBe(true);
@@ -266,7 +269,8 @@ describe("long-term view", () => {
 
   it("omits the view without money sources", async () => {
     const dash = await EC.generateDashboard({}, makeHass({}));
-    expect(dash.views.length).toBe(1);
+    expect(dash.views.length).toBe(2);
+    expect(dash.views.some((v) => v.path === "long-term")).toBe(false);
   });
 
   it("omits the view when sources carry no flow keys", async () => {
@@ -274,7 +278,8 @@ describe("long-term view", () => {
       {},
       makeHass({ moneySources: { import_rate: "sensor.rate" } })
     );
-    expect(dash.views.length).toBe(1);
+    expect(dash.views.length).toBe(2);
+    expect(dash.views.some((v) => v.path === "long-term")).toBe(false);
   });
 
   it("uses the registry's current status id under an area prefix", async () => {
@@ -283,5 +288,49 @@ describe("long-term view", () => {
     expect(dash.views[1].cards[0].status_entity).toBe(
       entityId("sensor", "loft_", "blithe", "status")
     );
+  });
+});
+
+describe("mission view", () => {
+  it("is the entry view: panel with glance + tape wired to registry ids", async () => {
+    const hass = makeHass({ areaPrefix: "loft_" });
+    const dash = await EC.generateDashboard({}, hass);
+    const mission = dash.views[0];
+    expect(mission.path).toBe("mission");
+    expect(mission.panel).toBe(true);
+    expect(mission.cards.length).toBe(1);
+    const stack = mission.cards[0];
+    expect(stack.type).toBe("vertical-stack");
+    const types = stack.cards.map((c) => c.type);
+    expect(types).toContain("glance");
+    expect(types).toContain("custom:ec-tape");
+    const tape = stack.cards.find((c) => c.type === "custom:ec-tape");
+    const id = (key) => entityId("sensor", "loft_", "blithe", key);
+    expect(tape.status_entity).toBe(id("status"));
+    expect(tape.soc_entity).toBe(id("battery-soc"));
+    expect(tape.plan_entity).toBe(id("overnight-plan"));
+    expect(tape.decision_entity).toBe(id("discharge-decision"));
+    expect(tape.window_start_entity).toBe(id("off-peak-window-start"));
+    expect(tape.window_end_entity).toBe(id("cheap-window-end"));
+  });
+
+  it("glance includes the billing-grade cost entity when configured and valid", async () => {
+    const hass = makeHass({ moneySources: { import_cost: "sensor.octopus_cost", pv: "sensor.pv" } });
+    const dash = await EC.generateDashboard({}, hass);
+    const stack = dash.views[0].cards[0];
+    const glance = stack.cards.find((c) => c.type === "glance");
+    const ids = glance.entities.map((e) => e.entity);
+    expect(ids).toContain("sensor.octopus_cost");
+  });
+
+  it("never embeds an invalid external entity id (injection chokepoint)", async () => {
+    const hass = makeHass({
+      moneySources: { import_cost: "sensor.bad'}{{ 1 }}", pv: "sensor.pv" },
+    });
+    const dash = await EC.generateDashboard({}, hass);
+    const stack = dash.views[0].cards[0];
+    const glance = stack.cards.find((c) => c.type === "glance");
+    const ids = glance.entities.map((e) => e.entity);
+    expect(ids.some((i) => i.includes("{{"))).toBe(false);
   });
 });

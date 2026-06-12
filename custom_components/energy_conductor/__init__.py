@@ -27,10 +27,12 @@ PLATFORMS = ["binary_sensor", "sensor"]
 # cache nor the Lovelace resource entry serves a stale copy.
 _STRATEGY_FILENAME = "ec-strategy.js"
 _LONGTERM_FILENAME = "ec-longterm.js"
+_TAPE_FILENAME = "ec-tape.js"
 _STRATEGY_URL = f"/{DOMAIN}/{_STRATEGY_FILENAME}"
 _LONGTERM_URL = f"/{DOMAIN}/{_LONGTERM_FILENAME}"
-_MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL)
-_STRATEGY_VERSION = "7"
+_TAPE_URL = f"/{DOMAIN}/{_TAPE_FILENAME}"
+_MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL)
+_STRATEGY_VERSION = "8"
 
 
 async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
