@@ -51,6 +51,7 @@ from .const import (
     CONF_EXPORT_RATE_SENSOR,
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_GAS_COST_SENSOR,
     CONF_GAS_ENERGY_SENSOR,
@@ -81,6 +82,7 @@ from .const import (
     CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
+    CONF_SOLAR_POWER_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
     CONF_STANDING_CHARGE_GAS_SENSOR,
@@ -130,8 +132,10 @@ TARIFF_KEYS = (CONF_OFF_PEAK_SENSOR, CONF_DISPATCHING_SENSOR, CONF_OVERNIGHT_WIN
 SOLAR_KEYS = (
     CONF_FORECAST_SOURCE,
     CONF_FORECAST_SOLCAST_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_FORECAST_DAILY_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
+    CONF_SOLAR_POWER_SENSOR,
     CONF_WINTER_MIN_KWH,
     CONF_SUMMER_MAX_KWH,
     CONF_SOUTHERN_HEMISPHERE,
@@ -427,6 +431,12 @@ def forecast_schema(source: str, defaults: dict[str, Any], *, options: bool) -> 
         fields[
             _marker(CONF_FORECAST_SOLCAST_SENSOR, options=options, defaults=defaults, required=True)
         ] = _sensor_selector()
+        fields[_marker(CONF_FORECAST_SOLCAST_TODAY_SENSOR, options=options, defaults=defaults)] = (
+            _sensor_selector()
+        )
+        fields[_marker(CONF_SOLAR_POWER_SENSOR, options=options, defaults=defaults)] = (
+            _sensor_selector(device_class="power")
+        )
     elif source == FORECAST_SOURCE_DAILY:
         fields[
             _marker(CONF_FORECAST_DAILY_SENSOR, options=options, defaults=defaults, required=True)

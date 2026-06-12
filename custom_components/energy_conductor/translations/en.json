@@ -33,9 +33,11 @@
         "title": "Solar forecast — details",
         "description": "Forecast sensor and seasonal-fallback parameters.",
         "data": {
-          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor for overnight planning)",
+          "forecast_solcast_sensor": "Solcast forecast sensor — tomorrow (used for overnight planning)",
+          "forecast_solcast_today_sensor": "Solcast forecast sensor — today (optional; stitched with tomorrow on the mission tape)",
           "forecast_daily_sensor": "Daily-total kWh sensor",
           "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
+          "solar_power_sensor": "Solar power sensor — instantaneous W (optional; shown on the mission tape)",
           "winter_min_kwh": "Winter minimum fallback (kWh)",
           "summer_max_kwh": "Summer maximum fallback (kWh)",
           "southern_hemisphere": "Southern hemisphere"
@@ -170,9 +172,11 @@
       "solar_details": {
         "title": "Solar forecast — details",
         "data": {
-          "forecast_solcast_sensor": "Solcast forecast sensor (use the 'Forecast Tomorrow' sensor for overnight planning)",
+          "forecast_solcast_sensor": "Solcast forecast sensor — tomorrow (used for overnight planning)",
+          "forecast_solcast_today_sensor": "Solcast forecast sensor — today (optional; stitched with tomorrow on the mission tape)",
           "forecast_daily_sensor": "Daily-total kWh sensor",
           "solar_generation_sensor": "Actual generation sensor (optional; enables stats-based fallback)",
+          "solar_power_sensor": "Solar power sensor — instantaneous W (optional; shown on the mission tape)",
           "winter_min_kwh": "Winter min daily generation (kWh) — seasonal fallback lower bound",
           "summer_max_kwh": "Summer max daily generation (kWh) — also the Solcast plausibility ceiling",
           "southern_hemisphere": "Southern hemisphere"

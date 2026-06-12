@@ -34,6 +34,7 @@ from .const import (
     CONF_EXPORT_EARNINGS_SENSOR,
     CONF_EXPORT_RATE_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_GAS_COST_SENSOR,
     CONF_GAS_ENERGY_SENSOR,
@@ -55,7 +56,7 @@ from .const import (
     CONF_PUBLIC_CHARGING_RATE,
     CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
-    CONF_SOLAR_GENERATION_SENSOR,
+    CONF_SOLAR_POWER_SENSOR,
     CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
     CONF_STANDING_CHARGE_GAS_SENSOR,
     CONF_SYSTEM_CAPITAL_COST,
@@ -173,8 +174,9 @@ _MONEY_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
 # Feeds for the mission tape, exposed (resolved) on the status sensor alongside
 # money_sources. The off-peak sensor is required config, so the map always exists.
 _TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
-    ("solar_power", CONF_SOLAR_GENERATION_SENSOR),
+    ("solar_power", CONF_SOLAR_POWER_SENSOR),
     ("solar_forecast", CONF_FORECAST_SOLCAST_SENSOR),
+    ("solar_forecast_today", CONF_FORECAST_SOLCAST_TODAY_SENSOR),
     ("home_load", CONF_HOME_LOAD_SENSOR),
     ("off_peak", CONF_OFF_PEAK_SENSOR),
     ("dispatching", CONF_DISPATCHING_SENSOR),

@@ -393,14 +393,13 @@
           // --- energy curves -----------------------------------------------
           var loadPts = downsample(this._numSeries(sources.home_load), 300);
           var solarPts = downsample(this._numSeries(sources.solar_power), 300);
-          var forecastEntity = this._state(sources.solar_forecast);
-          var forecastPts = forecastEntity
-            ? forecastCurve(
-                forecastEntity.attributes.detailedForecast ||
-                  forecastEntity.attributes.forecasts,
-                win
-              )
-            : [];
+          var fTodayState = sources.solar_forecast_today ? this._state(sources.solar_forecast_today) : null;
+          var fTmrState = sources.solar_forecast ? this._state(sources.solar_forecast) : null;
+          var forecastAttr = [].concat(
+            fTodayState ? (fTodayState.attributes.detailedForecast || []) : [],
+            fTmrState ? (fTmrState.attributes.detailedForecast || fTmrState.attributes.forecasts || []) : []
+          );
+          var forecastPts = forecastCurve(forecastAttr, win);
           var maxKw = 0.5;
           var toKw = function (p) {
             return { t: p.t, v: p.v / 1000 };
@@ -436,7 +435,7 @@
             svg +=
               '<path d="' + linePath(fPts, win, yPow) +
               '" fill="none" stroke="#1d9e75" stroke-width="1.5" stroke-dasharray="4 3"/>';
-          } else if (sources.solar_forecast) {
+          } else if (sources.solar_forecast || sources.solar_forecast_today) {
             notes.push("forecast");
           }
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from custom_components.energy_conductor.const import (
     CONF_DISPATCHING_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_GRID_EXPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
-    CONF_SOLAR_GENERATION_SENSOR,
+    CONF_SOLAR_POWER_SENSOR,
     DOMAIN,
 )
 from homeassistant.core import HomeAssistant
@@ -18,10 +19,11 @@ from .test_sensor_availability import _arrange_entities, _setup
 
 TAPE_CONFIG = {
     **MOCK_CONFIG,
-    CONF_SOLAR_GENERATION_SENSOR: "sensor.pv_power",
+    CONF_SOLAR_POWER_SENSOR: "sensor.pv_power",
     CONF_HOME_LOAD_SENSOR: "sensor.home_load",
     CONF_DISPATCHING_SENSOR: "binary_sensor.dispatching",
     CONF_GRID_EXPORT_SENSOR: "sensor.grid_export_w",
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR: "sensor.forecast_today",
 }
 
 
@@ -56,6 +58,7 @@ async def test_status_sensor_exposes_tape_sources(hass: HomeAssistant) -> None:
     assert sources["dispatching"] == "binary_sensor.dispatching"
     assert sources["grid_export_w"] == "sensor.grid_export_w"
     assert sources["off_peak"] == MOCK_CONFIG["off_peak_sensor"]
+    assert sources["solar_forecast_today"] == "sensor.forecast_today"
     # Unconfigured feeds are absent keys.
     assert "solar_forecast" not in sources
     assert "grid_import_w" not in sources
