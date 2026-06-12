@@ -79,6 +79,23 @@
     return net;
   }
 
+  // Month-to-date net from per-entity LTS sums (same structure as netToday but
+  // using statistics rather than current sensor states). Null when no cost
+  // component is present — absence is not free energy.
+  function mtdNet(mtdValues) {
+    if (!mtdValues) return null;
+    var costKeys = ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas"];
+    var net = null;
+    costKeys.forEach(function (k) {
+      if (typeof mtdValues[k] === "number" && !isNaN(mtdValues[k])) net = (net || 0) + mtdValues[k];
+    });
+    if (net === null) return null;
+    if (typeof mtdValues.export_earnings === "number" && !isNaN(mtdValues.export_earnings)) {
+      net -= mtdValues.export_earnings;
+    }
+    return net;
+  }
+
   // Month-to-date energy/cost from LTS day rows: positive changes only (a
   // negative change is a counter glitch, not a refund). Null on no data.
   function sumChanges(rows) {
@@ -180,7 +197,7 @@
         _fetchStats() {
           var sources = this._sources();
           var ids = [];
-          ["import_cost", "export_earnings", "gas_cost", "ev"].forEach(function (k) {
+          ["import_cost", "export_earnings", "gas_cost", "standing_charge_electricity", "standing_charge_gas", "ev"].forEach(function (k) {
             if (sources[k]) ids.push(sources[k]);
           });
           var evCost = this._config.ev_cost_entity;
@@ -226,14 +243,14 @@
           var net = netToday(values);
           var savings = this._num(c.savings_entity);
 
-          // Month-to-date net: import + gas LTS sums minus export LTS sum.
-          var mtdImport = this._mtd(sources.import_cost);
-          var mtdGas = this._mtd(sources.gas_cost);
-          var mtdExport = this._mtd(sources.export_earnings);
-          var mtd = null;
-          if (mtdImport !== null || mtdGas !== null) {
-            mtd = (mtdImport || 0) + (mtdGas || 0) - (mtdExport || 0);
-          }
+          // Month-to-date net from LTS statistics, same components as netToday.
+          var mtd = mtdNet({
+            import_cost: this._mtd(sources.import_cost),
+            standing_charge_electricity: this._mtd(sources.standing_charge_electricity),
+            gas_cost: this._mtd(sources.gas_cost),
+            standing_charge_gas: this._mtd(sources.standing_charge_gas),
+            export_earnings: this._mtd(sources.export_earnings),
+          });
 
           var html = '<ha-card style="padding:12px 16px 16px;">';
           html += '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Ledger</div>';
@@ -350,6 +367,7 @@
     fmtGbp: fmtGbp,
     actualRows: actualRows,
     netToday: netToday,
+    mtdNet: mtdNet,
     sumChanges: sumChanges,
     evComparator: evComparator,
   };

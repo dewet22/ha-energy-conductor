@@ -85,3 +85,26 @@ describe("evComparator", () => {
     expect(L.evComparator(84, 5.8, null)).toBe(null);
   });
 });
+
+describe("mtdNet", () => {
+  test("includes standing charges in the month-to-date total", () => {
+    expect(
+      L.mtdNet({
+        import_cost: 30.0,
+        standing_charge_electricity: 10.0,
+        gas_cost: 5.0,
+        standing_charge_gas: 3.0,
+        export_earnings: 2.0,
+      })
+    ).toBeCloseTo(46.0, 10);
+  });
+
+  test("non-null when only standing charges are present", () => {
+    expect(L.mtdNet({ standing_charge_electricity: 5.0 })).toBeCloseTo(5.0, 10);
+  });
+
+  test("null when no cost component is present (absence is not free energy)", () => {
+    expect(L.mtdNet({ export_earnings: 2.0 })).toBe(null);
+    expect(L.mtdNet({})).toBe(null);
+  });
+});

@@ -357,4 +357,15 @@ describe("ledger view", () => {
     const dash = await EC.generateDashboard({}, makeHass({}));
     expect(dash.views.some((v) => v.path === "ledger")).toBe(false);
   });
+
+  it("emits the Ledger view when only non-import_cost billing sources are configured", async () => {
+    // A user with export earnings + standing charge but no import_cost sensor has
+    // billing-grade actuals that ec-ledger can render. The gate should not require
+    // import_cost specifically.
+    const hass = makeHass({
+      moneySources: { export_earnings: "sensor.exp", standing_charge_electricity: "sensor.sc" },
+    });
+    const dash = await EC.generateDashboard({}, hass);
+    expect(dash.views.some((v) => v.path === "ledger")).toBe(true);
+  });
 });

@@ -380,13 +380,18 @@
     });
   }
 
+  var LEDGER_SOURCE_KEYS = [
+    "import_cost", "import_cost_off_peak", "import_cost_peak",
+    "standing_charge_electricity", "standing_charge_gas", "gas_cost", "export_earnings",
+  ];
+
   // The ledger needs at least one billing-grade cost read-through to be honest;
   // the modelled sensors alone would render a ledger with no actuals column.
   function hasLedgerSources(states, statusId) {
     if (!statusId) return false;
     var s = states[statusId];
     var sources = s && s.attributes && s.attributes.money_sources;
-    return Boolean(sources && sources.import_cost);
+    return Boolean(sources && LEDGER_SOURCE_KEYS.some(function (k) { return Boolean(sources[k]); }));
   }
 
   function generateLedgerView(acc, statusId) {
