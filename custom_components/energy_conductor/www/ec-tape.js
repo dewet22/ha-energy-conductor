@@ -153,6 +153,66 @@
     return out;
   }
 
+  // HA Energy colour language: solar orange, grid blue, battery teal.
+  // Consumption renders as a plain dashed line in the theme text colour.
+  var C_SOLAR = "#ff9800";
+  var C_GRID = "#488fc2";
+  var C_BATTERY = "#009688";
+  var C_EVENT = "#534ab7";
+
+  // Legend entries for the configured layers only - an unconfigured feed has
+  // no colour on the tape, so it earns no legend row.
+  function legendItems(sources, config) {
+    var s = sources || {};
+    var c = config || {};
+    var out = [];
+    if (s.solar_power) out.push({ key: "solar", label: "solar", color: C_SOLAR, style: "area" });
+    if (s.solar_forecast || s.solar_forecast_today) {
+      out.push({ key: "forecast", label: "forecast", color: C_SOLAR, style: "dash" });
+    }
+    if (s.home_load) {
+      out.push({ key: "consumption", label: "consumption", color: "currentColor", style: "dash" });
+    }
+    if (c.soc_entity) out.push({ key: "soc", label: "battery SoC", color: C_BATTERY, style: "line" });
+    if (s.off_peak) out.push({ key: "off_peak", label: "off-peak", color: C_GRID, style: "band" });
+    if (s.dispatching) {
+      out.push({ key: "dispatch", label: "EV dispatch", color: C_GRID, style: "band" });
+    }
+    if (c.decision_entity) {
+      out.push({ key: "decisions", label: "decisions", color: C_EVENT, style: "diamond" });
+    }
+    return out;
+  }
+
+  // Swatch markup per legend style. Inputs are hardcoded legendItems entries
+  // (label + palette colour) - nothing user-supplied reaches this markup.
+  function _swatchHtml(item) {
+    var sw;
+    if (item.style === "dash") {
+      sw =
+        '<span style="display:inline-block;width:18px;height:0;border-top:2px dashed ' +
+        item.color + ';vertical-align:middle;"></span>';
+    } else if (item.style === "line") {
+      sw =
+        '<span style="display:inline-block;width:18px;height:0;border-top:3px solid ' +
+        item.color + ';vertical-align:middle;"></span>';
+    } else if (item.style === "band") {
+      sw =
+        '<span style="display:inline-block;width:14px;height:11px;background:' + item.color +
+        ';opacity:0.25;vertical-align:middle;"></span>';
+    } else if (item.style === "diamond") {
+      sw =
+        '<span style="display:inline-block;width:8px;height:8px;background:' + item.color +
+        ';transform:rotate(45deg);vertical-align:middle;"></span>';
+    } else {
+      // area
+      sw =
+        '<span style="display:inline-block;width:14px;height:11px;background:' + item.color +
+        ';opacity:0.45;border-bottom:2px solid ' + item.color + ';vertical-align:middle;"></span>';
+    }
+    return '<span style="white-space:nowrap;">' + sw + " " + item.label + "</span>";
+  }
+
   // ---- rendering ----------------------------------------------------------
 
   var W = 960;
@@ -350,7 +410,7 @@
             var x1 = timeToX(b.end, win, W);
             svg +=
               '<rect x="' + x0.toFixed(1) + '" y="14" width="' + (x1 - x0).toFixed(1) +
-              '" height="' + (AX - 14) + '" fill="#1d9e75" opacity="0.12"/>';
+              '" height="' + (AX - 14) + '" fill="' + C_GRID + '" opacity="0.10"/>';
           });
           if (!sources.off_peak) notes.push("off-peak");
 
@@ -363,7 +423,7 @@
               var x1 = timeToX(d.end, win, W);
               svg +=
                 '<rect x="' + x0.toFixed(1) + '" y="14" width="' + (x1 - x0).toFixed(1) +
-                '" height="' + (AX - 14) + '" fill="#ba7517" opacity="0.15"/>';
+                '" height="' + (AX - 14) + '" fill="' + C_GRID + '" opacity="0.25"/>';
             });
           } else if (sources.dispatching) {
             notes.push("dispatch");
@@ -382,10 +442,10 @@
                 svg +=
                   '<rect x="' + px0.toFixed(1) + '" y="' + (socY(target) - 4).toFixed(1) +
                   '" width="' + (px1 - px0).toFixed(1) + '" height="8" fill="none" ' +
-                  'stroke="#7f77dd" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
+                  'stroke="' + C_BATTERY + '" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
                 svg +=
                   '<text x="' + (px0 + 4).toFixed(1) + '" y="' + (socY(target) - 8).toFixed(1) +
-                  '" font-size="11" fill="#7f77dd">charge to ' + Math.round(target) + "%</text>";
+                  '" font-size="11" fill="' + C_BATTERY + '">charge to ' + Math.round(target) + "%</text>";
               }
             }
           }
@@ -415,18 +475,23 @@
           var yPow = function (v) {
             return powerY(v, maxKw);
           };
-          if (loadKw.length) {
-            svg += '<path d="' + areaPath(loadKw, win, yPow) + '" fill="#888780" opacity="0.35"/>';
-          } else if (sources.home_load) {
-            notes.push("load");
-          }
           if (solarKw.length) {
-            svg += '<path d="' + areaPath(solarKw, win, yPow) + '" fill="#5dcaa5" opacity="0.5"/>';
+            svg += '<path d="' + areaPath(solarKw, win, yPow) + '" fill="' + C_SOLAR + '" opacity="0.25"/>';
             svg +=
               '<path d="' + linePath(solarKw, win, yPow) +
-              '" fill="none" stroke="#1d9e75" stroke-width="2"/>';
+              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="2"/>';
           } else if (sources.solar_power) {
             notes.push("solar");
+          }
+          // Consumption draws after solar so the dashed line stays legible on
+          // top of the orange area (HA Energy style: line, not area).
+          if (loadKw.length) {
+            svg +=
+              '<path d="' + linePath(loadKw, win, yPow) +
+              '" fill="none" stroke="currentColor" stroke-width="1.75" ' +
+              'stroke-dasharray="6 3" opacity="0.8"/>';
+          } else if (sources.home_load) {
+            notes.push("load");
           }
           if (forecastPts.length) {
             var fPts = forecastPts.map(function (p) {
@@ -434,7 +499,7 @@
             });
             svg +=
               '<path d="' + linePath(fPts, win, yPow) +
-              '" fill="none" stroke="#1d9e75" stroke-width="1.5" stroke-dasharray="4 3"/>';
+              '" fill="none" stroke="' + C_SOLAR + '" stroke-width="1.5" stroke-dasharray="4 3"/>';
           } else if (sources.solar_forecast || sources.solar_forecast_today) {
             notes.push("forecast");
           }
@@ -447,7 +512,7 @@
           if (socPts.length) {
             svg +=
               '<path d="' + linePath(socPts, win, socY) +
-              '" fill="none" stroke="#7f77dd" stroke-width="2.5"/>';
+              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="2.5"/>';
           } else {
             notes.push("SoC");
           }
@@ -455,7 +520,7 @@
           if (projection.length) {
             svg +=
               '<path d="' + linePath(projection, win, socY) +
-              '" fill="none" stroke="#7f77dd" stroke-width="2" stroke-dasharray="5 4"/>';
+              '" fill="none" stroke="' + C_BATTERY + '" stroke-width="2" stroke-dasharray="5 4"/>';
           } else {
             notes.push("projection");
           }
@@ -463,10 +528,10 @@
           // --- decision rail --------------------------------------------------
           var events = [];
           valueChanges(this._numSeries(c.decision_entity)).forEach(function (e) {
-            events.push({ t: e.t, label: e.to === 0 ? "guard 0 W" : "guard max", color: "#534ab7" });
+            events.push({ t: e.t, label: e.to === 0 ? "guard 0 W" : "guard max", color: C_EVENT });
           });
           valueChanges(this._numSeries(c.plan_entity)).forEach(function (e) {
-            events.push({ t: e.t, label: "plan " + Math.round(e.to) + "%", color: "#534ab7" });
+            events.push({ t: e.t, label: "plan " + Math.round(e.to) + "%", color: C_EVENT });
           });
           crossings(
             this._numSeries(sources.grid_export_w),
@@ -546,11 +611,22 @@
               '<div style="opacity:0.6;font-size:0.8em;">No data: ' + notes.join(", ") + "</div>";
           }
 
+          var legendHtml = "";
+          var legend = legendItems(sources, c);
+          if (legend.length) {
+            legendHtml =
+              '<div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:0.78em;' +
+              'opacity:0.75;padding:2px 0 4px;">' +
+              legend.map(_swatchHtml).join("") +
+              "</div>";
+          }
+
           this.innerHTML =
             '<ha-card style="padding:12px 16px 8px;">' +
             '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block;">' +
             svg +
             "</svg>" +
+            legendHtml +
             noteHtml +
             "</ha-card>";
         }
@@ -570,6 +646,7 @@
     forecastCurve: forecastCurve,
     downsample: downsample,
     projectionPoints: projectionPoints,
+    legendItems: legendItems,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = API;

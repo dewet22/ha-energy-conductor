@@ -205,3 +205,48 @@ describe("projectionPoints", () => {
     expect(T.projectionPoints(attr).length).toBe(1);
   });
 });
+
+describe("legendItems", () => {
+  const FULL_SOURCES = {
+    solar_power: "sensor.pv",
+    solar_forecast: "sensor.fc_tomorrow",
+    solar_forecast_today: "sensor.fc_today",
+    home_load: "sensor.load",
+    off_peak: "binary_sensor.op",
+    dispatching: "binary_sensor.disp",
+  };
+  const FULL_CONFIG = { soc_entity: "sensor.soc", decision_entity: "sensor.dec" };
+
+  test("full config yields every legend entry once", () => {
+    const keys = T.legendItems(FULL_SOURCES, FULL_CONFIG).map((i) => i.key);
+    expect(keys).toEqual([
+      "solar", "forecast", "consumption", "soc", "off_peak", "dispatch", "decisions",
+    ]);
+  });
+
+  test("unconfigured layers are omitted", () => {
+    const items = T.legendItems({ solar_power: "sensor.pv" }, {});
+    expect(items.map((i) => i.key)).toEqual(["solar"]);
+  });
+
+  test("either forecast source alone earns the forecast entry", () => {
+    expect(
+      T.legendItems({ solar_forecast_today: "sensor.fc" }, {}).map((i) => i.key)
+    ).toEqual(["forecast"]);
+    expect(
+      T.legendItems({ solar_forecast: "sensor.fc" }, {}).map((i) => i.key)
+    ).toEqual(["forecast"]);
+  });
+
+  test("every item carries a label and a swatch style", () => {
+    T.legendItems(FULL_SOURCES, FULL_CONFIG).forEach((i) => {
+      expect(typeof i.label).toBe("string");
+      expect(["area", "line", "dash", "band", "diamond"]).toContain(i.style);
+    });
+  });
+
+  test("empty inputs give an empty legend", () => {
+    expect(T.legendItems({}, {})).toEqual([]);
+    expect(T.legendItems(null, null)).toEqual([]);
+  });
+});
