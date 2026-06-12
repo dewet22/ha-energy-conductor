@@ -9,6 +9,7 @@ from custom_components.energy_conductor import (
     _MODULE_URLS,
     _STRATEGY_URL,
     _STRATEGY_VERSION,
+    _TAPE_URL,
     _async_register_lovelace_resources,
     async_setup,
 )
@@ -31,7 +32,7 @@ async def test_async_setup_registers_static_paths_and_js() -> None:
 
     hass.http.async_register_static_paths.assert_awaited_once()
     paths = hass.http.async_register_static_paths.call_args[0][0]
-    assert [p.url_path for p in paths] == [_STRATEGY_URL, _LONGTERM_URL]
+    assert [p.url_path for p in paths] == [_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL]
     added = [call.args[1] for call in add_js.call_args_list]
     assert added == [f"{url}?v={_STRATEGY_VERSION}" for url in _MODULE_URLS]
 
@@ -86,6 +87,7 @@ async def test_lovelace_resources_version_bumped_not_duplicated() -> None:
         items=[
             {"id": "abc", "url": f"{_STRATEGY_URL}?v=0", "res_type": "module"},
             {"id": "def", "url": f"{_LONGTERM_URL}?v={_STRATEGY_VERSION}", "res_type": "module"},
+            {"id": "ghi", "url": f"{_TAPE_URL}?v={_STRATEGY_VERSION}", "res_type": "module"},
             {"id": "zzz", "url": "/hacsfiles/some-card.js", "res_type": "module"},
         ]
     )
@@ -124,6 +126,7 @@ async def test_lovelace_resources_dataclass_items_handled() -> None:
     items: list = [
         _LovelaceItem("abc", f"{_STRATEGY_URL}?v=0"),
         _LovelaceItem("def", f"{_LONGTERM_URL}?v={_STRATEGY_VERSION}"),
+        _LovelaceItem("ghi", f"{_TAPE_URL}?v={_STRATEGY_VERSION}"),
     ]
     resources = _FakeResources(items=items)
     await _async_register_lovelace_resources(_hass_with_resources(resources))

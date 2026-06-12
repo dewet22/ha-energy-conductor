@@ -279,10 +279,59 @@
     }
 
     return {
-      title: "Overview",
+      // Retitled from "Overview" when Mission became the entry view; the path is
+      // kept stable so existing bookmarks survive.
+      title: "Tonight",
       path: "overview",
-      icon: "mdi:lightning-bolt-circle",
+      icon: "mdi:weather-night",
       cards: cards,
+    };
+  }
+
+  // --- mission view -----------------------------------------------------------
+  //
+  // The entry view: a glance strip and the rolling tape, full-width (panel +
+  // vertical-stack — multi-column masonry squeezes the tape into a sliver).
+  // External entity ids come from the status sensor's money_sources attribute and
+  // pass the VALID_ENTITY_ID chokepoint before being embedded (same rule as the
+  // markdown cards in the Tonight view).
+  function generateMissionView(acc, states) {
+    var statusId = acc("status");
+    var glanceRows = cleanRows([
+      row(acc("battery-soc"), "Battery"),
+      row(acc("battery-usable-energy"), "Usable"),
+      row(acc("solar-forecast-today"), "Solar tomorrow"),
+      row(acc("savings-today"), "Saved today"),
+      row(statusId, "Status"),
+    ]);
+    var status = statusId && states[statusId];
+    var sources = (status && status.attributes && status.attributes.money_sources) || {};
+    if (sources.import_cost && VALID_ENTITY_ID.test(sources.import_cost)) {
+      glanceRows.splice(glanceRows.length - 1, 0, {
+        entity: sources.import_cost,
+        name: "Cost today",
+      });
+    }
+    var tape = {
+      type: "custom:ec-tape",
+      status_entity: statusId,
+      soc_entity: acc("battery-soc"),
+      plan_entity: acc("overnight-plan"),
+      decision_entity: acc("discharge-decision"),
+      window_start_entity: acc("off-peak-window-start"),
+      window_end_entity: acc("cheap-window-end"),
+    };
+    return {
+      title: "Mission",
+      path: "mission",
+      icon: "mdi:radar",
+      panel: true,
+      cards: [
+        {
+          type: "vertical-stack",
+          cards: [{ type: "glance", entities: glanceRows }, tape],
+        },
+      ],
     };
   }
 
@@ -378,14 +427,19 @@
         "No Energy Conductor device found. Add and configure the integration first."
       );
     }
-    var views = [generateView(accessor(state), state.hotWaterConfigured)];
+    var states = (hass && hass.states) || {};
     var statusId = state.keys["status"] || null;
-    if (
-      hasLongtermFlows((hass && hass.states) || {}, statusId) &&
-      (await cardDefined("ec-longterm", 3000))
-    ) {
+    var views = [];
+    // Mission is the entry view; if its card lost the module-load race this
+    // render, the dashboard falls back to Tonight-first rather than emitting a
+    // view that cannot render.
+    if (await cardDefined("ec-tape", 3000)) {
+      views.push(generateMissionView(accessor(state), states));
+    }
+    if (hasLongtermFlows(states, statusId) && (await cardDefined("ec-longterm", 3000))) {
       views.push(generateLongtermView(statusId));
     }
+    views.push(generateView(accessor(state), state.hotWaterConfigured));
     return {
       title: "Energy Conductor",
       views: views,

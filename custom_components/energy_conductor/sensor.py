@@ -26,18 +26,22 @@ from .const import (
     CONF_BATTERY_SOC_SENSOR,
     CONF_DAILY_ENERGY_SENSOR,
     CONF_DEVICE_NAME,
+    CONF_DISPATCHING_SENSOR,
     CONF_EV_ENERGY_SENSOR,
     CONF_EV_GREEN_ENERGY_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
     CONF_EXPORT_EARNINGS_SENSOR,
     CONF_EXPORT_RATE_SENSOR,
+    CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_GAS_COST_SENSOR,
     CONF_GAS_ENERGY_SENSOR,
     CONF_GAS_RATE_SENSOR,
     CONF_GRID_EXPORT_ENERGY_SENSOR,
+    CONF_GRID_EXPORT_SENSOR,
     CONF_GRID_IMPORT_ENERGY_SENSOR,
+    CONF_GRID_IMPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
     CONF_HOTWATER_GREEN_SENSOR,
@@ -50,6 +54,7 @@ from .const import (
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
+    CONF_SOLAR_GENERATION_SENSOR,
     CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
     CONF_STANDING_CHARGE_GAS_SENSOR,
     CONF_SYSTEM_CAPITAL_COST,
@@ -72,6 +77,7 @@ from .money_tracker import (
     ACC_SELF_USE,
     MoneyTracker,
 )
+from .overnight import project_soc
 
 
 async def async_setup_entry(
@@ -163,6 +169,24 @@ _MONEY_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Feeds for the mission tape, exposed (resolved) on the status sensor alongside
+# money_sources. The off-peak sensor is required config, so the map always exists.
+_TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
+    ("solar_power", CONF_SOLAR_GENERATION_SENSOR),
+    ("solar_forecast", CONF_FORECAST_SOLCAST_SENSOR),
+    ("home_load", CONF_HOME_LOAD_SENSOR),
+    ("off_peak", CONF_OFF_PEAK_SENSOR),
+    ("dispatching", CONF_DISPATCHING_SENSOR),
+    ("grid_import_w", CONF_GRID_IMPORT_SENSOR),
+    ("grid_export_w", CONF_GRID_EXPORT_SENSOR),
+)
+
+
+def _tape_sources(config: dict[str, Any]) -> dict[str, str] | None:
+    sources = {name: config[key] for name, key in _TAPE_SOURCE_KEYS if config.get(key)}
+    return sources or None
+
+
 def _money_sources(config: dict[str, Any]) -> dict[str, str] | None:
     sources = {name: config[key] for name, key in _MONEY_SOURCE_KEYS if config.get(key)}
     # Hot water heating displaces gas whether diverted or boosted: prefer the
@@ -208,6 +232,7 @@ class StatusSensor(_BaseSensor):
             "verification": self.coordinator.verification_status,
             "verification_detail": self.coordinator.last_verification_detail,
             "money_sources": _money_sources(self.coordinator.config),
+            "tape_sources": _tape_sources(self.coordinator.config),
         }
 
 
@@ -231,12 +256,21 @@ class OvernightPlanSensor(_BaseSensor):
         plan = self.coordinator.last_overnight_plan
         if plan is None:
             return {}
-        return {
+        attrs: dict[str, Any] = {
             "reason": plan.reason,
             "dedupe_key": plan.dedupe_key,
             "outcome": self.coordinator.last_overnight_outcome,
             "write_mode": self.coordinator.write_mode,
         }
+        # SoC projection for the mission tape: served from EC's own plan model so
+        # the dashboard never re-derives it client-side. Unmistakably a projection.
+        state = self.coordinator.last_site_state
+        if state is not None:
+            attrs["soc_projection"] = [
+                {"t": t.isoformat(), "soc": soc}
+                for t, soc in project_soc(state, target_percent=float(plan.value))
+            ]
+        return attrs
 
 
 class DischargeDecisionSensor(_BaseSensor):

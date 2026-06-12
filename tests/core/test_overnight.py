@@ -19,13 +19,19 @@ MIN_OVERNIGHT_USABLE_KWH is a baked-in safety floor that only binds on the sunni
 smallest-gap nights (replaces the old user-facing min_target_soc_percent knob).
 """
 
+from datetime import timedelta
+
+import pytest
+
 from energy_conductor.const import MIN_OVERNIGHT_USABLE_KWH
 from energy_conductor.decisions import DecisionKind
+from energy_conductor.model import ForecastSlot, SolarForecast
 from energy_conductor.overnight import (
     MEANINGFUL_SLOT_KWH,
     MISSING_FORECAST_GAP_H,
     MORNING_GAP_CAP_H,
     plan_overnight,
+    project_soc,
 )
 
 from .builders import (
@@ -355,3 +361,53 @@ class TestNamedConstants:
 
     def test_missing_forecast_gap_default_is_4h(self):
         assert MISSING_FORECAST_GAP_H == 4
+
+
+class TestProjectSoc:
+    def test_forecast_uses_fixed_thirty_minute_slot_duration(self):
+        # If two forecast slots are separated by a 90-min gap (non-contiguous),
+        # each slot still represents 30 min of generation, not the gap to the next.
+        # Slot 0 at now: 2 kWh in 30 min = 4 kW. Baseline 400 W. Net = -3.6 kW.
+        # SoC rise: 3.6 kW * 0.5h / 10 kWh * 100 = 18%.
+        now = utc(2026, 6, 2, 10, 0)
+        slots = [
+            ForecastSlot(start=now, energy_kwh=2.0),
+            ForecastSlot(start=now + timedelta(minutes=90), energy_kwh=1.0),
+        ]
+        forecast = SolarForecast(slots=slots, fallback_kwh=None, fallback_source=None)
+        state = a_site_state(
+            now=now,
+            battery=a_battery(soc_percent=50.0, capacity_kwh=10.0, reserve_percent=10.0),
+            baseline_load_w=400.0,
+            solar_forecast=forecast,
+            tariff=a_tariff(),
+        )
+        points = project_soc(state, target_percent=80, hours=0.5, step_minutes=30)
+        # SoC should rise from 50% to 68% (18% absorbed from 3.6 kW net over 0.5h).
+        # Buggy code uses 90-min gap → kW = 2/1.5 ≈ 1.33 → net ≈ -0.93 → rises only ~4.7%.
+        assert len(points) == 2
+        assert points[1][1] == pytest.approx(68.0, abs=0.1)
+
+    def test_projection_charges_through_configured_dawn_not_dispatch_end(self):
+        # Regression: off_peak_window_end can be a short Intelligent dispatch slot
+        # (e.g. ending 22:30), while the overnight plan targets overnight_window_end
+        # (05:30). The projection must charge through 05:30, not stop at 22:30.
+        dispatch_end = utc(2026, 6, 1, 22, 30)  # brief dispatch slot
+        overnight_end = utc(2026, 6, 2, 5, 30)  # configured overnight boundary
+        state = a_site_state(
+            now=utc(2026, 6, 1, 22, 0),
+            battery=a_battery(soc_percent=50.0, capacity_kwh=10.0, reserve_percent=10.0),
+            tariff=a_tariff(
+                off_peak_now=True,
+                off_peak_window_end=dispatch_end,
+                overnight_window_end=overnight_end,
+            ),
+        )
+        points = project_soc(state, target_percent=90.0, hours=2, step_minutes=30)
+        # At t+30min (22:30, dispatch ends), projection should still be charging.
+        # With the bug, it stops charging at dispatch_end and starts discharging.
+        soc_at_22_00 = points[0][1]
+        soc_at_22_30 = points[1][1]
+        soc_at_23_00 = points[2][1]
+        assert soc_at_22_30 >= soc_at_22_00, "should still charge past the dispatch end"
+        assert soc_at_23_00 >= soc_at_22_30, "should still charge an hour past the dispatch end"
