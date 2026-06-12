@@ -56,12 +56,14 @@ async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
             for url in _MODULE_URLS
         }
         for item in list(resources.async_items()):
-            base = str(item.get("url", "")).split("?", 1)[0]
+            item_url = item.get("url") if isinstance(item, dict) else item.url
+            base = str(item_url or "").split("?", 1)[0]
             target = wanted.pop(base, None)
             if target is None:
                 continue
-            if item.get("url") != target["url"]:
-                await resources.async_update_item(item["id"], target)
+            if item_url != target["url"]:
+                item_id = item.get("id") if isinstance(item, dict) else item.id
+                await resources.async_update_item(item_id, target)
         for target in wanted.values():
             await resources.async_create_item(target)
     except Exception as exc:

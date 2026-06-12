@@ -107,6 +107,33 @@ async def test_lovelace_resources_yaml_mode_left_alone() -> None:
     await _async_register_lovelace_resources(hass)  # must simply not raise
 
 
+class _LovelaceItem:
+    """Minimal stand-in for the HA storage-mode Lovelace resource dataclass."""
+
+    def __init__(self, id: str, url: str) -> None:
+        self.id = id
+        self.url = url
+
+
+async def test_lovelace_resources_dataclass_items_handled() -> None:
+    """HA production returns dataclass instances with .url/.id — not dicts.
+
+    Calling .get() on a dataclass raises AttributeError; the registration
+    loop must use attribute access for non-dict items.
+    """
+    items: list = [
+        _LovelaceItem("abc", f"{_STRATEGY_URL}?v=0"),
+        _LovelaceItem("def", f"{_LONGTERM_URL}?v={_STRATEGY_VERSION}"),
+    ]
+    resources = _FakeResources(items=items)
+    await _async_register_lovelace_resources(_hass_with_resources(resources))
+
+    assert resources.created == []
+    assert resources.updated == [
+        ("abc", {"res_type": "module", "url": f"{_STRATEGY_URL}?v={_STRATEGY_VERSION}"})
+    ]
+
+
 async def test_lovelace_resources_failure_tolerated() -> None:
     resources = _FakeResources()
     resources.async_items = MagicMock(side_effect=RuntimeError("boom"))
