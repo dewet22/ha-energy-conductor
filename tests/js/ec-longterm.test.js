@@ -102,6 +102,15 @@ describe("colour scaling", () => {
     const stops = LT.quantileStops([0, 0, 0], 4);
     expect(LT.bucket(0, stops)).toBe(0);
   });
+
+  test("sparse flow: zero days excluded so positive days span distinct buckets", () => {
+    // Simulates gas-in-summer or EV: 14 zero days, two positive days with 1 and 5 kWh.
+    // Without filtering zeros, all stops collapse to 0 and both positive days land in
+    // the darkest bucket, losing all visual variation.
+    const values = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5];
+    const stops = LT.quantileStops(values, 4);
+    expect(LT.bucket(1, stops)).toBeLessThan(LT.bucket(5, stops));
+  });
 });
 
 describe("flowsFromSources", () => {

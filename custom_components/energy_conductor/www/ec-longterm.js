@@ -119,7 +119,7 @@
   function quantileStops(values, n) {
     var sorted = values
       .filter(function (v) {
-        return typeof v === "number" && isFinite(v);
+        return typeof v === "number" && isFinite(v) && v > 0;
       })
       .slice()
       .sort(function (a, b) {
@@ -196,7 +196,7 @@
       RAMP.length - 1
     );
     grid.cells.forEach(function (c) {
-      ctx.fillStyle = RAMP[bucket(c.kwh, stops)];
+      ctx.fillStyle = c.kwh <= 0 ? RAMP[0] : RAMP[bucket(c.kwh, stops)];
       ctx.fillRect(c.col * (cell + gap), c.row * (cell + gap), cell, cell);
     });
   }
