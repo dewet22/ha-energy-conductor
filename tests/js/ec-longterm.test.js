@@ -140,3 +140,35 @@ describe("annualTotal", () => {
     expect(LT.annualTotal(series)).toBe(1400);
   });
 });
+
+describe("monthMarks", () => {
+  test("marks the first day and each month transition with index fractions", () => {
+    const days = ["2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02"];
+    const marks = LT.monthMarks(days);
+    expect(marks).toEqual([
+      { label: "Apr", frac: 0 },
+      { label: "May", frac: 0.5 },
+    ]);
+  });
+
+  test("a year of weeks yields one mark per month", () => {
+    const weeks = [];
+    const d = new Date(2025, 5, 16); // a Monday in June 2025
+    for (let i = 0; i < 52; i++) {
+      weeks.push(
+        d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" +
+        String(d.getDate()).padStart(2, "0")
+      );
+      d.setDate(d.getDate() + 7);
+    }
+    const marks = LT.monthMarks(weeks);
+    expect(marks.length).toBe(13); // Jun 2025 through Jun 2026 inclusive
+    expect(marks[0]).toEqual({ label: "Jun", frac: 0 });
+    expect(marks[marks.length - 1].label).toBe("Jun");
+  });
+
+  test("empty input yields no marks", () => {
+    expect(LT.monthMarks([])).toEqual([]);
+    expect(LT.monthMarks(undefined)).toEqual([]);
+  });
+});
