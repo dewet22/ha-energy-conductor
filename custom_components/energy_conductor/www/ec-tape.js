@@ -58,29 +58,6 @@
     });
   }
 
-  // Threshold crossings with a debounce: a flip within `debounceMs` of the last
-  // recorded event is meter chatter and is ignored outright - the original event
-  // stands, and a genuine sustained change re-emerges from the first sample after
-  // the debounce window.
-  function crossings(points, threshold, debounceMs) {
-    var events = [];
-    var above = null;
-    var lastAt = -Infinity;
-    points.forEach(function (p) {
-      var isAbove = p.v > threshold;
-      if (above === null) {
-        above = isAbove;
-        return;
-      }
-      if (isAbove !== above && p.t.getTime() - lastAt >= debounceMs) {
-        events.push({ t: p.t, dir: isAbove ? "up" : "down" });
-        lastAt = p.t.getTime();
-        above = isAbove;
-      }
-    });
-    return events;
-  }
-
   function valueChanges(points) {
     var events = [];
     for (var i = 1; i < points.length; i++) {
@@ -118,6 +95,96 @@
     });
     if (openAt !== null) bands.push({ start: openAt, end: win.end });
     return bands;
+  }
+
+  // Contiguous intervals where a numeric series exceeds `threshold`; runs
+  // shorter than minMs are meter blips and are dropped. A run still open at
+  // the end of the series closes at the last sample.
+  function seriesAbove(points, threshold, minMs) {
+    var bands = [];
+    var openAt = null;
+    points.forEach(function (p) {
+      if (p.v > threshold) {
+        if (openAt === null) openAt = p.t;
+      } else if (openAt !== null) {
+        if (p.t - openAt >= minMs) bands.push({ start: openAt, end: p.t });
+        openAt = null;
+      }
+    });
+    if (openAt !== null && points.length) {
+      var last = points[points.length - 1].t;
+      if (last - openAt >= minMs) bands.push({ start: openAt, end: last });
+    }
+    return bands;
+  }
+
+  // Intervals where the series climbs (battery charging sessions from SoC).
+  // Flat/falling gaps shorter than gapMs merge into the surrounding climb;
+  // runs shorter than minMs or gaining less than minRise are SoC wobble.
+  function risingIntervals(points, opts) {
+    var raw = [];
+    var open = null;
+    for (var i = 1; i < points.length; i++) {
+      if (points[i].v > points[i - 1].v) {
+        if (!open) open = { start: points[i - 1].t, from: points[i - 1].v };
+        open.end = points[i].t;
+        open.to = points[i].v;
+      } else if (open) {
+        raw.push(open);
+        open = null;
+      }
+    }
+    if (open) raw.push(open);
+    var merged = [];
+    raw.forEach(function (r) {
+      var prev = merged[merged.length - 1];
+      if (prev && r.start - prev.end <= opts.gapMs) {
+        prev.end = r.end;
+        prev.to = r.to;
+      } else {
+        merged.push(r);
+      }
+    });
+    var out = [];
+    merged.forEach(function (r) {
+      if (r.end - r.start >= opts.minMs && r.to - r.from >= opts.minRise) {
+        out.push({ start: r.start, end: r.end });
+      }
+    });
+    return out;
+  }
+
+  function intersectBands(a, b) {
+    var out = [];
+    a.forEach(function (x) {
+      b.forEach(function (y) {
+        var s = x.start > y.start ? x.start : y.start;
+        var e = x.end < y.end ? x.end : y.end;
+        if (s < e) out.push({ start: s, end: e });
+      });
+    });
+    return out;
+  }
+
+  function subtractBands(a, b) {
+    var out = [];
+    a.forEach(function (x) {
+      var pieces = [{ start: x.start, end: x.end }];
+      b.forEach(function (y) {
+        var next = [];
+        pieces.forEach(function (p) {
+          if (y.end <= p.start || y.start >= p.end) {
+            next.push(p);
+            return;
+          }
+          if (y.start > p.start) next.push({ start: p.start, end: y.start });
+          if (y.end < p.end) next.push({ start: y.end, end: p.end });
+        });
+        pieces = next;
+      });
+      out = out.concat(pieces);
+    });
+    return out;
   }
 
   function forecastCurve(attr, win) {
@@ -174,6 +241,17 @@
       out.push({ key: "consumption", label: "consumption", color: "currentColor", style: "dash" });
     }
     if (c.soc_entity) out.push({ key: "soc", label: "battery SoC", color: C_BATTERY, style: "line" });
+    // Mode ribbon lanes: charging modes derive from SoC (split into PV vs grid
+    // by the off-peak bands); the export lane derives from the export feed.
+    if (c.soc_entity) {
+      out.push({ key: "pv_charge", label: "PV charge", color: C_BATTERY, style: "band" });
+      if (s.off_peak) {
+        out.push({ key: "grid_charge", label: "grid charge", color: C_GRID, style: "band" });
+      }
+    }
+    if (s.grid_export_w) {
+      out.push({ key: "export", label: "exporting", color: C_SOLAR, style: "band" });
+    }
     if (s.off_peak) out.push({ key: "off_peak", label: "off-peak", color: C_GRID, style: "band" });
     if (s.dispatching) {
       out.push({ key: "dispatch", label: "EV dispatch", color: C_GRID, style: "band" });
@@ -505,10 +583,8 @@
           }
 
           // --- SoC: history + projection -------------------------------------
-          var socPts = downsample(
-            rejectSocSpikes(this._numSeries(c.soc_entity), SOC_SPIKE_PTS),
-            300
-          );
+          var socClean = rejectSocSpikes(this._numSeries(c.soc_entity), SOC_SPIKE_PTS);
+          var socPts = downsample(socClean, 300);
           if (socPts.length) {
             svg +=
               '<path d="' + linePath(socPts, win, socY) +
@@ -525,6 +601,39 @@
             notes.push("projection");
           }
 
+          // --- mode ribbon: two slim lanes above the axis --------------------
+          // Lane 1 (battery): what is charging it - teal = PV, blue = grid.
+          // Lane 2 (export): orange while power flows out. Replaces the old
+          // export began/stopped diamonds, which fired continually on any
+          // sunny day and drowned the decision rail.
+          var laneY1 = AX - 13;
+          var laneY2 = AX - 6;
+          var drawLane = function (bands, y, color) {
+            bands.forEach(function (b) {
+              if (b.end < win.start || b.start > win.end) return;
+              var x0 = timeToX(b.start < win.start ? win.start : b.start, win, W);
+              var x1 = timeToX(b.end > win.end ? win.end : b.end, win, W);
+              svg +=
+                '<rect x="' + x0.toFixed(1) + '" y="' + y + '" width="' +
+                (x1 - x0).toFixed(1) + '" height="5" rx="1" fill="' + color +
+                '" opacity="0.8"/>';
+            });
+          };
+          var socRising = risingIntervals(socClean, {
+            gapMs: 10 * 60 * 1000,
+            minMs: 15 * 60 * 1000,
+            minRise: 2,
+          });
+          // Off-peak coverage classifies the charge source: under EC's regime
+          // the grid only ever charges the battery inside the cheap window.
+          drawLane(intersectBands(socRising, bands), laneY1, C_GRID);
+          drawLane(subtractBands(socRising, bands), laneY1, C_BATTERY);
+          drawLane(
+            seriesAbove(this._numSeries(sources.grid_export_w), EXPORT_THRESHOLD_W, EXPORT_DEBOUNCE_MS),
+            laneY2,
+            C_SOLAR
+          );
+
           // --- decision rail --------------------------------------------------
           var events = [];
           valueChanges(this._numSeries(c.decision_entity)).forEach(function (e) {
@@ -532,17 +641,6 @@
           });
           valueChanges(this._numSeries(c.plan_entity)).forEach(function (e) {
             events.push({ t: e.t, label: "plan " + Math.round(e.to) + "%", color: C_EVENT });
-          });
-          crossings(
-            this._numSeries(sources.grid_export_w),
-            EXPORT_THRESHOLD_W,
-            EXPORT_DEBOUNCE_MS
-          ).forEach(function (e) {
-            events.push({
-              t: e.t,
-              label: e.dir === "up" ? "export began" : "export stopped",
-              color: "#0f6e56",
-            });
           });
           events.sort(function (a, b) {
             return a.t - b.t;
@@ -639,7 +737,6 @@
     tapeWindow: tapeWindow,
     timeToX: timeToX,
     rejectSocSpikes: rejectSocSpikes,
-    crossings: crossings,
     valueChanges: valueChanges,
     parseDispatches: parseDispatches,
     bandsFromBinary: bandsFromBinary,
@@ -647,6 +744,10 @@
     downsample: downsample,
     projectionPoints: projectionPoints,
     legendItems: legendItems,
+    seriesAbove: seriesAbove,
+    risingIntervals: risingIntervals,
+    intersectBands: intersectBands,
+    subtractBands: subtractBands,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = API;
