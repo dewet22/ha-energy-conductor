@@ -119,8 +119,8 @@
     var sum = 0;
     var hasValid = false;
     rows.forEach(function (r) {
-      if (typeof r.change === "number" && r.change > 0) {
-        sum += r.change;
+      if (typeof r.change === "number" && !isNaN(r.change)) {
+        if (r.change > 0) sum += r.change;
         hasValid = true;
       }
     });

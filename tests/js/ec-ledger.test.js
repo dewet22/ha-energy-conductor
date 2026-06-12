@@ -92,6 +92,10 @@ describe("sumChanges", () => {
   test("all-null changes return null, not zero (no valid data is not free energy)", () => {
     expect(L.sumChanges([{ change: null }, { change: null }])).toBe(null);
   });
+
+  test("zero change is valid data (zero cost is not the same as no data)", () => {
+    expect(L.sumChanges([{ change: 0 }, { change: 0 }])).toBe(0);
+  });
 });
 
 describe("evComparator", () => {
