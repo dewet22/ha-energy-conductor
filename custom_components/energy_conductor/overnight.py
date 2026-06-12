@@ -42,8 +42,12 @@ def _morning_gap_hours(state: SiteState) -> float:
 
 
 def _is_off_peak_at(state: SiteState, t: datetime) -> bool:
-    """Whether `t` falls in the current/next known off-peak window."""
-    end = state.tariff.off_peak_window_end
+    """Whether `t` falls in the overnight charging window.
+
+    Uses the configured overnight boundary rather than the sensor-derived
+    off_peak_window_end, which can be a short Intelligent dispatch slot.
+    """
+    end = state.tariff.overnight_window_end or state.tariff.off_peak_window_end
     if state.tariff.off_peak_now:
         return end is None or t < end
     start = state.tariff.next_off_peak_window_start

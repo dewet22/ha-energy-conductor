@@ -26,6 +26,7 @@ from energy_conductor.overnight import (
     MISSING_FORECAST_GAP_H,
     MORNING_GAP_CAP_H,
     plan_overnight,
+    project_soc,
 )
 
 from .builders import (
@@ -355,3 +356,29 @@ class TestNamedConstants:
 
     def test_missing_forecast_gap_default_is_4h(self):
         assert MISSING_FORECAST_GAP_H == 4
+
+
+class TestProjectSoc:
+    def test_projection_charges_through_configured_dawn_not_dispatch_end(self):
+        # Regression: off_peak_window_end can be a short Intelligent dispatch slot
+        # (e.g. ending 22:30), while the overnight plan targets overnight_window_end
+        # (05:30). The projection must charge through 05:30, not stop at 22:30.
+        dispatch_end = utc(2026, 6, 1, 22, 30)  # brief dispatch slot
+        overnight_end = utc(2026, 6, 2, 5, 30)  # configured overnight boundary
+        state = a_site_state(
+            now=utc(2026, 6, 1, 22, 0),
+            battery=a_battery(soc_percent=50.0, capacity_kwh=10.0, reserve_percent=10.0),
+            tariff=a_tariff(
+                off_peak_now=True,
+                off_peak_window_end=dispatch_end,
+                overnight_window_end=overnight_end,
+            ),
+        )
+        points = project_soc(state, target_percent=90.0, hours=2, step_minutes=30)
+        # At t+30min (22:30, dispatch ends), projection should still be charging.
+        # With the bug, it stops charging at dispatch_end and starts discharging.
+        soc_at_22_00 = points[0][1]
+        soc_at_22_30 = points[1][1]
+        soc_at_23_00 = points[2][1]
+        assert soc_at_22_30 >= soc_at_22_00, "should still charge past the dispatch end"
+        assert soc_at_23_00 >= soc_at_22_30, "should still charge an hour past the dispatch end"
