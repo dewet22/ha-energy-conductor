@@ -28,11 +28,13 @@ PLATFORMS = ["binary_sensor", "sensor"]
 _STRATEGY_FILENAME = "ec-strategy.js"
 _LONGTERM_FILENAME = "ec-longterm.js"
 _TAPE_FILENAME = "ec-tape.js"
+_LEDGER_FILENAME = "ec-ledger.js"
 _STRATEGY_URL = f"/{DOMAIN}/{_STRATEGY_FILENAME}"
 _LONGTERM_URL = f"/{DOMAIN}/{_LONGTERM_FILENAME}"
 _TAPE_URL = f"/{DOMAIN}/{_TAPE_FILENAME}"
-_MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL)
-_STRATEGY_VERSION = "8"
+_LEDGER_URL = f"/{DOMAIN}/{_LEDGER_FILENAME}"
+_MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL, _LEDGER_URL)
+_STRATEGY_VERSION = "9"
 
 
 async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:

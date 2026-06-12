@@ -52,6 +52,7 @@ from .const import (
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_PUBLIC_CHARGING_RATE,
     CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
     CONF_SOLAR_GENERATION_SENSOR,
@@ -759,6 +760,15 @@ class EVChargeCostSensor(_DailyMoneySensor):
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}-ev-charge-cost-today"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        # The ledger's vs-public-charging comparator rate (config scalar; None hides it).
+        attrs["public_charging_rate_gbp_per_kwh"] = self.coordinator.config.get(
+            CONF_PUBLIC_CHARGING_RATE
+        )
+        return attrs
 
 
 class SavingsTodaySensor(_MoneySensorBase):

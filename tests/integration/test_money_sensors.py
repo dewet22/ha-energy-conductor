@@ -10,6 +10,7 @@ from custom_components.energy_conductor.const import (
     CONF_GRID_EXPORT_ENERGY_SENSOR,
     CONF_IMPORT_COST_SENSOR,
     CONF_IMPORT_RATE_SENSOR,
+    CONF_PUBLIC_CHARGING_RATE,
     CONF_PV_ENERGY_SENSOR,
     CONF_SYSTEM_CAPITAL_COST,
     DOMAIN,
@@ -42,6 +43,7 @@ COSTS_CONFIG = {
     CONF_GRID_EXPORT_ENERGY_SENSOR: EXPORT_KWH,
     CONF_EV_ENERGY_SENSOR: EV,
     CONF_SYSTEM_CAPITAL_COST: 11500.0,
+    CONF_PUBLIC_CHARGING_RATE: 0.79,
 }
 
 MONEY_KEYS = (
@@ -99,6 +101,9 @@ async def test_money_sensors_created_and_accumulate(hass: HomeAssistant) -> None
     assert "battery_peak_shift_gbp" in savings.attributes
     assert "hot_water_gas_displacement_gbp" in savings.attributes
     assert "ev_solar_charge_gbp" in savings.attributes
+
+    ev = hass.states.get(_money_entity_id(hass, entry, "ev-charge-cost-today"))
+    assert ev.attributes["public_charging_rate_gbp_per_kwh"] == 0.79
 
     cumulative = hass.states.get(_money_entity_id(hass, entry, "cumulative-savings"))
     assert float(cumulative.state) == pytest.approx(-0.15)

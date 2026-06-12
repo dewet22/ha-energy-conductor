@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.energy_conductor import (
+    _LEDGER_URL,
     _LONGTERM_URL,
     _MODULE_URLS,
     _STRATEGY_URL,
@@ -32,7 +33,7 @@ async def test_async_setup_registers_static_paths_and_js() -> None:
 
     hass.http.async_register_static_paths.assert_awaited_once()
     paths = hass.http.async_register_static_paths.call_args[0][0]
-    assert [p.url_path for p in paths] == [_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL]
+    assert [p.url_path for p in paths] == [_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL, _LEDGER_URL]
     added = [call.args[1] for call in add_js.call_args_list]
     assert added == [f"{url}?v={_STRATEGY_VERSION}" for url in _MODULE_URLS]
 
@@ -88,6 +89,7 @@ async def test_lovelace_resources_version_bumped_not_duplicated() -> None:
             {"id": "abc", "url": f"{_STRATEGY_URL}?v=0", "res_type": "module"},
             {"id": "def", "url": f"{_LONGTERM_URL}?v={_STRATEGY_VERSION}", "res_type": "module"},
             {"id": "ghi", "url": f"{_TAPE_URL}?v={_STRATEGY_VERSION}", "res_type": "module"},
+            {"id": "jkl", "url": f"{_LEDGER_URL}?v={_STRATEGY_VERSION}", "res_type": "module"},
             {"id": "zzz", "url": "/hacsfiles/some-card.js", "res_type": "module"},
         ]
     )

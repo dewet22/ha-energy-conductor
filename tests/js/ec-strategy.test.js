@@ -334,3 +334,27 @@ describe("mission view", () => {
     expect(ids.some((i) => i.includes("{{"))).toBe(false);
   });
 });
+
+describe("ledger view", () => {
+  it("emits the Ledger view when a billing-grade cost source is configured", async () => {
+    const hass = makeHass({
+      moneySources: { import_cost: "sensor.cost", pv: "sensor.pv" },
+    });
+    const dash = await EC.generateDashboard({}, hass);
+    const paths = dash.views.map((v) => v.path);
+    expect(paths).toEqual(["mission", "ledger", "long-term", "overview"]);
+    const ledger = dash.views[1];
+    expect(ledger.panel).toBe(true);
+    const card = ledger.cards[0];
+    expect(card.type).toBe("custom:ec-ledger");
+    expect(card.status_entity).toBe(entityId("sensor", "", "blithe", "status"));
+    // Money sensors aren't in this registry topology: explicit nulls, not made-up ids.
+    expect(card.savings_entity).toBe(null);
+    expect(card.cumulative_entity).toBe(null);
+  });
+
+  it("omits the ledger without a cost source", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    expect(dash.views.some((v) => v.path === "ledger")).toBe(false);
+  });
+});
