@@ -136,9 +136,32 @@
     return monthKwh * publicRateGbpPerKwh - monthCostGbp;
   }
 
+  // Payback presentation. Early days (sub-1% recovered) lead with the
+  // run-rate story instead of a sad near-empty bar; the bar keeps a minimum
+  // visible fill so "just started" never renders as "failed". `todayMs` is a
+  // parameter so the helper stays pure for tests.
+  function paybackView(cumulative, capital, todayMs, attrs) {
+    if (typeof cumulative !== "number" || isNaN(cumulative)) return null;
+    if (typeof capital !== "number" || isNaN(capital) || capital <= 0) return null;
+    var pct = Math.max(0, Math.min(100, (cumulative / capital) * 100));
+    var days = null;
+    var startedMs = attrs && attrs.started ? Date.parse(attrs.started) : NaN;
+    if (!isNaN(startedMs)) {
+      days = Math.max(1, Math.floor((todayMs - startedMs) / 86400000) + 1);
+    }
+    return { pct: pct, barPct: Math.max(pct, 0.75), early: pct < 1, days: days };
+  }
+
   // ---- rendering ----------------------------------------------------------
 
   var REFRESH_MS = 5 * 60 * 1000;
+
+  // Provenance colour language (matches the user's mental model from the
+  // brainstorm): green = billing-grade read-through, amber = modelled
+  // estimate. Every money value renders in its provenance colour; the
+  // footnote at the bottom of the card explains the convention.
+  var C_MODELLED = "#ba7517";
+  var C_BILLING = "#0f6e56";
   var MODELLED =
     '<span style="background:rgba(186,117,23,0.18);color:#ba7517;font-size:0.72em;' +
     'padding:1px 6px;border-radius:8px;vertical-align:1px;">modelled</span>';
@@ -150,21 +173,21 @@
 
   function rowHtml(label, value, credit, modelled) {
     return (
-      '<tr><td style="padding:3px 0;opacity:0.75;">' + label +
-      (modelled ? " " + MODELLED : "") +
-      '</td><td style="text-align:right;' + (credit ? "color:#0f6e56;" : "") + '">' +
+      '<tr><td style="padding:4px 0;opacity:0.75;">' + label +
+      '</td><td style="text-align:right;color:' + (modelled ? C_MODELLED : C_BILLING) + ';">' +
       (credit && value !== "-" ? "-" : "") + value + "</td></tr>"
     );
   }
 
   function tile(label, value, sub, modelled) {
     return (
-      '<div style="flex:1;min-width:140px;border:1px solid var(--divider-color, #444);' +
-      'border-radius:8px;padding:10px 12px;">' +
-      '<div style="font-size:0.78em;opacity:0.65;">' + label +
+      '<div style="flex:1;min-width:170px;border:1px solid var(--divider-color, #444);' +
+      'border-radius:8px;padding:12px 16px;">' +
+      '<div style="font-size:0.95em;opacity:0.65;">' + label +
       (modelled ? " " + MODELLED : "") + "</div>" +
-      '<div style="font-size:1.5em;font-weight:500;padding:2px 0;">' + value + "</div>" +
-      '<div style="font-size:0.75em;opacity:0.5;">' + sub + "</div></div>"
+      '<div style="font-size:2.1em;font-weight:500;padding:2px 0;color:' +
+      (modelled ? C_MODELLED : C_BILLING) + ';">' + value + "</div>" +
+      '<div style="font-size:0.9em;opacity:0.5;">' + sub + "</div></div>"
     );
   }
 
@@ -270,11 +293,15 @@
           });
           var mtd = mtdNet(mtdInput);
 
-          var html = '<ha-card style="padding:12px 16px 16px;">';
-          html += '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Ledger</div>';
+          // Content is width-capped: on a wide screen a full-width table puts
+          // a chasm between label and value. 1.15em base lifts the tiny fonts.
+          var html =
+            '<ha-card style="padding:16px 24px 20px;">' +
+            '<div style="max-width:840px;margin:0 auto;font-size:1.15em;">';
+          html += '<div style="font-size:1.25em;font-weight:500;padding:4px 0 12px;">Ledger</div>';
 
           // headline strip
-          html += '<div style="display:flex;gap:10px;flex-wrap:wrap;padding-bottom:12px;">';
+          html += '<div style="display:flex;gap:12px;flex-wrap:wrap;padding-bottom:14px;">';
           html += tile("Today net", fmtGbp(net), "energy, after export", false);
           html += tile("Month to date", fmtGbp(mtd), "from statistics", false);
           html += tile("Saved today", fmtGbp(savings), "vs no battery / no solar", true);
@@ -284,17 +311,18 @@
           var rows = actualRows(sources);
           if (rows.length) {
             html +=
-              '<div style="font-size:0.85em;font-weight:500;padding:6px 0 4px;">Whole-home actuals' +
+              '<div style="font-weight:500;padding:8px 0 4px;">Whole-home actuals' +
               ' <span style="opacity:0.5;font-weight:400;">(billing-grade)</span></div>' +
-              '<table style="width:100%;font-size:0.85em;border-collapse:collapse;">';
+              '<table style="width:100%;border-collapse:collapse;">';
             rows.forEach(function (r) {
               html += rowHtml(r.label, fmtGbp(self._num(r.entity)), r.credit, false);
             });
             if (net !== null) {
               html +=
                 '<tr style="border-top:1px solid var(--divider-color, #444);">' +
-                '<td style="padding:4px 0;font-weight:500;">Net</td>' +
-                '<td style="text-align:right;font-weight:500;">' + fmtGbp(net) + "</td></tr>";
+                '<td style="padding:5px 0;font-weight:500;">Net</td>' +
+                '<td style="text-align:right;font-weight:500;color:' + C_BILLING + ';">' +
+                fmtGbp(net) + "</td></tr>";
             }
             html += "</table>";
           }
@@ -310,13 +338,13 @@
             var bHtml = "";
             lines.forEach(function (l) {
               var v = self._attr(c.savings_entity, l[0]);
-              if (typeof v === "number") bHtml += rowHtml(l[1], fmtGbp(v), true, false);
+              if (typeof v === "number") bHtml += rowHtml(l[1], fmtGbp(v), true, true);
             });
             if (bHtml) {
               html +=
-                '<div style="font-size:0.85em;font-weight:500;padding:12px 0 4px;">Avoided costs ' +
+                '<div style="font-weight:500;padding:14px 0 4px;">Avoided costs ' +
                 MODELLED + "</div>" +
-                '<table style="width:100%;font-size:0.85em;border-collapse:collapse;">' + bHtml +
+                '<table style="width:100%;border-collapse:collapse;">' + bHtml +
                 "</table>";
             }
           }
@@ -328,8 +356,8 @@
             var evMtdKwh = this._mtd(sources.ev);
             var publicRate = this._attr(c.ev_cost_entity, "public_charging_rate_gbp_per_kwh");
             html +=
-              '<div style="font-size:0.85em;font-weight:500;padding:12px 0 4px;">EV</div>' +
-              '<table style="width:100%;font-size:0.85em;border-collapse:collapse;">';
+              '<div style="font-weight:500;padding:14px 0 4px;">EV ' + MODELLED + "</div>" +
+              '<table style="width:100%;border-collapse:collapse;">';
             html += rowHtml("Charged today", fmtGbp(evToday), false, true);
             if (evMtdCost !== null) {
               var kwhNote = evMtdKwh !== null ? evMtdKwh.toFixed(0) + " kWh - " : "";
@@ -350,30 +378,64 @@
           // section D - payback
           var cumulative = this._num(c.cumulative_entity);
           var capital = this._attr(c.cumulative_entity, "capital_cost_gbp");
-          if (cumulative !== null && typeof capital === "number" && capital > 0) {
-            var pct = Math.max(0, Math.min(100, (cumulative / capital) * 100));
+          var pv = paybackView(cumulative, capital, Date.now(), {
+            started: this._attr(c.cumulative_entity, "started"),
+          });
+          if (pv) {
             var runRate = this._attr(c.cumulative_entity, "run_rate_gbp_per_year");
             var breakeven = this._attr(c.cumulative_entity, "projected_breakeven");
-            var subBits = [];
-            if (typeof runRate === "number") subBits.push(fmtGbp(runRate) + "/yr run-rate");
-            if (typeof breakeven === "string" && /^\d{4}-\d{2}-\d{2}$/.test(breakeven)) {
-              subBits.push("break-even " + breakeven);
+            var haveBreakeven =
+              typeof breakeven === "string" && /^\d{4}-\d{2}-\d{2}$/.test(breakeven);
+            html +=
+              '<div style="font-weight:500;padding:14px 0 4px;">Paying for itself ' +
+              MODELLED + "</div>";
+            if (pv.early) {
+              // Early days: the % story is meaningless, so lead with the
+              // run-rate projection. NB tracking start, not system install -
+              // savings made before the accumulator existed are not counted.
+              var lead = [];
+              if (typeof runRate === "number") lead.push(fmtGbp(runRate) + "/yr run-rate");
+              if (haveBreakeven) lead.push("on track for break-even " + breakeven);
+              if (lead.length) {
+                html +=
+                  '<div style="padding-bottom:2px;color:' + C_MODELLED + ';">' +
+                  lead.join(" &#8212; ") + "</div>";
+              }
+              html +=
+                '<div style="font-size:0.85em;opacity:0.6;padding-bottom:4px;">' +
+                fmtGbp(cumulative) + " of " + fmtGbp(capital) + " recovered since tracking began" +
+                (pv.days !== null ? " (day " + pv.days + ")" : "") + "</div>";
+            } else {
+              var subBits = [];
+              if (typeof runRate === "number") subBits.push(fmtGbp(runRate) + "/yr run-rate");
+              if (haveBreakeven) subBits.push("break-even " + breakeven);
+              if (pv.days !== null) subBits.push("day " + pv.days + " of tracking");
+              html +=
+                '<div style="padding-bottom:4px;">' + fmtGbp(cumulative) +
+                ' <span style="opacity:0.6;">of ' + fmtGbp(capital) + " recovered (" +
+                pv.pct.toFixed(0) + "%)</span></div>" +
+                (subBits.length
+                  ? '<div style="font-size:0.85em;opacity:0.55;padding-bottom:4px;">' +
+                    subBits.join(" - ") + "</div>"
+                  : "");
             }
             html +=
-              '<div style="font-size:0.85em;font-weight:500;padding:12px 0 4px;">Paying for itself ' +
-              MODELLED + "</div>" +
-              '<div style="font-size:0.85em;padding-bottom:4px;">' + fmtGbp(cumulative) +
-              ' <span style="opacity:0.6;">of ' + fmtGbp(capital) + " recovered (" +
-              pct.toFixed(0) + "%)</span></div>" +
               '<div style="background:var(--divider-color, #444);border-radius:4px;height:8px;overflow:hidden;">' +
-              '<div style="background:#1d9e75;height:100%;width:' + pct.toFixed(1) + '%;"></div></div>' +
-              (subBits.length
-                ? '<div style="font-size:0.75em;opacity:0.55;padding-top:4px;">' +
-                  subBits.join(" - ") + "</div>"
-                : "");
+              '<div style="background:' + C_MODELLED + ';height:100%;width:' +
+              pv.barPct.toFixed(1) + '%;"></div></div>';
           }
 
-          html += "</ha-card>";
+          // provenance footnote
+          html +=
+            '<div style="font-size:0.85em;opacity:0.7;margin-top:16px;padding-top:10px;' +
+            'border-top:1px solid var(--divider-color, #444);">' +
+            '<span style="color:' + C_BILLING + ';">&#9679;</span> billing-grade - read ' +
+            "straight from supplier entities. " +
+            '<span style="color:' + C_MODELLED + ';">&#9679;</span> modelled - estimated ' +
+            "counterfactual priced from your tariff; directionally honest, not bill-accurate." +
+            "</div>";
+
+          html += "</div></ha-card>";
           this.innerHTML = html;
         }
       }
@@ -388,6 +450,7 @@
     mtdNet: mtdNet,
     sumChanges: sumChanges,
     evComparator: evComparator,
+    paybackView: paybackView,
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = API;

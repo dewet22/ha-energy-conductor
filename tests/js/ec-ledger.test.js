@@ -160,3 +160,35 @@ describe("mtdNet", () => {
     ).toBeCloseTo(23.0, 10);
   });
 });
+
+describe("paybackView", () => {
+  const TODAY = new Date("2026-06-12T20:00:00Z").getTime();
+
+  test("null without a usable capital cost or cumulative value", () => {
+    expect(L.paybackView(null, 12000, TODAY, {})).toBe(null);
+    expect(L.paybackView(6.71, null, TODAY, {})).toBe(null);
+    expect(L.paybackView(6.71, 0, TODAY, {})).toBe(null);
+  });
+
+  test("day-one numbers flag early mode with a minimum visible bar", () => {
+    const v = L.paybackView(6.71, 12000, TODAY, { started: "2026-06-12" });
+    expect(v.early).toBe(true);
+    expect(v.pct).toBeCloseTo(0.056, 2);
+    expect(v.barPct).toBeGreaterThanOrEqual(0.75);
+    expect(v.days).toBe(1);
+  });
+
+  test("established tracking is not early and the bar shows the real pct", () => {
+    const v = L.paybackView(3000, 12000, TODAY, { started: "2025-01-01" });
+    expect(v.early).toBe(false);
+    expect(v.pct).toBe(25);
+    expect(v.barPct).toBe(25);
+    expect(v.days).toBe(528);
+  });
+
+  test("pct clamps to 100 and bad started dates leave days null", () => {
+    const v = L.paybackView(15000, 12000, TODAY, { started: "garbage" });
+    expect(v.pct).toBe(100);
+    expect(v.days).toBe(null);
+  });
+});
