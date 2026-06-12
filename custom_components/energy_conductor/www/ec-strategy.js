@@ -329,7 +329,16 @@
       cards: [
         {
           type: "vertical-stack",
-          cards: [{ type: "glance", entities: glanceRows }, tape],
+          cards: [
+            // One row on any width; icons off for the text-forward look.
+            {
+              type: "glance",
+              entities: glanceRows,
+              columns: glanceRows.length,
+              show_icon: false,
+            },
+            tape,
+          ],
         },
       ],
     };

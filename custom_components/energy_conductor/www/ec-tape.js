@@ -523,7 +523,7 @@
                   'stroke="' + C_BATTERY + '" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
                 svg +=
                   '<text x="' + (px0 + 4).toFixed(1) + '" y="' + (socY(target) - 8).toFixed(1) +
-                  '" font-size="11" fill="' + C_BATTERY + '">charge to ' + Math.round(target) + "%</text>";
+                  '" font-size="11" fill="' + C_BATTERY + '">maintain at least ' + Math.round(target) + "%</text>";
               }
             }
           }
@@ -671,10 +671,27 @@
             var tickX = timeToX(tickT, win, W);
             var anchor = hOff === -12 ? "start" : hOff === 12 ? "end" : "middle";
             svg +=
+              '<line x1="' + tickX.toFixed(1) + '" y1="14" x2="' + tickX.toFixed(1) +
+              '" y2="' + AX + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
+            svg +=
               '<text x="' + tickX.toFixed(1) + '" y="' + (AX + 14) +
               '" font-size="11" fill="currentColor" opacity="0.55" text-anchor="' + anchor + '">' +
               ("0" + tickT.getHours()).slice(-2) + ":00</text>";
           }
+          // y-axis labels: kW on the left for the power curves, SoC % on the
+          // right for the battery line.
+          [maxKw, maxKw / 2].forEach(function (kw) {
+            svg +=
+              '<text x="4" y="' + (yPow(kw) - 3).toFixed(1) +
+              '" font-size="10" fill="currentColor" opacity="0.55">' +
+              (maxKw >= 4 ? Math.round(kw) : kw.toFixed(1)) + " kW</text>";
+          });
+          [100, 50].forEach(function (pct) {
+            svg +=
+              '<text x="' + (W - 4) + '" y="' + (socY(pct) + 11) +
+              '" font-size="10" fill="' + C_BATTERY + '" opacity="0.7" text-anchor="end">' +
+              pct + "%</text>";
+          });
           var nowX = W / 2;
           svg +=
             '<line x1="' + nowX + '" y1="10" x2="' + nowX + '" y2="' + (AX + 4) +

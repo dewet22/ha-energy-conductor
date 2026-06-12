@@ -323,6 +323,15 @@ describe("mission view", () => {
     expect(ids).toContain("sensor.octopus_cost");
   });
 
+  it("glance pins all entries to one row and drops the icons (text-forward strip)", async () => {
+    const hass = makeHass({ areaPrefix: "loft_" });
+    const dash = await EC.generateDashboard({}, hass);
+    const stack = dash.views[0].cards[0];
+    const glance = stack.cards.find((c) => c.type === "glance");
+    expect(glance.columns).toBe(glance.entities.length);
+    expect(glance.show_icon).toBe(false);
+  });
+
   it("never embeds an invalid external entity id (injection chokepoint)", async () => {
     const hass = makeHass({
       moneySources: { import_cost: "sensor.bad'}{{ 1 }}", pv: "sensor.pv" },
