@@ -160,6 +160,7 @@
   // ---- rendering ----------------------------------------------------------
 
   var REFRESH_MS = 5 * 60 * 1000;
+  var STATS_RETRY_MS = 30 * 1000;
 
   // Provenance colour language (matches the user's mental model from the
   // brainstorm): green = billing-grade read-through, amber = modelled
@@ -293,10 +294,16 @@
             })
             .then(function (result) {
               self._stats = result || {};
+              self._statsFailed = false;
               self._render();
             })
             .catch(function () {
+              // Typically the recorder still warming up right after a restart.
+              // Surface it and retry on the next tick after a short backoff
+              // instead of silently rendering dashes for a full refresh cycle.
               self._stats = {};
+              self._statsFailed = true;
+              self._fetchedAt = Date.now() - (REFRESH_MS - STATS_RETRY_MS);
               self._render();
             });
         }
@@ -343,6 +350,12 @@
             '<ha-card style="padding:16px 24px 20px;">' +
             '<div style="max-width:840px;margin:0 auto;font-size:1.15em;">';
           html += '<div style="font-size:1.25em;font-weight:500;padding:4px 0 12px;">Ledger</div>';
+          if (this._statsFailed) {
+            html +=
+              '<div style="opacity:0.6;font-size:0.85em;padding-bottom:8px;">' +
+              "Statistics unavailable (recorder may be starting up) - " +
+              "month-to-date and 7/30-day figures will retry shortly.</div>";
+          }
 
           // headline strip
           html += '<div style="display:flex;gap:12px;flex-wrap:wrap;padding-bottom:14px;">';
