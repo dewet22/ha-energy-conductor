@@ -79,7 +79,11 @@ function makeHass(opts) {
       area_id: prefix ? "loft" : null,
       disabled_by: disabled.indexOf(key) !== -1 ? "user" : null,
     });
-    states[id] = { state: stateFor(key) };
+    const attributes = {};
+    // The status sensor carries the resolved costs-entity map (money_sources);
+    // tests inject it via opts.moneySources to light up the long-term view.
+    if (key === "status" && opts.moneySources) attributes.money_sources = opts.moneySources;
+    states[id] = { state: stateFor(key), attributes: attributes };
   }
 
   SENSOR_KEYS.forEach(function (k) {

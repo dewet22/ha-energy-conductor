@@ -20,19 +20,38 @@ from .const import (
     BASELINE_LOOKBACK_DAYS,
     BASELINE_PERCENTILE,
     CONF_BATTERY_CHARGE_CONTROL,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
     CONF_DAILY_ENERGY_SENSOR,
     CONF_DEVICE_NAME,
+    CONF_EV_ENERGY_SENSOR,
+    CONF_EV_GREEN_ENERGY_SENSOR,
     CONF_EV_MIN_ACTIVATION_W,
     CONF_EV_POWER_SENSOR,
+    CONF_EXPORT_EARNINGS_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_GAS_COST_SENSOR,
+    CONF_GAS_ENERGY_SENSOR,
+    CONF_GAS_RATE_SENSOR,
+    CONF_GRID_EXPORT_ENERGY_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
     CONF_HOME_LOAD_SENSOR,
+    CONF_HOTWATER_ENERGY_SENSOR,
+    CONF_HOTWATER_GREEN_SENSOR,
+    CONF_IMPORT_COST_OFF_PEAK_SENSOR,
+    CONF_IMPORT_COST_PEAK_SENSOR,
+    CONF_IMPORT_COST_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_MANAGED_LOAD_SENSORS,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_PV_ENERGY_SENSOR,
     CONF_RESERVE_SOC_SENSOR,
+    CONF_STANDING_CHARGE_ELECTRICITY_SENSOR,
+    CONF_STANDING_CHARGE_GAS_SENSOR,
     CONF_SYSTEM_CAPITAL_COST,
     CONF_SYSTEM_INSTALL_DATE,
     DAILY_TARGET_LOOKBACK_DAYS,
@@ -119,6 +138,41 @@ class _BaseSensor(CoordinatorEntity[EnergyConductorCoordinator], SensorEntity):
         )
 
 
+# Dashboard-facing names for the configured costs entities, exposed (resolved) on the
+# status sensor's `money_sources` attribute so the bundled cards can find them without
+# access to the config entry. Same pattern as the per-sensor `source_entity` attributes.
+_MONEY_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
+    ("pv", CONF_PV_ENERGY_SENSOR),
+    ("house", CONF_DAILY_ENERGY_SENSOR),
+    ("grid_import", CONF_GRID_IMPORT_ENERGY_SENSOR),
+    ("grid_export", CONF_GRID_EXPORT_ENERGY_SENSOR),
+    ("ev", CONF_EV_ENERGY_SENSOR),
+    ("ev_green", CONF_EV_GREEN_ENERGY_SENSOR),
+    ("gas", CONF_GAS_ENERGY_SENSOR),
+    ("battery_discharge", CONF_BATTERY_DISCHARGE_ENERGY_SENSOR),
+    ("import_cost", CONF_IMPORT_COST_SENSOR),
+    ("import_cost_off_peak", CONF_IMPORT_COST_OFF_PEAK_SENSOR),
+    ("import_cost_peak", CONF_IMPORT_COST_PEAK_SENSOR),
+    ("export_earnings", CONF_EXPORT_EARNINGS_SENSOR),
+    ("standing_charge_electricity", CONF_STANDING_CHARGE_ELECTRICITY_SENSOR),
+    ("standing_charge_gas", CONF_STANDING_CHARGE_GAS_SENSOR),
+    ("gas_cost", CONF_GAS_COST_SENSOR),
+    ("import_rate", CONF_IMPORT_RATE_SENSOR),
+    ("export_rate", CONF_EXPORT_RATE_SENSOR),
+    ("gas_rate", CONF_GAS_RATE_SENSOR),
+)
+
+
+def _money_sources(config: dict[str, Any]) -> dict[str, str] | None:
+    sources = {name: config[key] for name, key in _MONEY_SOURCE_KEYS if config.get(key)}
+    # Hot water heating displaces gas whether diverted or boosted: prefer the
+    # total-in counter, fall back to the green/diverted one.
+    hot_water = config.get(CONF_HOTWATER_ENERGY_SENSOR) or config.get(CONF_HOTWATER_GREEN_SENSOR)
+    if hot_water:
+        sources["hot_water"] = hot_water
+    return sources or None
+
+
 class StatusSensor(_BaseSensor):
     _attr_translation_key = "status"
     _attr_name = "Status"
@@ -153,6 +207,7 @@ class StatusSensor(_BaseSensor):
             "grid_export_w": grid.export_w if grid is not None else None,
             "verification": self.coordinator.verification_status,
             "verification_detail": self.coordinator.last_verification_detail,
+            "money_sources": _money_sources(self.coordinator.config),
         }
 
 
