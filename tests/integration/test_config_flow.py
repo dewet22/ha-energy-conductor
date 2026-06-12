@@ -13,12 +13,15 @@ from custom_components.energy_conductor.const import (
     CONF_ENTITY_REFS,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_IMPORT_COST_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
+    CONF_SYSTEM_CAPITAL_COST,
     CONF_WINTER_MIN_KWH,
     CONF_WRITE_MODE,
     DOMAIN,
@@ -94,6 +97,9 @@ async def test_wizard_creates_v3_entry_with_anchors(hass):
     assert result["step_id"] == "grid"
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "costs"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["step_id"] == "behaviour"
 
     result = await hass.config_entries.flow.async_configure(
@@ -141,7 +147,42 @@ async def test_options_menu_lists_groups(hass):
         "ev",
         "hotwater",
         "grid",
+        "costs",
         "behaviour",
+    }
+
+
+async def test_options_costs_substep_persists_and_anchors(hass):
+    import_cost = _register(hass, "sensor", "octopus_energy", "elec-cost", "electricity_cost")
+    import_rate = _register(hass, "sensor", "octopus_energy", "elec-rate", "electricity_rate")
+    entry = _v3_entry()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "costs"}
+    )
+    assert result["step_id"] == "costs"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_IMPORT_COST_SENSOR: import_cost,
+            CONF_IMPORT_RATE_SENSOR: import_rate,
+            CONF_SYSTEM_CAPITAL_COST: 11500.0,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    assert entry.options[CONF_IMPORT_COST_SENSOR] == import_cost
+    assert entry.options[CONF_SYSTEM_CAPITAL_COST] == 11500.0
+    assert entry.options[CONF_ENTITY_REFS][CONF_IMPORT_COST_SENSOR] == {
+        "platform": "octopus_energy",
+        "unique_id": "elec-cost",
+    }
+    assert entry.options[CONF_ENTITY_REFS][CONF_IMPORT_RATE_SENSOR] == {
+        "platform": "octopus_energy",
+        "unique_id": "elec-rate",
     }
 
 

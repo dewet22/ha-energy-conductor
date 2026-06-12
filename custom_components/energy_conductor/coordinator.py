@@ -45,6 +45,7 @@ from .discharge_guard import discharge_limit
 from .entity_ref import resolve_config
 from .jitter import hourly_jitter_offset
 from .model import SiteState
+from .money_tracker import MoneyTracker
 from .notifier import Notifier
 from .overnight import plan_overnight
 from .verify import VerificationResult, check_actuation, check_write_landed
@@ -178,6 +179,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # Write-readback: last successfully-commanded value per (kind, target), re-verified
         # against the entity every tick (catches flip-backs at any timescale).
         self._commanded: dict[tuple[str, str], _CommandedWrite] = {}
+        # Money accumulators (ledger feature); None unless the costs options are set.
+        self.money: MoneyTracker | None = (
+            MoneyTracker(hass, self.config) if MoneyTracker.configured(self.config) else None
+        )
 
         self._unsubs: list = []
 
@@ -249,6 +254,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
     async def _async_update_data(self) -> None:
         self.ticks_total += 1
+        # Money accumulation runs first and unconditionally: its inputs are independent
+        # of the control-loop entities, so a degraded control tick must not stall pricing.
+        if self.money is not None:
+            self.money.tick(dt_util.now())
         try:
             state = await self.adapter.build_site_state()
         except EntityProblem as exc:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -11,7 +11,9 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOf
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     BASELINE_IDLE_THRESHOLD_W,
@@ -31,6 +33,8 @@ from .const import (
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_RESERVE_SOC_SENSOR,
+    CONF_SYSTEM_CAPITAL_COST,
+    CONF_SYSTEM_INSTALL_DATE,
     DAILY_TARGET_LOOKBACK_DAYS,
     DAILY_TARGET_PERCENTILE,
     DEFAULT_BATTERY_MAX_POWER_W,
@@ -39,6 +43,16 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import EnergyConductorCoordinator
+from .money import CumulativeSavings, DailyCost
+from .money_tracker import (
+    ACC_COUNTERFACTUAL,
+    ACC_EV_COST,
+    ACC_EV_SOLAR,
+    ACC_HOTWATER_GAS,
+    ACC_PEAK_SHIFT,
+    ACC_SELF_USE,
+    MoneyTracker,
+)
 
 
 async def async_setup_entry(
@@ -47,26 +61,36 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EnergyConductorCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            StatusSensor(coordinator, entry),
-            OvernightPlanSensor(coordinator, entry),
-            DischargeDecisionSensor(coordinator, entry),
-            BatterySocSensor(coordinator, entry),
-            BatteryReservePercentSensor(coordinator, entry),
-            BatteryUsableEnergySensor(coordinator, entry),
-            BatteryMaxChargeSensor(coordinator, entry),
-            BatteryMaxDischargeSensor(coordinator, entry),
-            SolarForecastSensor(coordinator, entry),
-            CheapWindowEndSensor(coordinator, entry),
-            NextOffPeakWindowStartSensor(coordinator, entry),
-            EVChargerPowerSensor(coordinator, entry),
-            BaselineLoadSensor(coordinator, entry),
-            DailyKwhTargetSensor(coordinator, entry),
-            HotWaterReserveSensor(coordinator, entry),
-            LastSiteStateAtSensor(coordinator, entry),
-        ]
-    )
+    entities: list[SensorEntity] = [
+        StatusSensor(coordinator, entry),
+        OvernightPlanSensor(coordinator, entry),
+        DischargeDecisionSensor(coordinator, entry),
+        BatterySocSensor(coordinator, entry),
+        BatteryReservePercentSensor(coordinator, entry),
+        BatteryUsableEnergySensor(coordinator, entry),
+        BatteryMaxChargeSensor(coordinator, entry),
+        BatteryMaxDischargeSensor(coordinator, entry),
+        SolarForecastSensor(coordinator, entry),
+        CheapWindowEndSensor(coordinator, entry),
+        NextOffPeakWindowStartSensor(coordinator, entry),
+        EVChargerPowerSensor(coordinator, entry),
+        BaselineLoadSensor(coordinator, entry),
+        DailyKwhTargetSensor(coordinator, entry),
+        HotWaterReserveSensor(coordinator, entry),
+        LastSiteStateAtSensor(coordinator, entry),
+    ]
+    # Money sensors: each gated on its own sources (unlike the always-registered
+    # hot-water pair, these stay absent rather than sit unknown forever — the
+    # ledger view drops their lines the same way).
+    config = coordinator.config
+    if MoneyTracker.counterfactual_enabled(config):
+        entities.append(CounterfactualCostSensor(coordinator, entry))
+    if MoneyTracker.ev_cost_enabled(config):
+        entities.append(EVChargeCostSensor(coordinator, entry))
+    if MoneyTracker.savings_enabled(config):
+        entities.append(SavingsTodaySensor(coordinator, entry))
+        entities.append(CumulativeSavingsSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class _BaseSensor(CoordinatorEntity[EnergyConductorCoordinator], SensorEntity):
@@ -555,6 +579,217 @@ class HotWaterReserveSensor(_BaseSensor):
             "boost_recommended": hw.boost_recommended,
             "suggested_boost_hours": hw.suggested_boost_hours,
         }
+
+
+class _MoneySensorBase(_BaseSensor):
+    """Shared shape for the GBP sensors. TOTAL + midnight last_reset puts the daily
+    figures into long-term statistics, so month-to-date falls out of LTS for free."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "GBP"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+
+    @property
+    def _money(self) -> MoneyTracker | None:
+        return self.coordinator.money
+
+
+class _DailyMoneySensor(_MoneySensorBase, RestoreEntity):
+    """A today-cost accumulator sensor backed by one MoneyTracker daily accumulator.
+
+    RestoreEntity carries the running total across restarts: the restored value and
+    its source-counter baseline are seeded back into the tracker (a restore from a
+    previous day is discarded there — today starts at zero).
+    """
+
+    _acc: str  # MoneyTracker accumulator name; set by subclasses
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is None or self._money is None or last.state in ("unavailable", "unknown"):
+            return
+        try:
+            restored = DailyCost(
+                day=date.fromisoformat(last.attributes["day"]),
+                last_counter_kwh=float(last.attributes["source_counter_kwh"]),
+                cost_gbp=float(last.state),
+            )
+        except KeyError, TypeError, ValueError:
+            return
+        self._money.seed_daily(self._acc, restored)
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        # Unavailable during a tariff outage rather than freezing silently: the
+        # accumulator holds underneath and resumes when the rate returns.
+        if self._money is None or self._money.daily.get(self._acc) is None:
+            return False
+        return super().available and self._money.rate_available
+
+    @property
+    def native_value(self) -> float | None:
+        return None if self._money is None else self._money.daily_cost(self._acc)
+
+    @property
+    def last_reset(self) -> datetime | None:
+        acc = self._money.daily.get(self._acc) if self._money is not None else None
+        if acc is None:
+            return None
+        return dt_util.start_of_local_day(datetime.combine(acc.day, time()))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        acc = self._money.daily.get(self._acc) if self._money is not None else None
+        if acc is None:
+            return {"modelled": True}
+        return {
+            "modelled": True,
+            "day": acc.day.isoformat(),
+            "source_counter_kwh": acc.last_counter_kwh,
+        }
+
+
+class CounterfactualCostSensor(_DailyMoneySensor):
+    _attr_translation_key = "counterfactual_cost"
+    _attr_name = "Counterfactual cost today"
+    _acc = ACC_COUNTERFACTUAL
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-counterfactual-cost-today"
+
+
+class EVChargeCostSensor(_DailyMoneySensor):
+    _attr_translation_key = "ev_charge_cost"
+    _attr_name = "EV charge cost today"
+    _acc = ACC_EV_COST
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-ev-charge-cost-today"
+
+
+class SavingsTodaySensor(_MoneySensorBase):
+    """Modelled savings vs the no-PV/no-battery counterfactual.
+
+    No restore needed: the headline recomputes from the counterfactual sensor (which
+    restores) and the billing-grade read-throughs. Only the per-line breakdown
+    attributes lose intraday history across a restart.
+    """
+
+    _attr_translation_key = "savings_today"
+    _attr_name = "Savings today"
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-savings-today"
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._money is not None and self._money.rate_available
+
+    @property
+    def native_value(self) -> float | None:
+        return None if self._money is None else self._money.savings_today
+
+    @property
+    def last_reset(self) -> datetime | None:
+        return dt_util.start_of_local_day()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        money = self._money
+        if money is None:
+            return {"modelled": True}
+        return {
+            "modelled": True,
+            "solar_self_use_gbp": money.daily_cost(ACC_SELF_USE),
+            "battery_peak_shift_gbp": money.daily_cost(ACC_PEAK_SHIFT),
+            "hot_water_gas_displacement_gbp": money.daily_cost(ACC_HOTWATER_GAS),
+            "ev_solar_charge_gbp": money.daily_cost(ACC_EV_SOLAR),
+        }
+
+
+class CumulativeSavingsSensor(_MoneySensorBase, RestoreEntity):
+    """Lifetime modelled savings — the payback tracker's source of truth."""
+
+    _attr_translation_key = "cumulative_savings"
+    _attr_name = "Cumulative savings"
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-cumulative-savings"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is None or self._money is None or last.state in ("unavailable", "unknown"):
+            return
+        try:
+            restored = CumulativeSavings(
+                day=date.fromisoformat(last.attributes["day"]),
+                started=date.fromisoformat(last.attributes["started"]),
+                base_gbp=float(last.attributes["banked_gbp"]),
+                today_gbp=float(last.attributes["today_gbp"]),
+            )
+        except KeyError, TypeError, ValueError:
+            return
+        self._money.seed_cumulative(restored)
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self._money is not None
+            and self._money.rate_available
+            and self._money.cumulative is not None
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        money = self._money
+        if money is None or money.cumulative is None:
+            return None
+        return money.cumulative.total_gbp
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        money = self._money
+        attrs: dict[str, Any] = {
+            "modelled": True,
+            "capital_cost_gbp": self.coordinator.config.get(CONF_SYSTEM_CAPITAL_COST),
+            "install_date": self.coordinator.config.get(CONF_SYSTEM_INSTALL_DATE),
+        }
+        if money is None or money.cumulative is None:
+            return attrs
+        cumulative = money.cumulative
+        attrs.update(
+            {
+                "day": cumulative.day.isoformat(),
+                "started": cumulative.started.isoformat(),
+                "banked_gbp": cumulative.base_gbp,
+                "today_gbp": cumulative.today_gbp,
+            }
+        )
+        payback = money.payback(cumulative.day)
+        attrs.update(
+            {
+                "recovered_pct": None if payback is None else round(payback.recovered_pct, 2),
+                "run_rate_gbp_per_year": (
+                    None if payback is None else round(payback.run_rate_gbp_per_year, 2)
+                ),
+                "projected_breakeven": (
+                    payback.projected_breakeven.isoformat()
+                    if payback is not None and payback.projected_breakeven is not None
+                    else None
+                ),
+            }
+        )
+        return attrs
 
 
 class LastSiteStateAtSensor(_BaseSensor):

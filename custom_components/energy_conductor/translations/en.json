@@ -83,6 +83,32 @@
           "battery_power_positive_is_charging": "Battery power: positive means charging (leave off if positive = discharging)"
         }
       },
+      "costs": {
+        "title": "Costs & payback (optional)",
+        "description": "Feeds the ledger and the modelled money sensors. Billing-grade entities (e.g. Octopus accumulative cost and standing-charge sensors) are read directly; each modelled sensor is created only when its own sources are set. Everything here is optional.",
+        "data": {
+          "import_cost_sensor": "Electricity import cost today (accumulative)",
+          "import_cost_off_peak_sensor": "Import cost today — off-peak share (optional split)",
+          "import_cost_peak_sensor": "Import cost today — peak share (optional split)",
+          "export_earnings_sensor": "Export earnings today (accumulative)",
+          "standing_charge_electricity_sensor": "Standing charge — electricity (per day)",
+          "standing_charge_gas_sensor": "Standing charge — gas (per day)",
+          "gas_cost_sensor": "Gas cost today (accumulative)",
+          "gas_energy_sensor": "Gas energy today (kWh)",
+          "import_rate_sensor": "Electricity import rate (p/kWh or GBP/kWh)",
+          "export_rate_sensor": "Electricity export rate (p/kWh or GBP/kWh)",
+          "gas_rate_sensor": "Gas rate (p/kWh or GBP/kWh)",
+          "pv_energy_sensor": "PV generation today (kWh)",
+          "grid_import_energy_sensor": "Grid import today (kWh)",
+          "grid_export_energy_sensor": "Grid export today (kWh)",
+          "battery_discharge_energy_sensor": "Battery discharge today (kWh)",
+          "ev_energy_sensor": "EV charge energy today (kWh)",
+          "ev_green_energy_sensor": "EV solar-charged energy today (kWh)",
+          "system_capital_cost_gbp": "System capital cost (GBP) — enables the payback tracker",
+          "system_install_date": "System install date (informational)",
+          "public_charging_rate_gbp_per_kwh": "Public-charging comparator rate (GBP/kWh; blank hides the comparison)"
+        }
+      },
       "behaviour": {
         "title": "Behaviour",
         "description": "Write mode, notification target and planning schedule.",
@@ -112,6 +138,7 @@
           "ev": "EV charger",
           "hotwater": "Hot water",
           "grid": "Grid & verification",
+          "costs": "Costs & payback",
           "behaviour": "Behaviour"
         }
       },
@@ -187,6 +214,31 @@
           "grid_export_sensor": "Grid export power sensor (W, always positive)",
           "battery_power_sensor": "Battery power sensor (W)",
           "battery_power_positive_is_charging": "Battery power: positive means charging (leave off if positive = discharging)"
+        }
+      },
+      "costs": {
+        "title": "Costs & payback",
+        "data": {
+          "import_cost_sensor": "Electricity import cost today (accumulative)",
+          "import_cost_off_peak_sensor": "Import cost today — off-peak share (optional split)",
+          "import_cost_peak_sensor": "Import cost today — peak share (optional split)",
+          "export_earnings_sensor": "Export earnings today (accumulative)",
+          "standing_charge_electricity_sensor": "Standing charge — electricity (per day)",
+          "standing_charge_gas_sensor": "Standing charge — gas (per day)",
+          "gas_cost_sensor": "Gas cost today (accumulative)",
+          "gas_energy_sensor": "Gas energy today (kWh)",
+          "import_rate_sensor": "Electricity import rate (p/kWh or GBP/kWh)",
+          "export_rate_sensor": "Electricity export rate (p/kWh or GBP/kWh)",
+          "gas_rate_sensor": "Gas rate (p/kWh or GBP/kWh)",
+          "pv_energy_sensor": "PV generation today (kWh)",
+          "grid_import_energy_sensor": "Grid import today (kWh)",
+          "grid_export_energy_sensor": "Grid export today (kWh)",
+          "battery_discharge_energy_sensor": "Battery discharge today (kWh)",
+          "ev_energy_sensor": "EV charge energy today (kWh)",
+          "ev_green_energy_sensor": "EV solar-charged energy today (kWh)",
+          "system_capital_cost_gbp": "System capital cost (GBP) — enables the payback tracker",
+          "system_install_date": "System install date (informational)",
+          "public_charging_rate_gbp_per_kwh": "Public-charging comparator rate (GBP/kWh; blank hides the comparison)"
         }
       },
       "behaviour": {

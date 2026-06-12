@@ -67,6 +67,33 @@ CONF_MANAGED_LOAD_SENSORS = "managed_load_sensors"  # list[str]; loads baked in,
 # static config value.
 CONF_DAILY_ENERGY_SENSOR = "daily_energy_sensor"
 
+# Config keys — costs / money (all optional; each money sensor is created only when its
+# own source entities are configured, so any subset of this group is useful).
+# Read-through entities (billing-grade where the supplier provides them):
+CONF_IMPORT_COST_SENSOR = "import_cost_sensor"  # today's accumulative import cost
+CONF_IMPORT_COST_OFF_PEAK_SENSOR = "import_cost_off_peak_sensor"
+CONF_IMPORT_COST_PEAK_SENSOR = "import_cost_peak_sensor"
+CONF_EXPORT_EARNINGS_SENSOR = "export_earnings_sensor"  # today's export earnings
+CONF_STANDING_CHARGE_ELECTRICITY_SENSOR = "standing_charge_electricity_sensor"
+CONF_STANDING_CHARGE_GAS_SENSOR = "standing_charge_gas_sensor"
+CONF_GAS_COST_SENSOR = "gas_cost_sensor"  # today's accumulative gas cost
+CONF_GAS_ENERGY_SENSOR = "gas_energy_sensor"  # today's gas kWh
+# Rates (unit p/kWh or GBP/kWh, normalised at read time — see money.normalise_rate):
+CONF_IMPORT_RATE_SENSOR = "import_rate_sensor"
+CONF_EXPORT_RATE_SENSOR = "export_rate_sensor"
+CONF_GAS_RATE_SENSOR = "gas_rate_sensor"
+# Daily energy counters (kWh) feeding the modelled avoided-cost lines:
+CONF_PV_ENERGY_SENSOR = "pv_energy_sensor"
+CONF_GRID_IMPORT_ENERGY_SENSOR = "grid_import_energy_sensor"
+CONF_GRID_EXPORT_ENERGY_SENSOR = "grid_export_energy_sensor"
+CONF_BATTERY_DISCHARGE_ENERGY_SENSOR = "battery_discharge_energy_sensor"
+CONF_EV_ENERGY_SENSOR = "ev_energy_sensor"
+CONF_EV_GREEN_ENERGY_SENSOR = "ev_green_energy_sensor"  # EV energy charged from solar
+# Scalars for the payback tracker and the EV comparator:
+CONF_SYSTEM_CAPITAL_COST = "system_capital_cost_gbp"
+CONF_SYSTEM_INSTALL_DATE = "system_install_date"
+CONF_PUBLIC_CHARGING_RATE = "public_charging_rate_gbp_per_kwh"
+
 # Internal: per-reference {platform, unique_id} anchors captured for every entity the
 # config points at, so a referenced entity that is re-created with a new entity_id (e.g. the
 # HA 2026.6 area-prefix convention, core #170560) is resolved back via its stable unique_id.
