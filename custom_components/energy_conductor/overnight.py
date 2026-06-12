@@ -56,12 +56,9 @@ def _is_off_peak_at(state: SiteState, t: datetime) -> bool:
 
 def _forecast_kw_at(state: SiteState, t: datetime) -> float:
     """Average forecast PV power (kW) over the slot containing `t`, 0 outside slots."""
-    slots = state.solar_forecast.slots
-    for i, slot in enumerate(slots):
-        slot_end = slots[i + 1].start if i + 1 < len(slots) else slot.start + timedelta(minutes=30)
-        if slot.start <= t < slot_end:
-            hours = (slot_end - slot.start).total_seconds() / 3600
-            return slot.energy_kwh / hours if hours > 0 else 0.0
+    for slot in state.solar_forecast.slots:
+        if slot.start <= t < slot.start + timedelta(minutes=30):
+            return slot.energy_kwh / 0.5
     return 0.0
 
 

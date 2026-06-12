@@ -124,7 +124,7 @@
     if (!Array.isArray(attr)) return [];
     var out = [];
     attr.forEach(function (slot) {
-      if (!slot || slot.period_start == null || typeof slot.pv_estimate !== "number") return;
+      if (!slot || slot.period_start == null || typeof slot.pv_estimate !== "number" || isNaN(slot.pv_estimate)) return;
       var t = new Date(Date.parse(slot.period_start));
       if (isNaN(t.getTime()) || t < win.start || t > win.end) return;
       out.push({ t: t, kw: slot.pv_estimate });
@@ -145,7 +145,7 @@
     if (!Array.isArray(attr)) return [];
     var out = [];
     attr.forEach(function (p) {
-      if (!p || p.t == null || typeof p.soc !== "number") return;
+      if (!p || p.t == null || typeof p.soc !== "number" || isNaN(p.soc)) return;
       var t = new Date(Date.parse(p.t));
       if (isNaN(t.getTime())) return;
       out.push({ t: t, v: p.soc });
@@ -378,11 +378,11 @@
               var px0 = timeToX(pStart < win.now ? win.now : pStart, win, W);
               var px1 = timeToX(pEnd, win, W);
               var target = parseFloat(plan.state);
-              svg +=
-                '<rect x="' + px0.toFixed(1) + '" y="' + (socY(target) - 4).toFixed(1) +
-                '" width="' + (px1 - px0).toFixed(1) + '" height="8" fill="none" ' +
-                'stroke="#7f77dd" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
               if (!isNaN(target)) {
+                svg +=
+                  '<rect x="' + px0.toFixed(1) + '" y="' + (socY(target) - 4).toFixed(1) +
+                  '" width="' + (px1 - px0).toFixed(1) + '" height="8" fill="none" ' +
+                  'stroke="#7f77dd" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
                 svg +=
                   '<text x="' + (px0 + 4).toFixed(1) + '" y="' + (socY(target) - 8).toFixed(1) +
                   '" font-size="11" fill="#7f77dd">charge to ' + Math.round(target) + "%</text>";

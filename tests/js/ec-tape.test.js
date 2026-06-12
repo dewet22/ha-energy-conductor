@@ -152,6 +152,16 @@ describe("forecastCurve", () => {
   test("garbage attribute gives an empty curve", () => {
     expect(T.forecastCurve(undefined, T.tapeWindow(NOW, 12))).toEqual([]);
   });
+
+  test("NaN pv_estimate is excluded (typeof NaN === 'number' so must check isNaN)", () => {
+    const attr = [
+      { period_start: at(-1).toISOString(), pv_estimate: NaN },
+      { period_start: at(0).toISOString(), pv_estimate: 2.0 },
+    ];
+    const pts = T.forecastCurve(attr, T.tapeWindow(NOW, 12));
+    expect(pts.length).toBe(1);
+    expect(pts[0].kw).toBe(2.0);
+  });
 });
 
 describe("downsample", () => {
@@ -185,5 +195,13 @@ describe("projectionPoints", () => {
   test("garbage gives empty", () => {
     expect(T.projectionPoints(null)).toEqual([]);
     expect(T.projectionPoints([{ t: "nope", soc: "x" }])).toEqual([]);
+  });
+
+  test("NaN soc is excluded (typeof NaN === 'number' so must check isNaN)", () => {
+    const attr = [
+      { t: NOW.toISOString(), soc: NaN },
+      { t: at(1).toISOString(), soc: 50 },
+    ];
+    expect(T.projectionPoints(attr).length).toBe(1);
   });
 });
