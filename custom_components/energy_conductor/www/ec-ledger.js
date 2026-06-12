@@ -67,9 +67,13 @@
   // no cost component is readable - an export-only net would be misleading.
   // A key present in `values` means the source is configured; a null value means
   // the entity is temporarily unavailable — return null rather than a partial total.
+  // When the split import pair (off_peak + peak) is configured it substitutes for
+  // the combined import_cost total, mirroring the actualRows display logic.
   function netToday(values) {
     if (!values) return null;
-    var costKeys = ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas"];
+    var hasSplit = ("import_cost_off_peak" in values) && ("import_cost_peak" in values);
+    var importKeys = hasSplit ? ["import_cost_off_peak", "import_cost_peak"] : ["import_cost"];
+    var costKeys = importKeys.concat(["standing_charge_electricity", "gas_cost", "standing_charge_gas"]);
     var net = null;
     for (var i = 0; i < costKeys.length; i++) {
       var k = costKeys[i];
@@ -88,9 +92,12 @@
   // using statistics rather than current sensor states). Null when no cost
   // component is present — absence is not free energy. A key present in
   // `mtdValues` means the source is configured; null means no statistics yet.
+  // Split import pair substitutes for import_cost in the same way as netToday.
   function mtdNet(mtdValues) {
     if (!mtdValues) return null;
-    var costKeys = ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas"];
+    var hasSplit = ("import_cost_off_peak" in mtdValues) && ("import_cost_peak" in mtdValues);
+    var importKeys = hasSplit ? ["import_cost_off_peak", "import_cost_peak"] : ["import_cost"];
+    var costKeys = importKeys.concat(["standing_charge_electricity", "gas_cost", "standing_charge_gas"]);
     var net = null;
     for (var i = 0; i < costKeys.length; i++) {
       var k = costKeys[i];
@@ -210,7 +217,7 @@
         _fetchStats() {
           var sources = this._sources();
           var ids = [];
-          ["import_cost", "export_earnings", "gas_cost", "standing_charge_electricity", "standing_charge_gas", "ev"].forEach(function (k) {
+          ["import_cost", "import_cost_off_peak", "import_cost_peak", "export_earnings", "gas_cost", "standing_charge_electricity", "standing_charge_gas", "ev"].forEach(function (k) {
             if (sources[k]) ids.push(sources[k]);
           });
           var evCost = this._config.ev_cost_entity;
@@ -260,7 +267,7 @@
           // Only pass configured sources (keys in sources) so mtdNet can
           // distinguish "not configured" (absent key) from "no stats yet" (null).
           var mtdInput = {};
-          ["import_cost", "standing_charge_electricity", "gas_cost", "standing_charge_gas", "export_earnings"].forEach(function (k) {
+          ["import_cost", "import_cost_off_peak", "import_cost_peak", "standing_charge_electricity", "gas_cost", "standing_charge_gas", "export_earnings"].forEach(function (k) {
             if (sources[k]) mtdInput[k] = self._mtd(sources[k]);
           });
           var mtd = mtdNet(mtdInput);

@@ -65,6 +65,17 @@ describe("netToday", () => {
     // import_cost IS in values (configured) but the entity is unavailable
     expect(L.netToday({ import_cost: null, standing_charge_electricity: 0.58 })).toBe(null);
   });
+
+  test("split import pair substitutes for import_cost in net calculation", () => {
+    // off-peak + peak configured, no combined import_cost
+    expect(
+      L.netToday({ import_cost_off_peak: 0.60, import_cost_peak: 0.45, standing_charge_electricity: 0.58, export_earnings: 0.20 })
+    ).toBeCloseTo(1.43, 10);
+  });
+
+  test("null when one of the split import sources is temporarily unavailable", () => {
+    expect(L.netToday({ import_cost_off_peak: 0.60, import_cost_peak: null, standing_charge_electricity: 0.58 })).toBe(null);
+  });
 });
 
 describe("sumChanges", () => {
@@ -120,5 +131,15 @@ describe("mtdNet", () => {
   test("null when a configured source has no statistics data yet (key present, value null)", () => {
     // import_cost IS configured (key present) but stats haven't loaded (null)
     expect(L.mtdNet({ import_cost: null, standing_charge_electricity: 5.0 })).toBe(null);
+  });
+
+  test("split import pair substitutes for import_cost in month-to-date total", () => {
+    expect(
+      L.mtdNet({ import_cost_off_peak: 18.0, import_cost_peak: 12.0, standing_charge_electricity: 5.0, export_earnings: 2.0 })
+    ).toBeCloseTo(33.0, 10);
+  });
+
+  test("null when split import_cost_peak has no statistics yet (key present, value null)", () => {
+    expect(L.mtdNet({ import_cost_off_peak: 18.0, import_cost_peak: null, standing_charge_electricity: 5.0 })).toBe(null);
   });
 });
