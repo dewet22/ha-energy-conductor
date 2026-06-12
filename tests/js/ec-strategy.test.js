@@ -247,3 +247,41 @@ describe("device pin", () => {
     expect(view(dash).cards[0].content).not.toContain("nonexistent");
   });
 });
+
+describe("long-term view", () => {
+  const SOURCES = { pv: "sensor.pv_today", grid_export: "sensor.export_today" };
+
+  it("emits the Long-term view when the status sensor carries flow sources", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({ moneySources: SOURCES }));
+    expect(dash.views.length).toBe(2);
+    const lt = dash.views[1];
+    expect(lt.path).toBe("long-term");
+    expect(lt.panel).toBe(true);
+    expect(lt.cards.length).toBe(1);
+    expect(lt.cards[0].type).toBe("custom:ec-longterm");
+    // The card resolves flows itself via the status entity (registry-resolved id).
+    const statusId = entityId("sensor", "", "blithe", "status");
+    expect(lt.cards[0].status_entity).toBe(statusId);
+  });
+
+  it("omits the view without money sources", async () => {
+    const dash = await EC.generateDashboard({}, makeHass({}));
+    expect(dash.views.length).toBe(1);
+  });
+
+  it("omits the view when sources carry no flow keys", async () => {
+    const dash = await EC.generateDashboard(
+      {},
+      makeHass({ moneySources: { import_rate: "sensor.rate" } })
+    );
+    expect(dash.views.length).toBe(1);
+  });
+
+  it("uses the registry's current status id under an area prefix", async () => {
+    const hass = makeHass({ areaPrefix: "loft_", moneySources: SOURCES });
+    const dash = await EC.generateDashboard({}, hass);
+    expect(dash.views[1].cards[0].status_entity).toBe(
+      entityId("sensor", "loft_", "blithe", "status")
+    );
+  });
+});

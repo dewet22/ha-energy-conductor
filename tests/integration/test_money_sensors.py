@@ -160,6 +160,36 @@ async def test_cumulative_unavailable_during_later_rate_outage(hass: HomeAssista
     assert hass.states.get(cumulative_id).state not in ("unavailable", "unknown")
 
 
+async def test_status_sensor_exposes_money_sources(hass: HomeAssistant) -> None:
+    """The dashboard cards resolve the configured costs entities via this attribute."""
+    _arrange_entities(hass, soc="50")
+    _arrange_money_entities(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data=COSTS_CONFIG, entry_id="m4")
+    assert await _setup(hass, entry)
+
+    status_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}-status")
+    sources = hass.states.get(status_id).attributes.get("money_sources")
+    assert sources is not None
+    assert sources["house"] == HOUSE
+    assert sources["import_rate"] == RATE
+    assert sources["import_cost"] == IMPORT_COST
+    assert sources["pv"] == PV
+    assert sources["grid_export"] == EXPORT_KWH
+    assert sources["ev"] == EV
+    # Unconfigured sources are absent, not None — the cards gate on key presence.
+    assert "gas" not in sources
+    assert "hot_water" not in sources
+
+
+async def test_status_sensor_money_sources_absent_without_config(hass: HomeAssistant) -> None:
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="m5")
+    assert await _setup(hass, entry)
+
+    status_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}-status")
+    assert hass.states.get(status_id).attributes.get("money_sources") is None
+
+
 async def test_counterfactual_restores_running_total(hass: HomeAssistant) -> None:
     """A same-day restart resumes the accumulator instead of restarting at zero."""
     _arrange_entities(hass, soc="50")

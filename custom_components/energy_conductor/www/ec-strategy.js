@@ -286,6 +286,61 @@
     };
   }
 
+  // --- long-term view ---------------------------------------------------------
+  //
+  // Emitted when the status sensor's `money_sources` attribute names at least one
+  // energy-counter flow (set via the integration's Costs options). The card itself
+  // re-resolves the sources at render time; the strategy only gates the view.
+  var LONGTERM_FLOW_KEYS = [
+    "pv",
+    "house",
+    "grid_import",
+    "grid_export",
+    "ev",
+    "hot_water",
+    "gas",
+  ];
+
+  function hasLongtermFlows(states, statusId) {
+    if (!statusId) return false;
+    var s = states[statusId];
+    var sources = s && s.attributes && s.attributes.money_sources;
+    if (!sources) return false;
+    return LONGTERM_FLOW_KEYS.some(function (key) {
+      return Boolean(sources[key]);
+    });
+  }
+
+  // Bounded wait for a bundled custom card. Lovelace-resource registration makes
+  // the module load before dashboards render, but a panel view that references a
+  // not-yet-defined element renders a permanent "Configuration error" - so when
+  // the element hasn't appeared in time, the view is dropped for this render
+  // rather than risking that. In Node (vitest) customElements is undefined and
+  // the gate passes.
+  function cardDefined(tag, timeoutMs) {
+    if (typeof customElements === "undefined") return Promise.resolve(true);
+    if (customElements.get(tag)) return Promise.resolve(true);
+    return new Promise(function (resolve) {
+      var timer = setTimeout(function () {
+        resolve(false);
+      }, timeoutMs);
+      customElements.whenDefined(tag).then(function () {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
+  function generateLongtermView(statusId) {
+    return {
+      title: "Long-term",
+      path: "long-term",
+      icon: "mdi:chart-box-outline",
+      panel: true,
+      cards: [{ type: "custom:ec-longterm", status_entity: statusId }],
+    };
+  }
+
   function errorDashboard(message) {
     return {
       title: "Energy Conductor",
@@ -323,9 +378,17 @@
         "No Energy Conductor device found. Add and configure the integration first."
       );
     }
+    var views = [generateView(accessor(state), state.hotWaterConfigured)];
+    var statusId = state.keys["status"] || null;
+    if (
+      hasLongtermFlows((hass && hass.states) || {}, statusId) &&
+      (await cardDefined("ec-longterm", 3000))
+    ) {
+      views.push(generateLongtermView(statusId));
+    }
     return {
       title: "Energy Conductor",
-      views: [generateView(accessor(state), state.hotWaterConfigured)],
+      views: views,
     };
   }
 

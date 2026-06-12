@@ -22,35 +22,90 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["binary_sensor", "sensor"]
 
-# Bundled dashboard-strategy frontend module. Bump _STRATEGY_VERSION on any
-# change to ec-strategy.js so the browser cache doesn't serve a stale copy.
+# Bundled dashboard frontend modules (the strategy + the custom cards). Bump
+# _STRATEGY_VERSION on any change to any bundled JS so neither the browser
+# cache nor the Lovelace resource entry serves a stale copy.
 _STRATEGY_FILENAME = "ec-strategy.js"
+_LONGTERM_FILENAME = "ec-longterm.js"
 _STRATEGY_URL = f"/{DOMAIN}/{_STRATEGY_FILENAME}"
-_STRATEGY_VERSION = "6"
+_LONGTERM_URL = f"/{DOMAIN}/{_LONGTERM_FILENAME}"
+_MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL)
+_STRATEGY_VERSION = "7"
+
+
+async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
+    """Ensure the bundled modules are registered as Lovelace *resources*.
+
+    ``add_extra_js_url`` modules are fire-and-forget: the frontend renders
+    dashboards without awaiting them, so a panel view referencing a custom card
+    from a module still in flight renders a permanent "Configuration error"
+    (upstream frontend#52570; mechanism proven live in givenergy-hass). Lovelace
+    resources, by contrast, are awaited before any dashboard renders. Storage
+    mode only — a YAML-mode resource list is user-managed, so it is left alone.
+    """
+    try:
+        lovelace = hass.data.get("lovelace")
+        resources = getattr(lovelace, "resources", None)
+        if resources is None or not hasattr(resources, "async_create_item"):
+            return  # lovelace absent, or YAML mode: nothing to manage here
+        if not resources.loaded:
+            await resources.async_load()
+
+        wanted = {
+            url: {"res_type": "module", "url": f"{url}?v={_STRATEGY_VERSION}"}
+            for url in _MODULE_URLS
+        }
+        for item in list(resources.async_items()):
+            item_url = item.get("url") if isinstance(item, dict) else item.url
+            base = str(item_url or "").split("?", 1)[0]
+            target = wanted.pop(base, None)
+            if target is None:
+                continue
+            if item_url != target["url"]:
+                item_id = item.get("id") if isinstance(item, dict) else item.id
+                await resources.async_update_item(item_id, target)
+        for target in wanted.values():
+            await resources.async_create_item(target)
+    except Exception as exc:
+        # Cosmetic feature — must never break setup.
+        _LOGGER.warning("Could not register Lovelace resources: %s", exc)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the bundled dashboard-strategy frontend module.
+    """Register the bundled dashboard frontend modules.
 
     Component scope, so the static-path registration happens exactly once
     regardless of how many config entries exist.
     """
     from homeassistant.components.frontend import add_extra_js_url
     from homeassistant.components.http import StaticPathConfig
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    from homeassistant.core import CoreState
 
     if hass.http is None:
         # No web server (e.g. the test harness) — nothing to serve from anyway.
         return True
     try:
-        module_path = Path(__file__).parent / "www" / _STRATEGY_FILENAME
+        www = Path(__file__).parent / "www"
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(_STRATEGY_URL, str(module_path), False)]
+            [StaticPathConfig(url, str(www / url.rsplit("/", 1)[1]), False) for url in _MODULE_URLS]
         )
-        add_extra_js_url(hass, f"{_STRATEGY_URL}?v={_STRATEGY_VERSION}")
+        for url in _MODULE_URLS:
+            add_extra_js_url(hass, f"{url}?v={_STRATEGY_VERSION}")
     except Exception as exc:
-        # The bundled module is cosmetic (dashboard frontend) — a failure here
+        # The bundled modules are cosmetic (dashboard frontend) — a failure here
         # must never take down the integration. Log and carry on.
-        _LOGGER.warning("Could not register the dashboard strategy module: %s", exc)
+        _LOGGER.warning("Could not register the dashboard modules: %s", exc)
+
+    # Lovelace sets up its resource store during bootstrap; register ours once
+    # HA has fully started (immediately when this is a reload of a running HA).
+    async def _register_resources(_event: object = None) -> None:
+        await _async_register_lovelace_resources(hass)
+
+    if hass.state is CoreState.running:
+        await _register_resources()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _register_resources)
     return True
 
 
