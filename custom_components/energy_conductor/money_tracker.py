@@ -243,4 +243,5 @@ class MoneyTracker:
             recovered_gbp=self.cumulative.total_gbp,
             started=self.cumulative.started,
             today=today,
+            today_gbp=self.cumulative.today_gbp,
         )

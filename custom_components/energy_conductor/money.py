@@ -162,17 +162,23 @@ def payback_projection(
     recovered_gbp: float,
     started: date,
     today: date,
+    today_gbp: float = 0.0,
 ) -> PaybackProjection | None:
     """Project break-even from the recovery run-rate since tracking started.
 
-    The run-rate denominates over days *tracked* (not days since install): the
-    accumulator only counts from the day it was created, so install-dated maths
-    would understate the rate. None when no capital cost is configured.
+    The run-rate denominates over *completed* days tracked (not days since
+    install: the accumulator only counts from the day it was created, so
+    install-dated maths would understate the rate). Today's running figure
+    is excluded - overnight the battery buys cheap grid energy ahead of its
+    daytime payoff, so the intraday number dips negative and would flap the
+    projection by years between dusk and the small hours. On the first day
+    there is nothing banked yet, so the running total is the only sample.
+    None when no capital cost is configured.
     """
     if not capital_cost_gbp or capital_cost_gbp <= 0:
         return None
-    days_tracked = max((today - started).days + 1, 1)
-    per_day = recovered_gbp / days_tracked
+    completed_days = (today - started).days
+    per_day = (recovered_gbp - today_gbp) / completed_days if completed_days >= 1 else recovered_gbp
     recovered_pct = recovered_gbp / capital_cost_gbp * 100.0
     if recovered_gbp >= capital_cost_gbp:
         breakeven: date | None = today
