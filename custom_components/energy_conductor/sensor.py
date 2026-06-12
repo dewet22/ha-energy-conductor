@@ -742,7 +742,12 @@ class CumulativeSavingsSensor(_MoneySensorBase, RestoreEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and self._money is not None and self._money.cumulative is not None
+        return (
+            super().available
+            and self._money is not None
+            and self._money.rate_available
+            and self._money.cumulative is not None
+        )
 
     @property
     def native_value(self) -> float | None:

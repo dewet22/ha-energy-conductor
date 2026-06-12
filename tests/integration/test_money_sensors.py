@@ -129,6 +129,37 @@ async def test_money_sensor_unavailable_during_rate_outage(hass: HomeAssistant) 
         assert state.state not in ("unavailable", "unknown"), f"{key} should recover"
 
 
+async def test_cumulative_unavailable_during_later_rate_outage(hass: HomeAssistant) -> None:
+    """Cumulative goes unavailable during a rate outage even after accumulation starts."""
+    _arrange_entities(hass, soc="50")
+    _arrange_money_entities(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data=COSTS_CONFIG, entry_id="m6")
+    assert await _setup(hass, entry)
+
+    # Accumulate a non-zero cumulative value first.
+    hass.states.async_set(HOUSE, "12.0", {"unit_of_measurement": "kWh"})
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    cumulative_id = _money_entity_id(hass, entry, "cumulative-savings")
+    assert hass.states.get(cumulative_id).state not in ("unavailable", "unknown")
+
+    # Rate disappears mid-day — cumulative must go unavailable, not show stale value.
+    hass.states.async_set(RATE, "unavailable")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(cumulative_id).state == "unavailable"
+
+    # Rate comes back — sensor recovers.
+    hass.states.async_set(RATE, "0.30", {"unit_of_measurement": "GBP/kWh"})
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(cumulative_id).state not in ("unavailable", "unknown")
+
+
 async def test_counterfactual_restores_running_total(hass: HomeAssistant) -> None:
     """A same-day restart resumes the accumulator instead of restarting at zero."""
     _arrange_entities(hass, soc="50")
