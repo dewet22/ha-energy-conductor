@@ -76,6 +76,13 @@ describe("netToday", () => {
   test("null when one of the split import sources is temporarily unavailable", () => {
     expect(L.netToday({ import_cost_off_peak: 0.60, import_cost_peak: null, standing_charge_electricity: 0.58 })).toBe(null);
   });
+
+  test("lone off-peak source contributes without the paired peak key", () => {
+    // import_cost_peak not configured at all (key absent) — off-peak still counts
+    expect(
+      L.netToday({ import_cost_off_peak: 0.60, standing_charge_electricity: 0.58 })
+    ).toBeCloseTo(1.18, 10);
+  });
 });
 
 describe("sumChanges", () => {
@@ -145,5 +152,11 @@ describe("mtdNet", () => {
 
   test("null when split import_cost_peak has no statistics yet (key present, value null)", () => {
     expect(L.mtdNet({ import_cost_off_peak: 18.0, import_cost_peak: null, standing_charge_electricity: 5.0 })).toBe(null);
+  });
+
+  test("lone off-peak source contributes without the paired peak key", () => {
+    expect(
+      L.mtdNet({ import_cost_off_peak: 18.0, standing_charge_electricity: 5.0 })
+    ).toBeCloseTo(23.0, 10);
   });
 });

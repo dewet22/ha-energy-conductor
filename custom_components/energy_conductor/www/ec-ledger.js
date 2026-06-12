@@ -63,24 +63,34 @@
     return out;
   }
 
+  // Cost candidates for the net headline, in the same order as ACTUAL_ROWS.
+  // When both halves of the split pair are configured, the combined import_cost
+  // is suppressed to avoid double-counting — a lone split source still counts.
+  var NET_COST_KEYS = [
+    "import_cost_off_peak", "import_cost_peak", "import_cost",
+    "standing_charge_electricity", "gas_cost", "standing_charge_gas",
+  ];
+
+  function _netSum(values) {
+    if (!values) return null;
+    var hasSplit = ("import_cost_off_peak" in values) && ("import_cost_peak" in values);
+    var net = null;
+    for (var i = 0; i < NET_COST_KEYS.length; i++) {
+      var k = NET_COST_KEYS[i];
+      if (!(k in values)) continue;
+      if (k === "import_cost" && hasSplit) continue;
+      if (typeof values[k] !== "number" || isNaN(values[k])) return null;
+      net = (net || 0) + values[k];
+    }
+    return net;
+  }
+
   // Net cost today from the read-through values: costs minus credits. Null when
   // no cost component is readable - an export-only net would be misleading.
   // A key present in `values` means the source is configured; a null value means
   // the entity is temporarily unavailable — return null rather than a partial total.
-  // When the split import pair (off_peak + peak) is configured it substitutes for
-  // the combined import_cost total, mirroring the actualRows display logic.
   function netToday(values) {
-    if (!values) return null;
-    var hasSplit = ("import_cost_off_peak" in values) && ("import_cost_peak" in values);
-    var importKeys = hasSplit ? ["import_cost_off_peak", "import_cost_peak"] : ["import_cost"];
-    var costKeys = importKeys.concat(["standing_charge_electricity", "gas_cost", "standing_charge_gas"]);
-    var net = null;
-    for (var i = 0; i < costKeys.length; i++) {
-      var k = costKeys[i];
-      if (!(k in values)) continue;
-      if (typeof values[k] !== "number" || isNaN(values[k])) return null;
-      net = (net || 0) + values[k];
-    }
+    var net = _netSum(values);
     if (net === null) return null;
     if (typeof values.export_earnings === "number" && !isNaN(values.export_earnings)) {
       net -= values.export_earnings;
@@ -88,23 +98,11 @@
     return net;
   }
 
-  // Month-to-date net from per-entity LTS sums (same structure as netToday but
-  // using statistics rather than current sensor states). Null when no cost
-  // component is present — absence is not free energy. A key present in
-  // `mtdValues` means the source is configured; null means no statistics yet.
-  // Split import pair substitutes for import_cost in the same way as netToday.
+  // Month-to-date net from per-entity LTS sums. Same structure as netToday but
+  // using statistics. Null when no cost component is present — absence is not
+  // free energy. A key present means configured; null value means no stats yet.
   function mtdNet(mtdValues) {
-    if (!mtdValues) return null;
-    var hasSplit = ("import_cost_off_peak" in mtdValues) && ("import_cost_peak" in mtdValues);
-    var importKeys = hasSplit ? ["import_cost_off_peak", "import_cost_peak"] : ["import_cost"];
-    var costKeys = importKeys.concat(["standing_charge_electricity", "gas_cost", "standing_charge_gas"]);
-    var net = null;
-    for (var i = 0; i < costKeys.length; i++) {
-      var k = costKeys[i];
-      if (!(k in mtdValues)) continue;
-      if (typeof mtdValues[k] !== "number" || isNaN(mtdValues[k])) return null;
-      net = (net || 0) + mtdValues[k];
-    }
+    var net = _netSum(mtdValues);
     if (net === null) return null;
     if (typeof mtdValues.export_earnings === "number" && !isNaN(mtdValues.export_earnings)) {
       net -= mtdValues.export_earnings;
