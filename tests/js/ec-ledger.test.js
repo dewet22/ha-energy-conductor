@@ -85,25 +85,6 @@ describe("netToday", () => {
   });
 });
 
-describe("sumChanges", () => {
-  test("sums positive day changes, clamping counter glitches", () => {
-    const rows = [{ change: 1.5 }, { change: -0.2 }, { change: null }, { change: 2.0 }];
-    expect(L.sumChanges(rows)).toBeCloseTo(3.5, 10);
-  });
-
-  test("empty input sums to null (not zero - absence is not free energy)", () => {
-    expect(L.sumChanges([])).toBe(null);
-    expect(L.sumChanges(undefined)).toBe(null);
-  });
-
-  test("all-null changes return null, not zero (no valid data is not free energy)", () => {
-    expect(L.sumChanges([{ change: null }, { change: null }])).toBe(null);
-  });
-
-  test("zero change is valid data (zero cost is not the same as no data)", () => {
-    expect(L.sumChanges([{ change: 0 }, { change: 0 }])).toBe(0);
-  });
-});
 
 describe("evComparator", () => {
   test("public-charging saving = month kWh at public rate minus actual cost", () => {
@@ -190,5 +171,55 @@ describe("paybackView", () => {
     const v = L.paybackView(15000, 12000, TODAY, { started: "garbage" });
     expect(v.pct).toBe(100);
     expect(v.days).toBe(null);
+  });
+});
+
+describe("sumChangesSince", () => {
+  const NOW = Date.parse("2026-06-12T20:00:00Z");
+  const day = (n) => NOW - n * 86400000;
+
+  test("sums only rows inside the window (numeric epoch starts)", () => {
+    const rows = [
+      { start: day(20), change: 5.0 },
+      { start: day(5), change: 2.0 },
+      { start: day(1), change: 1.0 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(3.0, 10);
+    expect(L.sumChangesSince(rows, day(30))).toBeCloseTo(8.0, 10);
+  });
+
+  test("ISO-string starts parse the same way", () => {
+    const rows = [
+      { start: new Date(day(10)).toISOString(), change: 4.0 },
+      { start: new Date(day(2)).toISOString(), change: 1.5 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(1.5, 10);
+  });
+
+  test("negative changes are counter glitches, clamped not subtracted", () => {
+    const rows = [
+      { start: day(3), change: 2.0 },
+      { start: day(2), change: -0.5 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(2.0, 10);
+  });
+
+  test("no valid rows inside the window is null, not zero", () => {
+    const rows = [{ start: day(20), change: 5.0 }];
+    expect(L.sumChangesSince(rows, day(7))).toBe(null);
+    expect(L.sumChangesSince([], day(7))).toBe(null);
+    expect(L.sumChangesSince(undefined, day(7))).toBe(null);
+  });
+
+  test("zero change inside the window is valid data", () => {
+    expect(L.sumChangesSince([{ start: day(1), change: 0 }], day(7))).toBe(0);
+  });
+
+  test("all-null changes in the window return null, not zero", () => {
+    const rows = [
+      { start: day(2), change: null },
+      { start: day(1), change: null },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBe(null);
   });
 });

@@ -110,13 +110,18 @@
     return net;
   }
 
-  // Month-to-date energy/cost from LTS day rows: positive changes only (a
-  // negative change is a counter glitch, not a refund). Null on no data.
-  function sumChanges(rows) {
+  // Windowed energy/cost from LTS day rows starting at/after `sinceMs`:
+  // positive changes only (a negative change is a counter glitch, not a
+  // refund). Recorder rows carry `start` as epoch ms on current HA and ISO
+  // strings on older releases - accept both. Null when the window holds no
+  // valid rows - absence is not free energy.
+  function sumChangesSince(rows, sinceMs) {
     if (!rows || !rows.length) return null;
     var sum = 0;
     var hasValid = false;
     rows.forEach(function (r) {
+      var startMs = typeof r.start === "number" ? r.start : Date.parse(r.start);
+      if (isNaN(startMs) || startMs < sinceMs) return;
       if (typeof r.change === "number" && !isNaN(r.change)) {
         if (r.change > 0) sum += r.change;
         hasValid = true;
@@ -166,17 +171,46 @@
     '<span style="background:rgba(186,117,23,0.18);color:#ba7517;font-size:0.72em;' +
     'padding:1px 6px;border-radius:8px;vertical-align:1px;">modelled</span>';
 
-  function monthStartIso() {
+  function monthStartMs() {
     var d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
+    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  }
+
+  // Statistics fetch start: whichever reaches further back, the month start
+  // (for the MTD headline) or 30 days (for the 7d/30d columns).
+  function statsStartIso() {
+    return new Date(Math.min(monthStartMs(), Date.now() - 30 * 86400000)).toISOString();
   }
 
   function rowHtml(label, value, credit, modelled) {
     return (
       '<tr><td style="padding:4px 0;opacity:0.75;">' + label +
-      '</td><td style="text-align:right;color:' + (modelled ? C_MODELLED : C_BILLING) + ';">' +
+      '</td><td colspan="3" style="text-align:right;color:' +
+      (modelled ? C_MODELLED : C_BILLING) + ';">' +
       (credit && value !== "-" ? "-" : "") + value + "</td></tr>"
     );
+  }
+
+  // Today / 7 days / 30 days row: one label cell + three right-aligned values.
+  function row3(label, values, credit, modelled) {
+    var color = modelled ? C_MODELLED : C_BILLING;
+    var cells = "";
+    values.forEach(function (v) {
+      cells +=
+        '<td style="text-align:right;padding-left:18px;white-space:nowrap;color:' + color +
+        ';">' + (credit && v !== "-" ? "-" : "") + v + "</td>";
+    });
+    return '<tr><td style="padding:4px 0;opacity:0.75;">' + label + "</td>" + cells + "</tr>";
+  }
+
+  function columnHeader() {
+    var th = function (t) {
+      return (
+        '<td style="text-align:right;padding-left:18px;opacity:0.5;font-size:0.85em;">' +
+        t + "</td>"
+      );
+    };
+    return "<tr><td></td>" + th("today") + th("7 days") + th("30 days") + "</tr>";
   }
 
   function tile(label, value, sub, modelled) {
@@ -252,7 +286,7 @@
           this._hass
             .callWS({
               type: "recorder/statistics_during_period",
-              start_time: monthStartIso(),
+              start_time: statsStartIso(),
               period: "day",
               statistic_ids: ids,
               types: ["change"],
@@ -268,7 +302,17 @@
         }
 
         _mtd(entityId) {
-          return entityId ? sumChanges((this._stats || {})[entityId]) : null;
+          // The fetch window can reach back before the month boundary (for
+          // the 7d/30d columns), so MTD must filter, not sum everything.
+          return entityId
+            ? sumChangesSince((this._stats || {})[entityId], monthStartMs())
+            : null;
+        }
+
+        _since(entityId, days) {
+          return entityId
+            ? sumChangesSince((this._stats || {})[entityId], Date.now() - days * 86400000)
+            : null;
         }
 
         _render() {
@@ -307,22 +351,48 @@
           html += tile("Saved today", fmtGbp(savings), "vs no battery / no solar", true);
           html += "</div>";
 
-          // section A
+          // section A - today read-through plus 7d/30d statistics columns
           var rows = actualRows(sources);
           if (rows.length) {
             html +=
               '<div style="font-weight:500;padding:8px 0 4px;">Whole-home actuals' +
               ' <span style="opacity:0.5;font-weight:400;">(billing-grade)</span></div>' +
-              '<table style="width:100%;border-collapse:collapse;">';
+              '<table style="width:100%;border-collapse:collapse;">' +
+              columnHeader();
             rows.forEach(function (r) {
-              html += rowHtml(r.label, fmtGbp(self._num(r.entity)), r.credit, false);
+              html += row3(
+                r.label,
+                [
+                  fmtGbp(self._num(r.entity)),
+                  fmtGbp(self._since(r.entity, 7)),
+                  fmtGbp(self._since(r.entity, 30)),
+                ],
+                r.credit,
+                false
+              );
             });
             if (net !== null) {
+              // Per-window nets reuse the headline arithmetic over the same
+              // configured sources (null stats null the window, not the row).
+              var winNet = function (days) {
+                var values = {};
+                NET_COST_KEYS.concat(["export_earnings"]).forEach(function (k) {
+                  if (sources[k]) values[k] = self._since(sources[k], days);
+                });
+                return mtdNet(values);
+              };
               html +=
                 '<tr style="border-top:1px solid var(--divider-color, #444);">' +
                 '<td style="padding:5px 0;font-weight:500;">Net</td>' +
-                '<td style="text-align:right;font-weight:500;color:' + C_BILLING + ';">' +
-                fmtGbp(net) + "</td></tr>";
+                [net, winNet(7), winNet(30)]
+                  .map(function (v) {
+                    return (
+                      '<td style="text-align:right;padding-left:18px;font-weight:500;color:' +
+                      C_BILLING + ';">' + fmtGbp(v) + "</td>"
+                    );
+                  })
+                  .join("") +
+                "</tr>";
             }
             html += "</table>";
           }
@@ -357,8 +427,18 @@
             var publicRate = this._attr(c.ev_cost_entity, "public_charging_rate_gbp_per_kwh");
             html +=
               '<div style="font-weight:500;padding:14px 0 4px;">EV ' + MODELLED + "</div>" +
-              '<table style="width:100%;border-collapse:collapse;">';
-            html += rowHtml("Charged today", fmtGbp(evToday), false, true);
+              '<table style="width:100%;border-collapse:collapse;">' +
+              columnHeader();
+            html += row3(
+              "Charged",
+              [
+                fmtGbp(evToday),
+                fmtGbp(this._since(c.ev_cost_entity, 7)),
+                fmtGbp(this._since(c.ev_cost_entity, 30)),
+              ],
+              false,
+              true
+            );
             if (evMtdCost !== null) {
               var kwhNote = evMtdKwh !== null ? evMtdKwh.toFixed(0) + " kWh - " : "";
               html += rowHtml("Month to date", kwhNote + fmtGbp(evMtdCost), false, true);
@@ -448,7 +528,7 @@
     actualRows: actualRows,
     netToday: netToday,
     mtdNet: mtdNet,
-    sumChanges: sumChanges,
+    sumChangesSince: sumChangesSince,
     evComparator: evComparator,
     paybackView: paybackView,
   };
