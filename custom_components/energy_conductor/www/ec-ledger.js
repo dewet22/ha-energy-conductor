@@ -202,10 +202,25 @@
     return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
   }
 
+  // Local midnight today. Day-period statistics rows are keyed at local
+  // midnight, so anchoring the lookback windows here (rather than to the
+  // current instant) keeps each row wholly inside or outside the window - the
+  // 7d/30d totals then change only at the midnight rollover, not continuously
+  // through the day as Date.now() would slide the cutoff past a row's start.
+  function midnightMs() {
+    var d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  // Start of an N-calendar-day window ending today (today plus N-1 prior days).
+  function sinceDaysMs(days) {
+    return midnightMs() - (days - 1) * 86400000;
+  }
+
   // Statistics fetch start: whichever reaches further back, the month start
   // (for the MTD headline) or 30 days (for the 7d/30d columns).
   function statsStartIso() {
-    return new Date(Math.min(monthStartMs(), Date.now() - 30 * 86400000)).toISOString();
+    return new Date(Math.min(monthStartMs(), midnightMs() - 30 * 86400000)).toISOString();
   }
 
   // Shared column skeleton: a fixed width for each of the three value columns
@@ -368,7 +383,7 @@
 
         _since(entityId, days) {
           return entityId
-            ? sumChangesSince((this._stats || {})[entityId], Date.now() - days * 86400000)
+            ? sumChangesSince((this._stats || {})[entityId], sinceDaysMs(days))
             : null;
         }
 
