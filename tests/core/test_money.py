@@ -192,11 +192,11 @@ class TestPaybackProjection:
         )
 
     def test_recovered_pct_and_run_rate(self):
-        # 36.525 over ten days tracked -> 3.6525/day -> 1334.07.../yr
+        # 36.525 banked over ten completed days -> 3.6525/day -> 1334.07.../yr
         p = payback_projection(
             capital_cost_gbp=10000.0,
             recovered_gbp=36.525,
-            started=date(2026, 6, 3),
+            started=date(2026, 6, 2),
             today=DAY,
         )
         assert p is not None
@@ -204,16 +204,44 @@ class TestPaybackProjection:
         assert p.run_rate_gbp_per_year == pytest.approx(3.6525 * 365.25)
 
     def test_projected_breakeven_date(self):
-        # 1 GBP/day, 9990 remaining -> 9990 days out.
+        # 1 GBP/day over ten completed days, 9990 remaining -> 9990 days out.
         p = payback_projection(
             capital_cost_gbp=10000.0,
             recovered_gbp=10.0,
-            started=date(2026, 6, 3),
+            started=date(2026, 6, 2),
             today=DAY,
         )
         assert p is not None
         remaining_days = (p.projected_breakeven - DAY).days
         assert remaining_days == 9990
+
+    def test_todays_partial_day_is_excluded_from_the_run_rate(self):
+        # Overnight the battery buys cheap grid energy before the daytime
+        # payoff, so today's running figure goes negative. The run-rate must
+        # come from banked completed days only - otherwise the projection
+        # flaps years intraday (live: 2031 at dusk, 2036 just past midnight).
+        p = payback_projection(
+            capital_cost_gbp=12000.0,
+            recovered_gbp=7.28 - 0.58,
+            started=DAY,
+            today=NEXT_DAY,
+            today_gbp=-0.58,
+        )
+        assert p is not None
+        assert p.run_rate_gbp_per_year == pytest.approx(7.28 * 365.25)
+
+    def test_first_day_falls_back_to_the_running_total(self):
+        # Zero completed days: today's running figure is the only sample.
+        p = payback_projection(
+            capital_cost_gbp=12000.0,
+            recovered_gbp=7.17,
+            started=DAY,
+            today=DAY,
+            today_gbp=7.17,
+        )
+        assert p is not None
+        assert p.run_rate_gbp_per_year == pytest.approx(7.17 * 365.25)
+        assert p.projected_breakeven is not None
 
     def test_zero_run_rate_has_no_breakeven(self):
         p = payback_projection(

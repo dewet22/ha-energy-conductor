@@ -19,6 +19,37 @@ describe("fmtGbp", () => {
   });
 });
 
+describe("fmtGbpSigned", () => {
+  test("credits carry an explicit plus, debits a minus", () => {
+    expect(L.fmtGbpSigned(7.171)).toBe("+&#163;7.17");
+    expect(L.fmtGbpSigned(-2.444)).toBe("-&#163;2.44");
+  });
+
+  test("zero (including round-to-zero) is unsigned", () => {
+    expect(L.fmtGbpSigned(0)).toBe("&#163;0.00");
+    expect(L.fmtGbpSigned(0.001)).toBe("&#163;0.00");
+    expect(L.fmtGbpSigned(-0.004)).toBe("&#163;0.00");
+  });
+
+  test("non-numbers render as a dash", () => {
+    expect(L.fmtGbpSigned(null)).toBe("-");
+    expect(L.fmtGbpSigned(NaN)).toBe("-");
+  });
+});
+
+describe("fmtMonthYear", () => {
+  test("an ISO date softens to month + year", () => {
+    expect(L.fmtMonthYear("2031-01-09")).toBe("Jan 2031");
+    expect(L.fmtMonthYear("2030-12-31")).toBe("Dec 2030");
+  });
+
+  test("garbage gives null", () => {
+    expect(L.fmtMonthYear("soon")).toBe(null);
+    expect(L.fmtMonthYear(null)).toBe(null);
+    expect(L.fmtMonthYear("2031-13-09")).toBe(null);
+  });
+});
+
 describe("actualRows", () => {
   test("uses the off-peak/peak split when both are configured", () => {
     const rows = L.actualRows({
@@ -85,25 +116,6 @@ describe("netToday", () => {
   });
 });
 
-describe("sumChanges", () => {
-  test("sums positive day changes, clamping counter glitches", () => {
-    const rows = [{ change: 1.5 }, { change: -0.2 }, { change: null }, { change: 2.0 }];
-    expect(L.sumChanges(rows)).toBeCloseTo(3.5, 10);
-  });
-
-  test("empty input sums to null (not zero - absence is not free energy)", () => {
-    expect(L.sumChanges([])).toBe(null);
-    expect(L.sumChanges(undefined)).toBe(null);
-  });
-
-  test("all-null changes return null, not zero (no valid data is not free energy)", () => {
-    expect(L.sumChanges([{ change: null }, { change: null }])).toBe(null);
-  });
-
-  test("zero change is valid data (zero cost is not the same as no data)", () => {
-    expect(L.sumChanges([{ change: 0 }, { change: 0 }])).toBe(0);
-  });
-});
 
 describe("evComparator", () => {
   test("public-charging saving = month kWh at public rate minus actual cost", () => {
@@ -158,5 +170,87 @@ describe("mtdNet", () => {
     expect(
       L.mtdNet({ import_cost_off_peak: 18.0, standing_charge_electricity: 5.0 })
     ).toBeCloseTo(23.0, 10);
+  });
+});
+
+describe("paybackView", () => {
+  const TODAY = new Date("2026-06-12T20:00:00Z").getTime();
+
+  test("null without a usable capital cost or cumulative value", () => {
+    expect(L.paybackView(null, 12000, TODAY, {})).toBe(null);
+    expect(L.paybackView(6.71, null, TODAY, {})).toBe(null);
+    expect(L.paybackView(6.71, 0, TODAY, {})).toBe(null);
+  });
+
+  test("day-one numbers flag early mode with a minimum visible bar", () => {
+    const v = L.paybackView(6.71, 12000, TODAY, { started: "2026-06-12" });
+    expect(v.early).toBe(true);
+    expect(v.pct).toBeCloseTo(0.056, 2);
+    expect(v.barPct).toBeGreaterThanOrEqual(0.75);
+    expect(v.days).toBe(1);
+  });
+
+  test("established tracking is not early and the bar shows the real pct", () => {
+    const v = L.paybackView(3000, 12000, TODAY, { started: "2025-01-01" });
+    expect(v.early).toBe(false);
+    expect(v.pct).toBe(25);
+    expect(v.barPct).toBe(25);
+    expect(v.days).toBe(528);
+  });
+
+  test("pct clamps to 100 and bad started dates leave days null", () => {
+    const v = L.paybackView(15000, 12000, TODAY, { started: "garbage" });
+    expect(v.pct).toBe(100);
+    expect(v.days).toBe(null);
+  });
+});
+
+describe("sumChangesSince", () => {
+  const NOW = Date.parse("2026-06-12T20:00:00Z");
+  const day = (n) => NOW - n * 86400000;
+
+  test("sums only rows inside the window (numeric epoch starts)", () => {
+    const rows = [
+      { start: day(20), change: 5.0 },
+      { start: day(5), change: 2.0 },
+      { start: day(1), change: 1.0 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(3.0, 10);
+    expect(L.sumChangesSince(rows, day(30))).toBeCloseTo(8.0, 10);
+  });
+
+  test("ISO-string starts parse the same way", () => {
+    const rows = [
+      { start: new Date(day(10)).toISOString(), change: 4.0 },
+      { start: new Date(day(2)).toISOString(), change: 1.5 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(1.5, 10);
+  });
+
+  test("negative changes are counter glitches, clamped not subtracted", () => {
+    const rows = [
+      { start: day(3), change: 2.0 },
+      { start: day(2), change: -0.5 },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBeCloseTo(2.0, 10);
+  });
+
+  test("no valid rows inside the window is null, not zero", () => {
+    const rows = [{ start: day(20), change: 5.0 }];
+    expect(L.sumChangesSince(rows, day(7))).toBe(null);
+    expect(L.sumChangesSince([], day(7))).toBe(null);
+    expect(L.sumChangesSince(undefined, day(7))).toBe(null);
+  });
+
+  test("zero change inside the window is valid data", () => {
+    expect(L.sumChangesSince([{ start: day(1), change: 0 }], day(7))).toBe(0);
+  });
+
+  test("all-null changes in the window return null, not zero", () => {
+    const rows = [
+      { start: day(2), change: null },
+      { start: day(1), change: null },
+    ];
+    expect(L.sumChangesSince(rows, day(7))).toBe(null);
   });
 });

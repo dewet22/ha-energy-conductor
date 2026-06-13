@@ -292,19 +292,15 @@ describe("long-term view", () => {
 });
 
 describe("mission view", () => {
-  it("is the entry view: panel with glance + tape wired to registry ids", async () => {
+  it("is the entry view: a single tape card wired to registry ids", async () => {
     const hass = makeHass({ areaPrefix: "loft_" });
     const dash = await EC.generateDashboard({}, hass);
     const mission = dash.views[0];
     expect(mission.path).toBe("mission");
     expect(mission.panel).toBe(true);
     expect(mission.cards.length).toBe(1);
-    const stack = mission.cards[0];
-    expect(stack.type).toBe("vertical-stack");
-    const types = stack.cards.map((c) => c.type);
-    expect(types).toContain("glance");
-    expect(types).toContain("custom:ec-tape");
-    const tape = stack.cards.find((c) => c.type === "custom:ec-tape");
+    const tape = mission.cards[0];
+    expect(tape.type).toBe("custom:ec-tape");
     const id = (key) => entityId("sensor", "loft_", "blithe", key);
     expect(tape.status_entity).toBe(id("status"));
     expect(tape.soc_entity).toBe(id("battery-soc"));
@@ -314,13 +310,47 @@ describe("mission view", () => {
     expect(tape.window_end_entity).toBe(id("cheap-window-end"));
   });
 
-  it("glance includes the billing-grade cost entity when configured and valid", async () => {
+  it("the tape carries the stat strip rows with semantic colours", async () => {
+    const hass = makeHass({ areaPrefix: "loft_" });
+    const dash = await EC.generateDashboard({}, hass);
+    const tape = dash.views[0].cards[0];
+    const names = tape.glance.map((g) => g.name);
+    // No savings-today sensor in the fixture (costs unconfigured), so the
+    // Saved-today row is dropped rather than rendered empty.
+    expect(names).toEqual(["Battery", "Usable", "Solar tomorrow", "Status"]);
+    const byName = {};
+    tape.glance.forEach((g) => (byName[g.name] = g));
+    expect(byName["Battery"].color).toBe("#009688");
+    expect(byName["Solar tomorrow"].color).toBe("#ff9800");
+    // Status carries no colour: the card colours it green/red by state.
+    expect(byName["Status"].color).toBeUndefined();
+    expect(byName["Battery"].entity).toBe(entityId("sensor", "loft_", "blithe", "battery-soc"));
+  });
+
+  it("colours the money rows by provenance, matching the Ledger convention", async () => {
+    // Saved today is modelled (amber) and Cost today is a supplier read-through
+    // (billing green) - the same values must not flip provenance vs the Ledger.
+    const hass = makeHass({
+      withSavings: true,
+      moneySources: { import_cost: "sensor.octopus_cost", pv: "sensor.pv" },
+    });
+    const dash = await EC.generateDashboard({}, hass);
+    const byName = {};
+    dash.views[0].cards[0].glance.forEach((g) => (byName[g.name] = g));
+    expect(byName["Saved today"].color).toBe("#ba7517");
+    expect(byName["Cost today"].color).toBe("#0f6e56");
+  });
+
+  it("the strip includes the billing-grade cost entity when configured and valid", async () => {
     const hass = makeHass({ moneySources: { import_cost: "sensor.octopus_cost", pv: "sensor.pv" } });
     const dash = await EC.generateDashboard({}, hass);
-    const stack = dash.views[0].cards[0];
-    const glance = stack.cards.find((c) => c.type === "glance");
-    const ids = glance.entities.map((e) => e.entity);
-    expect(ids).toContain("sensor.octopus_cost");
+    const tape = dash.views[0].cards[0];
+    const cost = tape.glance.find((g) => g.name === "Cost today");
+    expect(cost.entity).toBe("sensor.octopus_cost");
+    // Cost today is a supplier read-through: billing green, not modelled amber.
+    expect(cost.color).toBe("#0f6e56");
+    // Cost slots in before Status, mirroring the old glance order.
+    expect(tape.glance[tape.glance.length - 1].name).toBe("Status");
   });
 
   it("never embeds an invalid external entity id (injection chokepoint)", async () => {
@@ -328,9 +358,8 @@ describe("mission view", () => {
       moneySources: { import_cost: "sensor.bad'}{{ 1 }}", pv: "sensor.pv" },
     });
     const dash = await EC.generateDashboard({}, hass);
-    const stack = dash.views[0].cards[0];
-    const glance = stack.cards.find((c) => c.type === "glance");
-    const ids = glance.entities.map((e) => e.entity);
+    const tape = dash.views[0].cards[0];
+    const ids = tape.glance.map((g) => g.entity);
     expect(ids.some((i) => i.includes("{{"))).toBe(false);
   });
 });

@@ -290,11 +290,12 @@
 
   // --- mission view -----------------------------------------------------------
   //
-  // The entry view: a glance strip and the rolling tape, full-width (panel +
-  // vertical-stack — multi-column masonry squeezes the tape into a sliver).
-  // External entity ids come from the status sensor's money_sources attribute and
-  // pass the VALID_ENTITY_ID chokepoint before being embedded (same rule as the
-  // markdown cards in the Tonight view).
+  // The entry view: the rolling tape, full-width (panel). The stat strip rides
+  // inside the tape card as its `glance` config (the HA glance card cannot
+  // style values; the tape renders them bold in their semantic colour).
+  // External entity ids come from the status sensor's money_sources attribute
+  // and pass the VALID_ENTITY_ID chokepoint before being embedded (same rule
+  // as the markdown cards in the Tonight view).
   function generateMissionView(acc, states) {
     var statusId = acc("status");
     var glanceRows = cleanRows([
@@ -302,8 +303,20 @@
       row(acc("battery-usable-energy"), "Usable"),
       row(acc("solar-forecast-today"), "Solar tomorrow"),
       row(acc("savings-today"), "Saved today"),
+      // Status carries no colour: the tape colours it green/red by state.
       row(statusId, "Status"),
     ]);
+    // Battery teal and solar orange for the energy readings; provenance colours
+    // for the money rows, matching the Ledger convention (green #0f6e56 =
+    // billing-grade read-through, amber #ba7517 = modelled estimate). Cost today
+    // is a supplier read-through (green); Saved today is modelled (amber).
+    var GLANCE_COLORS = {
+      Battery: "#009688",
+      Usable: "#009688",
+      "Solar tomorrow": "#ff9800",
+      "Saved today": "#ba7517",
+      "Cost today": "#0f6e56",
+    };
     var status = statusId && states[statusId];
     var sources = (status && status.attributes && status.attributes.money_sources) || {};
     if (sources.import_cost && VALID_ENTITY_ID.test(sources.import_cost)) {
@@ -312,15 +325,9 @@
         name: "Cost today",
       });
     }
-    var tape = {
-      type: "custom:ec-tape",
-      status_entity: statusId,
-      soc_entity: acc("battery-soc"),
-      plan_entity: acc("overnight-plan"),
-      decision_entity: acc("discharge-decision"),
-      window_start_entity: acc("off-peak-window-start"),
-      window_end_entity: acc("cheap-window-end"),
-    };
+    glanceRows.forEach(function (g) {
+      if (GLANCE_COLORS[g.name]) g.color = GLANCE_COLORS[g.name];
+    });
     return {
       title: "Mission",
       path: "mission",
@@ -328,8 +335,14 @@
       panel: true,
       cards: [
         {
-          type: "vertical-stack",
-          cards: [{ type: "glance", entities: glanceRows }, tape],
+          type: "custom:ec-tape",
+          status_entity: statusId,
+          soc_entity: acc("battery-soc"),
+          plan_entity: acc("overnight-plan"),
+          decision_entity: acc("discharge-decision"),
+          window_start_entity: acc("off-peak-window-start"),
+          window_end_entity: acc("cheap-window-end"),
+          glance: glanceRows,
         },
       ],
     };
