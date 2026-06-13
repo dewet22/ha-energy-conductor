@@ -405,6 +405,12 @@ def forecast_schema(source: str, defaults: dict[str, Any], *, options: bool) -> 
         _marker(CONF_SOLAR_GENERATION_SENSOR, options=options, defaults=defaults): (
             _sensor_selector()
         ),
+        # Instantaneous-power feed for the Mission tape's solar curve. Independent
+        # of the forecast source, so it lives in the common block (not gated on
+        # Solcast) - otherwise daily-total / no-forecast users could never enable it.
+        _marker(CONF_SOLAR_POWER_SENSOR, options=options, defaults=defaults): (
+            _sensor_selector(device_class="power")
+        ),
         _marker(
             CONF_WINTER_MIN_KWH,
             options=options,
@@ -433,9 +439,6 @@ def forecast_schema(source: str, defaults: dict[str, Any], *, options: bool) -> 
         ] = _sensor_selector()
         fields[_marker(CONF_FORECAST_SOLCAST_TODAY_SENSOR, options=options, defaults=defaults)] = (
             _sensor_selector()
-        )
-        fields[_marker(CONF_SOLAR_POWER_SENSOR, options=options, defaults=defaults)] = (
-            _sensor_selector(device_class="power")
         )
     elif source == FORECAST_SOURCE_DAILY:
         fields[

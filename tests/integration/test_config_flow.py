@@ -19,12 +19,14 @@ from custom_components.energy_conductor.const import (
     CONF_OFF_PEAK_SENSOR,
     CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
+    CONF_SOLAR_POWER_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
     CONF_SUMMER_MAX_KWH,
     CONF_SYSTEM_CAPITAL_COST,
     CONF_WINTER_MIN_KWH,
     CONF_WRITE_MODE,
     DOMAIN,
+    FORECAST_SOURCE_DAILY,
     FORECAST_SOURCE_SOLCAST,
     WRITE_MODE_DRY_RUN,
 )
@@ -252,6 +254,25 @@ async def test_options_form_shows_resolved_entity_not_stored(hass):
     markers = {str(k): k for k in result["data_schema"].schema}
     suggested = markers[CONF_BATTERY_SOC_SENSOR].description["suggested_value"]
     assert suggested == current_soc, "form must render the resolved entity, not the stale id"
+
+
+async def test_solar_options_offers_power_sensor_without_solcast(hass):
+    # The Mission tape's solar curve reads CONF_SOLAR_POWER_SENSOR regardless of
+    # forecast source, so the selector must render even when the entry is not on
+    # Solcast (here: forecast source "none").
+    entry = _v3_entry()
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "solar"}
+    )
+    # The solar group first picks a forecast source; choose the daily-total source
+    # (not Solcast) and the power-sensor selector must still appear on the form.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_FORECAST_SOURCE: FORECAST_SOURCE_DAILY}
+    )
+    markers = {str(k) for k in result["data_schema"].schema}
+    assert CONF_SOLAR_POWER_SENSOR in markers
 
 
 async def test_migrate_v2_to_v3_backfills_anchors(hass):
