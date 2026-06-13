@@ -327,13 +327,28 @@ describe("mission view", () => {
     expect(byName["Battery"].entity).toBe(entityId("sensor", "loft_", "blithe", "battery-soc"));
   });
 
+  it("colours the money rows by provenance, matching the Ledger convention", async () => {
+    // Saved today is modelled (amber) and Cost today is a supplier read-through
+    // (billing green) - the same values must not flip provenance vs the Ledger.
+    const hass = makeHass({
+      withSavings: true,
+      moneySources: { import_cost: "sensor.octopus_cost", pv: "sensor.pv" },
+    });
+    const dash = await EC.generateDashboard({}, hass);
+    const byName = {};
+    dash.views[0].cards[0].glance.forEach((g) => (byName[g.name] = g));
+    expect(byName["Saved today"].color).toBe("#ba7517");
+    expect(byName["Cost today"].color).toBe("#0f6e56");
+  });
+
   it("the strip includes the billing-grade cost entity when configured and valid", async () => {
     const hass = makeHass({ moneySources: { import_cost: "sensor.octopus_cost", pv: "sensor.pv" } });
     const dash = await EC.generateDashboard({}, hass);
     const tape = dash.views[0].cards[0];
     const cost = tape.glance.find((g) => g.name === "Cost today");
     expect(cost.entity).toBe("sensor.octopus_cost");
-    expect(cost.color).toBe("#ba7517");
+    // Cost today is a supplier read-through: billing green, not modelled amber.
+    expect(cost.color).toBe("#0f6e56");
     // Cost slots in before Status, mirroring the old glance order.
     expect(tape.glance[tape.glance.length - 1].name).toBe("Status");
   });

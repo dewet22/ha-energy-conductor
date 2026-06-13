@@ -89,6 +89,9 @@ function makeHass(opts) {
   SENSOR_KEYS.forEach(function (k) {
     add("sensor", k);
   });
+  // savings-today is a money sensor: only registered once costs/savings are
+  // configured, so tests opt in explicitly rather than it being ever-present.
+  if (opts.withSavings) add("sensor", "savings-today");
   BINARY_KEYS.forEach(function (k) {
     add("binary_sensor", k);
   });

@@ -306,13 +306,16 @@
       // Status carries no colour: the tape colours it green/red by state.
       row(statusId, "Status"),
     ]);
-    // Semantic palette: battery teal, solar orange, modelled-savings green.
+    // Battery teal and solar orange for the energy readings; provenance colours
+    // for the money rows, matching the Ledger convention (green #0f6e56 =
+    // billing-grade read-through, amber #ba7517 = modelled estimate). Cost today
+    // is a supplier read-through (green); Saved today is modelled (amber).
     var GLANCE_COLORS = {
       Battery: "#009688",
       Usable: "#009688",
       "Solar tomorrow": "#ff9800",
-      "Saved today": "#0f6e56",
-      "Cost today": "#ba7517",
+      "Saved today": "#ba7517",
+      "Cost today": "#0f6e56",
     };
     var status = statusId && states[statusId];
     var sources = (status && status.attributes && status.attributes.money_sources) || {};
