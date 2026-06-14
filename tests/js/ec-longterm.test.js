@@ -195,3 +195,121 @@ describe("weeklySvg", () => {
     expect(LT.weeklySvg([])).toBe("");
   });
 });
+
+describe("socDailySeries", () => {
+  test("maps day-period mean/min/max rows to per-day SoC band", () => {
+    const rows = [
+      { start: ms(2026, 6, 10), mean: 62.5, min: 12, max: 100 },
+      { start: ms(2026, 6, 11), mean: 48.0, min: 8, max: 95 },
+    ];
+    const out = LT.socDailySeries(rows);
+    expect(out).toEqual([
+      { day: "2026-06-10", mean: 62.5, min: 12, max: 100 },
+      { day: "2026-06-11", mean: 48.0, min: 8, max: 95 },
+    ]);
+  });
+
+  test("rows with no mean are skipped (no data, not a zero level)", () => {
+    const rows = [
+      { start: ms(2026, 6, 10), mean: null, min: null, max: null },
+      { start: ms(2026, 6, 11), mean: 50, min: 20, max: 80 },
+    ];
+    expect(LT.socDailySeries(rows).map((s) => s.day)).toEqual(["2026-06-11"]);
+  });
+
+  test("levels clamp into 0..100 (a transient out-of-range read can't blow the scale)", () => {
+    const rows = [{ start: ms(2026, 6, 10), mean: 50, min: -3, max: 104 }];
+    expect(LT.socDailySeries(rows)[0]).toEqual({ day: "2026-06-10", mean: 50, min: 0, max: 100 });
+  });
+});
+
+describe("socWeeklySeries", () => {
+  test("weekly band is min-of-mins, max-of-maxes, mean-of-means", () => {
+    // 2026-06-08 is a Monday; these four days share one ISO week.
+    const series = [
+      { day: "2026-06-08", mean: 40, min: 10, max: 90 },
+      { day: "2026-06-09", mean: 60, min: 30, max: 100 },
+      { day: "2026-06-10", mean: 50, min: 5, max: 80 },
+      { day: "2026-06-11", mean: 70, min: 25, max: 95 },
+    ];
+    const out = LT.socWeeklySeries(series);
+    expect(out.length).toBe(1);
+    expect(out[0].weekStart).toBe("2026-06-08");
+    expect(out[0].min).toBe(5);
+    expect(out[0].max).toBe(100);
+    expect(out[0].mean).toBeCloseTo(55, 6);
+  });
+});
+
+describe("socDensityGrid", () => {
+  test("hour-period mean rows fill an hour-of-day x day grid at fixed 0..100", () => {
+    const rows = [
+      { start: ms(2026, 6, 10, 3), mean: 20 },
+      { start: ms(2026, 6, 10, 14), mean: 95 },
+    ];
+    const g = LT.socDensityGrid(rows);
+    expect(g.days).toEqual(["2026-06-10"]);
+    expect(g.cells).toContainEqual({ day: "2026-06-10", hour: 3, soc: 20 });
+    expect(g.cells).toContainEqual({ day: "2026-06-10", hour: 14, soc: 95 });
+    expect(g.maxPct).toBe(100); // fixed scale, not data-derived
+  });
+
+  test("rows with no mean are skipped", () => {
+    const rows = [{ start: ms(2026, 6, 10, 3), mean: null }];
+    expect(LT.socDensityGrid(rows).cells).toEqual([]);
+  });
+});
+
+describe("linearStops", () => {
+  test("n stops partition the range into n+1 even bands (fixed scale, not quantile)", () => {
+    // 120 / (5+1) = 20-wide bands.
+    expect(LT.linearStops(120, 5)).toEqual([20, 40, 60, 80, 100]);
+  });
+
+  test("bucket places a value into the right band, top of range reaching the deepest", () => {
+    const stops = LT.linearStops(120, 5);
+    expect(LT.bucket(10, stops)).toBe(0);
+    expect(LT.bucket(50, stops)).toBe(2);
+    expect(LT.bucket(120, stops)).toBe(5);
+  });
+});
+
+describe("flowsFromLevelSources", () => {
+  test("battery_soc yields the low/high tiles over one entity", () => {
+    const out = LT.flowsFromLevelSources({ battery_soc: "sensor.soc" });
+    expect(out.map((f) => f.key)).toEqual(["soc_low", "soc_high"]);
+    expect(out.every((f) => f.entity === "sensor.soc" && f.kind === "level")).toBe(true);
+    expect(out.map((f) => f.metric)).toEqual(["min", "max"]);
+  });
+
+  test("no battery_soc, no level tiles", () => {
+    expect(LT.flowsFromLevelSources(null)).toEqual([]);
+    expect(LT.flowsFromLevelSources({})).toEqual([]);
+  });
+});
+
+describe("socWeeklySvg", () => {
+  const socSeries = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(2026, 4, 4 + i); // spans the May->June boundary
+    const pad = (n) => (n < 10 ? "0" : "") + n;
+    socSeries.push({
+      day: d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()),
+      mean: 60,
+      min: 20,
+      max: 95,
+    });
+  }
+
+  test("renders a band polygon, a mean polyline, and month gridlines", () => {
+    const svg = LT.socWeeklySvg(socSeries);
+    expect(svg).toContain("<polygon");
+    expect(svg).toContain("<polyline");
+    expect(svg).toContain("height:140px");
+    expect(svg).toContain("<line");
+  });
+
+  test("empty series renders nothing", () => {
+    expect(LT.socWeeklySvg([])).toBe("");
+  });
+});
