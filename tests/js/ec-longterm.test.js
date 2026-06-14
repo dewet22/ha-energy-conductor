@@ -221,6 +221,11 @@ describe("socDailySeries", () => {
     const rows = [{ start: ms(2026, 6, 10), mean: 50, min: -3, max: 104 }];
     expect(LT.socDailySeries(rows)[0]).toEqual({ day: "2026-06-10", mean: 50, min: 0, max: 100 });
   });
+
+  test("NaN/undefined min or max default to 0, never NaN into the SVG/canvas coords", () => {
+    const rows = [{ start: ms(2026, 6, 10), mean: 50, min: NaN, max: undefined }];
+    expect(LT.socDailySeries(rows)[0]).toEqual({ day: "2026-06-10", mean: 50, min: 0, max: 0 });
+  });
 });
 
 describe("socWeeklySeries", () => {

@@ -54,8 +54,12 @@
   // counter `change`. A row with no mean is absent data (skipped), distinct
   // from a real 0% level. Readings clamp into 0..100 so a transient
   // out-of-range register read can't blow the fixed colour scale.
+  // typeof NaN === "number" and Math.min(100, undefined) is NaN, so a malformed
+  // stat row (mean present, min/max missing) could leak NaN into SVG/canvas
+  // coords. Coerce and default non-finite to 0.
   function clampPct(v) {
-    return Math.max(0, Math.min(100, v));
+    var num = Number(v);
+    return isNaN(num) ? 0 : Math.max(0, Math.min(100, num));
   }
 
   function socDailySeries(rows) {
