@@ -359,6 +359,7 @@
     "house",
     "grid_import",
     "grid_export",
+    "battery_discharge",
     "ev",
     "hot_water",
     "gas",

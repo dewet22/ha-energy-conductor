@@ -129,6 +129,16 @@ describe("flowsFromSources", () => {
     expect(LT.flowsFromSources(null)).toEqual([]);
     expect(LT.flowsFromSources({})).toEqual([]);
   });
+
+  test("battery throughput (discharge) is a flow, ordered after grid export", () => {
+    const flows = LT.flowsFromSources({
+      grid_export: "sensor.export",
+      battery_discharge: "sensor.batt_out",
+      ev: "sensor.ev",
+    });
+    expect(flows.map((f) => f.key)).toEqual(["grid_export", "battery_discharge", "ev"]);
+    expect(flows[1].entity).toBe("sensor.batt_out");
+  });
 });
 
 describe("annualTotal", () => {
@@ -197,7 +207,7 @@ describe("weeklySvg", () => {
 });
 
 describe("socDailyFromHourly", () => {
-  test("daily low/high/mean are derived from hourly means, bucketed by day", () => {
+  test("daily mean is the average of the day's hourly means", () => {
     const rows = [
       { start: ms(2026, 6, 10, 3), mean: 20 },
       { start: ms(2026, 6, 10, 14), mean: 100 },
@@ -205,34 +215,28 @@ describe("socDailyFromHourly", () => {
       { start: ms(2026, 6, 11, 4), mean: 8 },
       { start: ms(2026, 6, 11, 13), mean: 92 },
     ];
-    const out = LT.socDailyFromHourly(rows);
-    expect(out).toEqual([
-      { day: "2026-06-10", min: 20, max: 100, mean: 60 },
-      { day: "2026-06-11", min: 8, max: 92, mean: 50 },
+    expect(LT.socDailyFromHourly(rows)).toEqual([
+      { day: "2026-06-10", mean: 60 },
+      { day: "2026-06-11", mean: 50 },
     ]);
   });
 
-  test("an isolated 0-spike does not poison the daily low (the bug behind P1)", () => {
-    // The raw day-period `min` statistic is 0 here (one transient inverter
-    // 0-read). Derived from hourly means, that read is diluted within its hour
-    // to ~0.8% weight, so the hour's mean stays ~50 and the daily low is the
-    // genuine overnight trough (18), never the spurious 0.
+  test("an isolated 0-spike is diluted within its hour, so the daily mean holds", () => {
+    // Hourly means already absorb a transient 0-sample (~0.8% weight), so the
+    // daily mean never collapses the way a raw day-period min would.
     const hours = [];
-    for (let h = 0; h < 24; h++) hours.push({ start: ms(2026, 6, 10, h), mean: h === 4 ? 18 : 50 });
-    // The 03:00 hour absorbed a single 0-sample: its mean is 49.6, not 0.
-    hours[3].mean = 49.6;
-    const day = LT.socDailyFromHourly(hours)[0];
-    expect(day.min).toBe(18); // the real low, not 0
-    expect(day.max).toBe(50);
+    for (let h = 0; h < 24; h++) hours.push({ start: ms(2026, 6, 10, h), mean: 50 });
+    hours[3].mean = 49.6; // the hour that absorbed a single 0-sample
+    expect(LT.socDailyFromHourly(hours)[0].mean).toBeCloseTo(49.98, 2);
   });
 
   test("hours with no mean are skipped; values clamp into 0..100", () => {
     const rows = [
       { start: ms(2026, 6, 10, 1), mean: null },
-      { start: ms(2026, 6, 10, 2), mean: -3 },
-      { start: ms(2026, 6, 10, 3), mean: 104 },
+      { start: ms(2026, 6, 10, 2), mean: -3 }, // clamps to 0
+      { start: ms(2026, 6, 10, 3), mean: 104 }, // clamps to 100
     ];
-    expect(LT.socDailyFromHourly(rows)).toEqual([{ day: "2026-06-10", min: 0, max: 100, mean: 50 }]);
+    expect(LT.socDailyFromHourly(rows)).toEqual([{ day: "2026-06-10", mean: 50 }]);
   });
 
   test("empty input gives no days", () => {
@@ -242,19 +246,17 @@ describe("socDailyFromHourly", () => {
 });
 
 describe("socWeeklySeries", () => {
-  test("weekly band is min-of-mins, max-of-maxes, mean-of-means", () => {
+  test("weekly mean is the mean of the week's daily means", () => {
     // 2026-06-08 is a Monday; these four days share one ISO week.
     const series = [
-      { day: "2026-06-08", mean: 40, min: 10, max: 90 },
-      { day: "2026-06-09", mean: 60, min: 30, max: 100 },
-      { day: "2026-06-10", mean: 50, min: 5, max: 80 },
-      { day: "2026-06-11", mean: 70, min: 25, max: 95 },
+      { day: "2026-06-08", mean: 40 },
+      { day: "2026-06-09", mean: 60 },
+      { day: "2026-06-10", mean: 50 },
+      { day: "2026-06-11", mean: 70 },
     ];
     const out = LT.socWeeklySeries(series);
     expect(out.length).toBe(1);
     expect(out[0].weekStart).toBe("2026-06-08");
-    expect(out[0].min).toBe(5);
-    expect(out[0].max).toBe(100);
     expect(out[0].mean).toBeCloseTo(55, 6);
   });
 });
@@ -293,11 +295,10 @@ describe("linearStops", () => {
 });
 
 describe("flowsFromLevelSources", () => {
-  test("battery_soc yields the low/high tiles over one entity", () => {
+  test("battery_soc yields a single mean SoC tile", () => {
     const out = LT.flowsFromLevelSources({ battery_soc: "sensor.soc" });
-    expect(out.map((f) => f.key)).toEqual(["soc_low", "soc_high"]);
-    expect(out.every((f) => f.entity === "sensor.soc" && f.kind === "level")).toBe(true);
-    expect(out.map((f) => f.metric)).toEqual(["min", "max"]);
+    expect(out.map((f) => f.key)).toEqual(["soc"]);
+    expect(out[0]).toMatchObject({ entity: "sensor.soc", kind: "level" });
   });
 
   test("no battery_soc, no level tiles", () => {
@@ -314,20 +315,52 @@ describe("socWeeklySvg", () => {
     socSeries.push({
       day: d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()),
       mean: 60,
-      min: 20,
-      max: 95,
     });
   }
 
-  test("renders a band polygon, a mean polyline, and month gridlines", () => {
+  test("renders the mean polyline and month gridlines (no band)", () => {
     const svg = LT.socWeeklySvg(socSeries);
-    expect(svg).toContain("<polygon");
     expect(svg).toContain("<polyline");
+    expect(svg).not.toContain("<polygon");
     expect(svg).toContain("height:140px");
     expect(svg).toContain("<line");
   });
 
   test("empty series renders nothing", () => {
     expect(LT.socWeeklySvg([])).toBe("");
+  });
+});
+
+describe("windowWeeks", () => {
+  test("returns the ordered Monday keys spanning a fixed lookback to now", () => {
+    // 2026-06-14 is a Sunday; 14 days back is 2026-05-31 (Sunday, week of 05-25).
+    expect(LT.windowWeeks(ms(2026, 6, 14), 14)).toEqual([
+      "2026-05-25",
+      "2026-06-01",
+      "2026-06-08",
+    ]);
+  });
+
+  test("a year lookback yields ~53 week columns", () => {
+    const weeks = LT.windowWeeks(ms(2026, 6, 14), 366);
+    expect(weeks.length).toBeGreaterThanOrEqual(53);
+    expect(weeks.length).toBeLessThanOrEqual(54);
+  });
+});
+
+describe("calendarGrid with an explicit window", () => {
+  test("places days into the provided week columns; out-of-window days are dropped", () => {
+    const weeks = ["2026-05-25", "2026-06-01", "2026-06-08"];
+    const series = [
+      { day: "2026-06-02", kwh: 5 }, // Tuesday of the 06-01 week
+      { day: "2026-04-01", kwh: 9 }, // before the window
+    ];
+    const grid = LT.calendarGrid(series, weeks);
+    expect(grid.cols).toBe(3);
+    expect(grid.weeks).toEqual(weeks);
+    const c = grid.cells.find((x) => x.day === "2026-06-02");
+    expect(c.col).toBe(1);
+    expect(c.row).toBe(1);
+    expect(grid.cells.find((x) => x.day === "2026-04-01")).toBeUndefined();
   });
 });

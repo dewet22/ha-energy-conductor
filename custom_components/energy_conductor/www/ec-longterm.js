@@ -62,55 +62,43 @@
     return isNaN(num) ? 0 : Math.max(0, Math.min(100, num));
   }
 
-  // Daily SoC band derived from HOURLY means (not the day-period min/max). A
-  // raw daily `min` is deterministically poisoned by the inverter's isolated
-  // 0-spikes (a single 0-sample sets the whole day's min to 0; see
-  // rejectSocSpikes); an hourly mean dilutes that same sample to ~0.8% weight,
-  // so min-of-hourly-means is the genuine trough. Slightly conservative on
-  // depth (a brief dip is averaged within its hour) but never spuriously 0.
+  // Daily mean SoC, averaged from the day's HOURLY means. Hourly means already
+  // absorb the inverter's transient 0-spikes (a single 0-sample is ~0.8% of an
+  // hour), so the daily mean is robust without touching the 0-poisoned
+  // day-period min/max statistics.
   function socDailyFromHourly(rows) {
     var byDay = {};
     var order = [];
     (rows || []).forEach(function (r) {
       if (r.mean == null) return;
       var day = localDayKey(toDate(r.start));
-      var v = clampPct(r.mean);
       if (!byDay[day]) {
-        byDay[day] = { min: v, max: v, sum: 0, n: 0 };
+        byDay[day] = { sum: 0, n: 0 };
         order.push(day);
       }
-      var d = byDay[day];
-      if (v < d.min) d.min = v;
-      if (v > d.max) d.max = v;
-      d.sum += v;
-      d.n += 1;
+      byDay[day].sum += clampPct(r.mean);
+      byDay[day].n += 1;
     });
     return order.map(function (day) {
-      var d = byDay[day];
-      return { day: day, min: d.min, max: d.max, mean: d.sum / d.n };
+      return { day: day, mean: byDay[day].sum / byDay[day].n };
     });
   }
 
-  // Weekly SoC band: the week's deepest discharge (min of daily mins), fullest
-  // charge (max of daily maxes), and typical level (mean of daily means).
+  // Weekly mean SoC: the mean of the week's daily means.
   function socWeeklySeries(series) {
     var order = [];
     var agg = {};
     series.forEach(function (s) {
       var wk = mondayOf(s.day);
       if (!(wk in agg)) {
-        agg[wk] = { min: s.min, max: s.max, sum: 0, n: 0 };
+        agg[wk] = { sum: 0, n: 0 };
         order.push(wk);
       }
-      var a = agg[wk];
-      if (s.min < a.min) a.min = s.min;
-      if (s.max > a.max) a.max = s.max;
-      a.sum += s.mean;
-      a.n += 1;
+      agg[wk].sum += s.mean;
+      agg[wk].n += 1;
     });
     return order.map(function (wk) {
-      var a = agg[wk];
-      return { weekStart: wk, min: a.min, max: a.max, mean: a.sum / a.n };
+      return { weekStart: wk, mean: agg[wk].sum / agg[wk].n };
     });
   }
 
@@ -168,18 +156,45 @@
     });
   }
 
-  function calendarGrid(series) {
-    var weeks = [];
+  // Ordered Monday keys spanning a fixed lookback window to now. Used so every
+  // calendar small-multiple shares one annual column grid (aligned month labels;
+  // a short-history flow renders empty weeks on the left rather than stretching).
+  function windowWeeks(nowMs, lookbackDays) {
+    var startWk = mondayOf(localDayKey(new Date(nowMs - lookbackDays * 86400000)));
+    var endWk = mondayOf(localDayKey(new Date(nowMs)));
+    var out = [];
+    var cur = dayToDate(startWk);
+    var end = dayToDate(endWk).getTime();
+    while (cur.getTime() <= end) {
+      out.push(localDayKey(cur));
+      cur.setDate(cur.getDate() + 7);
+    }
+    return out;
+  }
+
+  // `weeks`, when given, fixes the column set (the annual window); days outside
+  // it are dropped. Without it, columns are derived from the series itself.
+  function calendarGrid(series, weeks) {
     var index = {};
+    if (weeks) {
+      weeks.forEach(function (wk, i) {
+        index[wk] = i;
+      });
+    } else {
+      weeks = [];
+      series.forEach(function (s) {
+        var wk = mondayOf(s.day);
+        if (!(wk in index)) {
+          index[wk] = weeks.length;
+          weeks.push(wk);
+        }
+      });
+    }
+    var cells = [];
     series.forEach(function (s) {
       var wk = mondayOf(s.day);
-      if (!(wk in index)) {
-        index[wk] = weeks.length;
-        weeks.push(wk);
-      }
-    });
-    var cells = series.map(function (s) {
-      return { col: index[mondayOf(s.day)], row: weekdayRow(s.day), day: s.day, kwh: s.kwh };
+      if (!(wk in index)) return;
+      cells.push({ col: index[wk], row: weekdayRow(s.day), day: s.day, kwh: s.kwh });
     });
     return { rows: 7, cols: weeks.length, cells: cells, weeks: weeks };
   }
@@ -238,6 +253,7 @@
     ["house", "House load"],
     ["grid_import", "Grid import"],
     ["grid_export", "Grid export"],
+    ["battery_discharge", "Battery discharged"],
     ["ev", "EV charging"],
     ["hot_water", "Hot water"],
     ["gas", "Gas"],
@@ -252,26 +268,12 @@
     return out;
   }
 
-  // Measurement (level) tiles, rendered from mean/min/max statistics rather
-  // than counter changes. Battery SoC gives two calendar tiles - the daily
-  // low (deepest discharge) and high (fullest charge) - over one entity; both
-  // open the same SoC deep view (mean density + min/max weekly band).
-  var LEVEL_FLOWS = [
-    ["soc_low", "Battery low", "min"],
-    ["soc_high", "Battery high", "max"],
-  ];
-
+  // Measurement (level) tiles, rendered from mean statistics rather than counter
+  // changes. Battery SoC gives one calendar tile (daily mean), opening a deep
+  // view of the mean-SoC hour-of-day density and the weekly mean line.
   function flowsFromLevelSources(levelSources) {
     if (!levelSources || !levelSources.battery_soc) return [];
-    return LEVEL_FLOWS.map(function (f) {
-      return {
-        key: f[0],
-        label: f[1],
-        metric: f[2],
-        entity: levelSources.battery_soc,
-        kind: "level",
-      };
-    });
+    return [{ key: "soc", label: "Battery SoC", entity: levelSources.battery_soc, kind: "level" }];
   }
 
   var MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -314,23 +316,28 @@
   var RAMP = ["rgba(29,158,117,0.14)", "#bfe8d9", "#8fd6bb", "#54bd96", "#1d9e75", "#0f6e56"];
   var C_GRIDLINE = "rgba(127,127,127,0.25)";
 
+  var CAL_CELL = 10;
+  var CAL_GAP = 2;
+  // Every calendar shares one annual column grid (windowWeeks), so a sparse
+  // flow renders empty weeks on the left and all chips stay the same size with
+  // aligned month labels.
+  var CAL_CANVAS_STYLE = "width:100%;image-rendering:pixelated;flex:1;min-width:0;";
+
   function fmtKwh(v) {
     if (v >= 1000) return (v / 1000).toFixed(1) + " MWh";
     return Math.round(v) + " kWh";
   }
 
-  // Faint teal fill + line for the SoC weekly band/mean (matches the battery
-  // teal used on the mission tape).
+  // Battery teal for the SoC weekly mean line (matches the mission tape).
   var SOC_LINE = "#009688";
-  var SOC_BAND = "rgba(0,150,136,0.18)";
 
   // opts.stops overrides the default quantile scale (energy); SoC passes fixed
   // linearStops so a level's absolute value maps to the same colour year-round.
   function paintCalendar(canvas, series, opts) {
     opts = opts || {};
-    var grid = calendarGrid(series);
-    var cell = 10;
-    var gap = 2;
+    var grid = calendarGrid(series, opts.weeks);
+    var cell = CAL_CELL;
+    var gap = CAL_GAP;
     canvas.width = Math.max(1, grid.cols * (cell + gap));
     canvas.height = grid.rows * (cell + gap);
     var ctx = canvas.getContext("2d");
@@ -420,8 +427,8 @@
     return { days: grid.days };
   }
 
-  // Weekly SoC band: a shaded min..max envelope with the mean line on top, on a
-  // fixed 0..100% y-axis (so band height reads as depth-of-cycling directly).
+  // Weekly mean SoC line on a fixed 0..100% y-axis (so height reads as level
+  // directly, comparable across the year).
   function socWeeklySvg(socSeries) {
     var weekly = socWeeklySeries(socSeries);
     if (!weekly.length) return "";
@@ -446,15 +453,6 @@
         '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H +
         '" stroke="' + C_GRIDLINE + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
     });
-    // Band polygon: max edge left-to-right, then min edge back.
-    var top = weekly.map(function (p, i) {
-      return x(i).toFixed(1) + "," + y(p.max).toFixed(1);
-    });
-    var bottom = weekly
-      .map(function (p, i) {
-        return x(i).toFixed(1) + "," + y(p.min).toFixed(1);
-      })
-      .reverse();
     var meanPts = weekly
       .map(function (p, i) {
         return x(i).toFixed(1) + "," + y(p.mean).toFixed(1);
@@ -465,8 +463,6 @@
       '" preserveAspectRatio="none" style="width:100%;height:' + H +
       'px;display:block;">' +
       inner +
-      '<polygon points="' + top.concat(bottom).join(" ") +
-      '" fill="' + SOC_BAND + '" stroke="none"/>' +
       '<polyline points="' + meanPts +
       '" fill="none" stroke="' + SOC_LINE + '" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>'
     );
@@ -773,6 +769,28 @@
         _render() {
           var self = this;
           var flows = this._flows();
+          // One annual column grid shared by every calendar (energy + SoC), so a
+          // sparse flow renders empty weeks on the left and all chips align.
+          var annualWeeks = windowWeeks(Date.now(), LOOKBACK_DAYS);
+          var weekdayRail =
+            '<div style="position:relative;width:12px;font-size:0.6em;opacity:0.5;align-self:stretch;">' +
+            '<span style="position:absolute;top:0;">M</span>' +
+            '<span style="position:absolute;top:29%;">W</span>' +
+            '<span style="position:absolute;top:57%;">F</span></div>';
+          var calChip = function (f, headerRight, borderColor) {
+            return (
+              '<div data-flow="' + f.key +
+              '" style="cursor:pointer;border:1px solid ' +
+              (self._selected === f.key ? borderColor : "var(--divider-color, #444)") +
+              ';border-radius:8px;padding:10px 12px;">' +
+              '<div style="display:flex;justify-content:space-between;font-size:0.95em;padding-bottom:6px;">' +
+              "<span>" + f.label + "</span><span style='opacity:0.6;'>" + headerRight + "</span></div>" +
+              '<div style="margin-left:14px;">' + monthRowHtml(annualWeeks) + "</div>" +
+              '<div style="display:flex;gap:2px;">' + weekdayRail +
+              '<canvas data-calendar="' + f.key + '" style="' + CAL_CANVAS_STYLE + '"></canvas>' +
+              "</div></div>"
+            );
+          };
           var html = '<ha-card style="padding:12px 16px 16px;">';
           html +=
             '<div style="font-size:1.1em;font-weight:500;padding:4px 0 10px;">Long-term energy</div>';
@@ -784,65 +802,21 @@
               missing.push(f.label);
               return;
             }
-            var series = dailySeries(rows);
-            var weeks = calendarGrid(series).weeks;
-            var selected = self._selected === f.key;
-            html +=
-              '<div data-flow="' +
-              f.key +
-              '" style="cursor:pointer;border:1px solid ' +
-              (selected ? "#1d9e75" : "var(--divider-color, #444)") +
-              ';border-radius:8px;padding:10px 12px;">' +
-              '<div style="display:flex;justify-content:space-between;font-size:0.95em;padding-bottom:6px;">' +
-              "<span>" +
-              f.label +
-              "</span><span style='opacity:0.6;'>" +
-              fmtKwh(annualTotal(series)) +
-              "/yr</span></div>" +
-              '<div style="margin-left:14px;">' + monthRowHtml(weeks) + "</div>" +
-              '<div style="display:flex;gap:2px;">' +
-              '<div style="position:relative;width:12px;font-size:0.6em;opacity:0.5;align-self:stretch;">' +
-              '<span style="position:absolute;top:0;">M</span>' +
-              '<span style="position:absolute;top:29%;">W</span>' +
-              '<span style="position:absolute;top:57%;">F</span></div>' +
-              '<canvas data-calendar="' +
-              f.key +
-              '" style="width:100%;image-rendering:pixelated;flex:1;min-width:0;"></canvas>' +
-              "</div></div>";
+            html += calChip(f, fmtKwh(annualTotal(dailySeries(rows))) + "/yr", "#1d9e75");
           });
-          // SoC level tiles (daily low / high) on a fixed 0..100% scale, with
-          // the period-average of the tile's metric as the headline (a level
-          // has no annual total). Same calendar geometry as the energy tiles.
+          // SoC level tile (daily mean) on a fixed 0..100% scale, headlined by
+          // the period-average level (a level has no annual total).
           var socSeries = this._socSeries();
           this._levelFlows().forEach(function (f) {
             if (!socSeries.length) {
               missing.push(f.label);
               return;
             }
-            var weeks = calendarGrid(socSeries).weeks;
-            var selected = self._selected === f.key;
             var avg =
               socSeries.reduce(function (a, s) {
-                return a + s[f.metric];
+                return a + s.mean;
               }, 0) / socSeries.length;
-            html +=
-              '<div data-flow="' +
-              f.key +
-              '" style="cursor:pointer;border:1px solid ' +
-              (selected ? "#009688" : "var(--divider-color, #444)") +
-              ';border-radius:8px;padding:10px 12px;">' +
-              '<div style="display:flex;justify-content:space-between;font-size:0.95em;padding-bottom:6px;">' +
-              "<span>" + f.label +
-              "</span><span style='opacity:0.6;'>avg " + Math.round(avg) + "%</span></div>" +
-              '<div style="margin-left:14px;">' + monthRowHtml(weeks) + "</div>" +
-              '<div style="display:flex;gap:2px;">' +
-              '<div style="position:relative;width:12px;font-size:0.6em;opacity:0.5;align-self:stretch;">' +
-              '<span style="position:absolute;top:0;">M</span>' +
-              '<span style="position:absolute;top:29%;">W</span>' +
-              '<span style="position:absolute;top:57%;">F</span></div>' +
-              '<canvas data-calendar="' + f.key +
-              '" style="width:100%;image-rendering:pixelated;flex:1;min-width:0;"></canvas>' +
-              "</div></div>";
+            html += calChip(f, "avg " + Math.round(avg) + "%", "#009688");
           });
           html += "</div>";
           if (missing.length) {
@@ -865,7 +839,7 @@
               var socSeriesD = this._socSeries();
               var socWeekly = socWeeklySeries(socSeriesD);
               densityCaption = "(colour = mean SoC in that hour)";
-              weeklyHeader = "Weekly SoC (min-max band, mean line)";
+              weeklyHeader = "Weekly mean SoC";
               weeklyChart = socWeeklySvg(socSeriesD);
               weeklyDays = socWeekly.map(function (p) {
                 return p.weekStart;
@@ -916,20 +890,22 @@
           html += "</ha-card>";
           this.innerHTML = html;
 
+          var wire = function (key) {
+            var tile = self.querySelector('[data-flow="' + key + '"]');
+            if (tile) {
+              tile.addEventListener("click", function () {
+                self._select(key);
+              });
+            }
+          };
           flows.forEach(function (f) {
             var rows = (self._daily || {})[f.entity];
             if (!rows || !rows.length) return;
             var canvas = self.querySelector('canvas[data-calendar="' + f.key + '"]');
-            if (canvas) paintCalendar(canvas, dailySeries(rows));
-            var tile = self.querySelector('[data-flow="' + f.key + '"]');
-            if (tile) {
-              tile.addEventListener("click", function () {
-                self._select(f.key);
-              });
-            }
+            if (canvas) paintCalendar(canvas, dailySeries(rows), { weeks: annualWeeks });
+            wire(f.key);
           });
-          // SoC tiles: fixed 0..100% scale, the tile's metric mapped into the
-          // shared calendar painter.
+          // SoC tiles: daily mean on a fixed 0..100% scale, shared annual window.
           var socCells = self._socSeries();
           var socStops = linearStops(100, RAMP.length - 1);
           self._levelFlows().forEach(function (f) {
@@ -939,17 +915,12 @@
               paintCalendar(
                 canvas,
                 socCells.map(function (s) {
-                  return { day: s.day, kwh: s[f.metric] };
+                  return { day: s.day, kwh: s.mean };
                 }),
-                { stops: socStops }
+                { stops: socStops, weeks: annualWeeks }
               );
             }
-            var tile = self.querySelector('[data-flow="' + f.key + '"]');
-            if (tile) {
-              tile.addEventListener("click", function () {
-                self._select(f.key);
-              });
-            }
+            wire(f.key);
           });
         }
       }
@@ -968,6 +939,7 @@
     socDailyFromHourly: socDailyFromHourly,
     socWeeklySeries: socWeeklySeries,
     socDensityGrid: socDensityGrid,
+    windowWeeks: windowWeeks,
     flowsFromSources: flowsFromSources,
     flowsFromLevelSources: flowsFromLevelSources,
     monthMarks: monthMarks,
