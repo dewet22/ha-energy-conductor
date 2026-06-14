@@ -34,7 +34,7 @@ _LONGTERM_URL = f"/{DOMAIN}/{_LONGTERM_FILENAME}"
 _TAPE_URL = f"/{DOMAIN}/{_TAPE_FILENAME}"
 _LEDGER_URL = f"/{DOMAIN}/{_LEDGER_FILENAME}"
 _MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL, _LEDGER_URL)
-_STRATEGY_VERSION = "12"
+_STRATEGY_VERSION = "13"
 
 
 async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
