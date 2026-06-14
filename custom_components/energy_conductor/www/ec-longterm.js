@@ -62,18 +62,33 @@
     return isNaN(num) ? 0 : Math.max(0, Math.min(100, num));
   }
 
-  function socDailySeries(rows) {
-    var out = [];
+  // Daily SoC band derived from HOURLY means (not the day-period min/max). A
+  // raw daily `min` is deterministically poisoned by the inverter's isolated
+  // 0-spikes (a single 0-sample sets the whole day's min to 0; see
+  // rejectSocSpikes); an hourly mean dilutes that same sample to ~0.8% weight,
+  // so min-of-hourly-means is the genuine trough. Slightly conservative on
+  // depth (a brief dip is averaged within its hour) but never spuriously 0.
+  function socDailyFromHourly(rows) {
+    var byDay = {};
+    var order = [];
     (rows || []).forEach(function (r) {
       if (r.mean == null) return;
-      out.push({
-        day: localDayKey(toDate(r.start)),
-        mean: clampPct(r.mean),
-        min: clampPct(r.min),
-        max: clampPct(r.max),
-      });
+      var day = localDayKey(toDate(r.start));
+      var v = clampPct(r.mean);
+      if (!byDay[day]) {
+        byDay[day] = { min: v, max: v, sum: 0, n: 0 };
+        order.push(day);
+      }
+      var d = byDay[day];
+      if (v < d.min) d.min = v;
+      if (v > d.max) d.max = v;
+      d.sum += v;
+      d.n += 1;
     });
-    return out;
+    return order.map(function (day) {
+      var d = byDay[day];
+      return { day: day, min: d.min, max: d.max, mean: d.sum / d.n };
+    });
   }
 
   // Weekly SoC band: the week's deepest discharge (min of daily mins), fullest
@@ -540,8 +555,8 @@
           }
           this._config = config;
           this._selected = null;
-          this._daily = null; // { entity_id: [rows] } once fetched
-          this._socDaily = null; // { entity_id: [mean/min/max rows] }
+          this._daily = null; // { entity_id: [change rows] } once fetched
+          this._socHourly = null; // { entity_id: [hourly mean rows] }
           this._fetching = false;
           this._fetchedAt = 0;
         }
@@ -571,45 +586,54 @@
           return flowsFromLevelSources(sources);
         }
 
-        // SoC daily rows for a level flow: socDailySeries already clamps; null
-        // until the measurement fetch returns.
+        // SoC daily band, derived from the cached hourly means (spike-resistant
+        // - see socDailyFromHourly). Empty until the measurement fetch returns.
         _socSeries() {
           var lf = this._levelFlows();
           if (!lf.length) return [];
-          return socDailySeries((this._socDaily || {})[lf[0].entity] || []);
+          return socDailyFromHourly((this._socHourly || {})[lf[0].entity] || []);
+        }
+
+        _socRows() {
+          var lf = this._levelFlows();
+          return lf.length ? (this._socHourly || {})[lf[0].entity] || [] : [];
         }
 
         _fetchDaily() {
           var flows = this._flows();
-          if (!this._hass || !flows.length) {
+          var levelFlows = this._levelFlows();
+          if (!this._hass || (!flows.length && !levelFlows.length)) {
             this._renderNote(
-              "No long-term sources configured. Set energy counters in the " +
-                "integration's Costs options."
+              "No long-term sources configured. Set energy counters (and a " +
+                "battery SoC sensor) in the integration's options."
             );
             return;
           }
           this._fetching = true;
           var self = this;
-          // Energy counters want `change` (sum); SoC is a level, so a second
-          // call asks for mean/min/max. Both feed one render.
-          var levelFlows = this._levelFlows();
-          var energyFetch = this._hass.callWS({
-            type: "recorder/statistics_during_period",
-            start_time: isoDaysAgo(LOOKBACK_DAYS),
-            period: "day",
-            statistic_ids: flows.map(function (f) {
-              return f.entity;
-            }),
-            types: ["change"],
-          });
+          // Energy counters want `change` (sum). SoC is a level: a single
+          // hourly-mean fetch feeds the calendars (via socDailyFromHourly),
+          // density, and weekly band - and dodges the 0-spike-poisoned
+          // day-period min. Both calls feed one render.
+          var energyFetch = flows.length
+            ? this._hass.callWS({
+                type: "recorder/statistics_during_period",
+                start_time: isoDaysAgo(LOOKBACK_DAYS),
+                period: "day",
+                statistic_ids: flows.map(function (f) {
+                  return f.entity;
+                }),
+                types: ["change"],
+              })
+            : Promise.resolve({});
           var levelFetch = levelFlows.length
             ? this._hass
                 .callWS({
                   type: "recorder/statistics_during_period",
                   start_time: isoDaysAgo(LOOKBACK_DAYS),
-                  period: "day",
+                  period: "hour",
                   statistic_ids: [levelFlows[0].entity],
-                  types: ["mean", "min", "max"],
+                  types: ["mean"],
                 })
                 .catch(function () {
                   return {}; // SoC is additive; its absence must not sink the view
@@ -618,12 +642,12 @@
           Promise.all([energyFetch, levelFetch])
             .then(function (results) {
               self._daily = results[0] || {};
-              self._socDaily = results[1] || {};
+              self._socHourly = results[1] || {};
               self._fetching = false;
               self._render();
               // A refresh re-renders the deep view with a fresh (blank)
               // density canvas - repaint it for the selected flow.
-              if (self._selected) self._fetchHourly();
+              if (self._selected) self._paintDeep();
             })
             .catch(function () {
               self._fetching = false;
@@ -637,57 +661,65 @@
         _select(key) {
           this._selected = this._selected === key ? null : key;
           this._render();
-          if (this._selected) this._fetchHourly();
+          if (this._selected) this._paintDeep();
         }
 
-        _fetchHourly() {
+        // Paints the deep-view density + scale for the selected flow. SoC reuses
+        // the hourly means already in hand (no extra fetch); energy fetches its
+        // hourly `change` envelope on demand.
+        _paintDeep() {
           var flow = this._flowByKey(this._selected);
           if (!flow) return;
+          if (flow.kind === "level") {
+            this._paintDensity(this._socRows(), true);
+            return;
+          }
           var self = this;
           var wanted = this._selected;
-          var level = flow.kind === "level";
           this._hass
             .callWS({
               type: "recorder/statistics_during_period",
               start_time: isoDaysAgo(LOOKBACK_DAYS),
               period: "hour",
               statistic_ids: [flow.entity],
-              types: level ? ["mean"] : ["change"],
+              types: ["change"],
             })
             .then(function (result) {
               if (self._selected !== wanted) return; // selection moved on
-              var canvas = self.querySelector("canvas[data-density]");
-              if (!canvas) return;
-              var rows = (result || {})[flow.entity] || [];
-              var info = level ? paintSocDensity(canvas, rows) : paintDensity(canvas, rows);
-              if (!info) return;
-              var months = self.querySelector("[data-density-months]");
-              if (months) months.innerHTML = monthRowHtml(info.days);
-              var scale = self.querySelector("[data-density-scale]");
-              if (scale) {
-                var sw = function (color) {
-                  return (
-                    '<span style="display:inline-block;width:14px;height:10px;background:' +
-                    color + ';vertical-align:middle;"></span>'
-                  );
-                };
-                // White = no data (outlined swatch); the gradient runs
-                // 0 -> max with the bounds at its ends. For energy, kWh in an
-                // hour bucket IS the hour's average kW; for SoC the scale is a
-                // fixed 0 -> 100%.
-                var swEmpty =
-                  '<span style="display:inline-block;width:14px;height:10px;' +
-                  'border:1px solid rgba(127,127,127,0.45);box-sizing:border-box;' +
-                  'vertical-align:middle;"></span>';
-                scale.innerHTML =
-                  swEmpty + " no data &nbsp;&nbsp; 0 " + RAMP.map(sw).join("") +
-                  " " + (level ? "100%" : info.maxKwh.toFixed(1) + " kW");
-              }
+              self._paintDensity((result || {})[flow.entity] || [], false);
             })
             .catch(function () {
               var note = self.querySelector("[data-density-note]");
               if (note) note.textContent = "Hourly statistics unavailable for this flow.";
             });
+        }
+
+        _paintDensity(rows, level) {
+          var canvas = this.querySelector("canvas[data-density]");
+          if (!canvas) return;
+          var info = level ? paintSocDensity(canvas, rows) : paintDensity(canvas, rows);
+          if (!info) return;
+          var months = this.querySelector("[data-density-months]");
+          if (months) months.innerHTML = monthRowHtml(info.days);
+          var scale = this.querySelector("[data-density-scale]");
+          if (scale) {
+            var sw = function (color) {
+              return (
+                '<span style="display:inline-block;width:14px;height:10px;background:' +
+                color + ';vertical-align:middle;"></span>'
+              );
+            };
+            // White = no data (outlined swatch); the gradient runs 0 -> max with
+            // the bounds at its ends. For energy, kWh in an hour bucket IS the
+            // hour's average kW; for SoC the scale is a fixed 0 -> 100%.
+            var swEmpty =
+              '<span style="display:inline-block;width:14px;height:10px;' +
+              'border:1px solid rgba(127,127,127,0.45);box-sizing:border-box;' +
+              'vertical-align:middle;"></span>';
+            scale.innerHTML =
+              swEmpty + " no data &nbsp;&nbsp; 0 " + RAMP.map(sw).join("") +
+              " " + (level ? "100%" : info.maxKwh.toFixed(1) + " kW");
+          }
         }
 
         _flowByKey(key) {
@@ -933,7 +965,7 @@
     quantileStops: quantileStops,
     linearStops: linearStops,
     bucket: bucket,
-    socDailySeries: socDailySeries,
+    socDailyFromHourly: socDailyFromHourly,
     socWeeklySeries: socWeeklySeries,
     socDensityGrid: socDensityGrid,
     flowsFromSources: flowsFromSources,

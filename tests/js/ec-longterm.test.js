@@ -196,35 +196,48 @@ describe("weeklySvg", () => {
   });
 });
 
-describe("socDailySeries", () => {
-  test("maps day-period mean/min/max rows to per-day SoC band", () => {
+describe("socDailyFromHourly", () => {
+  test("daily low/high/mean are derived from hourly means, bucketed by day", () => {
     const rows = [
-      { start: ms(2026, 6, 10), mean: 62.5, min: 12, max: 100 },
-      { start: ms(2026, 6, 11), mean: 48.0, min: 8, max: 95 },
+      { start: ms(2026, 6, 10, 3), mean: 20 },
+      { start: ms(2026, 6, 10, 14), mean: 100 },
+      { start: ms(2026, 6, 10, 20), mean: 60 },
+      { start: ms(2026, 6, 11, 4), mean: 8 },
+      { start: ms(2026, 6, 11, 13), mean: 92 },
     ];
-    const out = LT.socDailySeries(rows);
+    const out = LT.socDailyFromHourly(rows);
     expect(out).toEqual([
-      { day: "2026-06-10", mean: 62.5, min: 12, max: 100 },
-      { day: "2026-06-11", mean: 48.0, min: 8, max: 95 },
+      { day: "2026-06-10", min: 20, max: 100, mean: 60 },
+      { day: "2026-06-11", min: 8, max: 92, mean: 50 },
     ]);
   });
 
-  test("rows with no mean are skipped (no data, not a zero level)", () => {
+  test("an isolated 0-spike does not poison the daily low (the bug behind P1)", () => {
+    // The raw day-period `min` statistic is 0 here (one transient inverter
+    // 0-read). Derived from hourly means, that read is diluted within its hour
+    // to ~0.8% weight, so the hour's mean stays ~50 and the daily low is the
+    // genuine overnight trough (18), never the spurious 0.
+    const hours = [];
+    for (let h = 0; h < 24; h++) hours.push({ start: ms(2026, 6, 10, h), mean: h === 4 ? 18 : 50 });
+    // The 03:00 hour absorbed a single 0-sample: its mean is 49.6, not 0.
+    hours[3].mean = 49.6;
+    const day = LT.socDailyFromHourly(hours)[0];
+    expect(day.min).toBe(18); // the real low, not 0
+    expect(day.max).toBe(50);
+  });
+
+  test("hours with no mean are skipped; values clamp into 0..100", () => {
     const rows = [
-      { start: ms(2026, 6, 10), mean: null, min: null, max: null },
-      { start: ms(2026, 6, 11), mean: 50, min: 20, max: 80 },
+      { start: ms(2026, 6, 10, 1), mean: null },
+      { start: ms(2026, 6, 10, 2), mean: -3 },
+      { start: ms(2026, 6, 10, 3), mean: 104 },
     ];
-    expect(LT.socDailySeries(rows).map((s) => s.day)).toEqual(["2026-06-11"]);
+    expect(LT.socDailyFromHourly(rows)).toEqual([{ day: "2026-06-10", min: 0, max: 100, mean: 50 }]);
   });
 
-  test("levels clamp into 0..100 (a transient out-of-range read can't blow the scale)", () => {
-    const rows = [{ start: ms(2026, 6, 10), mean: 50, min: -3, max: 104 }];
-    expect(LT.socDailySeries(rows)[0]).toEqual({ day: "2026-06-10", mean: 50, min: 0, max: 100 });
-  });
-
-  test("NaN/undefined min or max default to 0, never NaN into the SVG/canvas coords", () => {
-    const rows = [{ start: ms(2026, 6, 10), mean: 50, min: NaN, max: undefined }];
-    expect(LT.socDailySeries(rows)[0]).toEqual({ day: "2026-06-10", mean: 50, min: 0, max: 0 });
+  test("empty input gives no days", () => {
+    expect(LT.socDailyFromHourly([])).toEqual([]);
+    expect(LT.socDailyFromHourly(undefined)).toEqual([]);
   });
 });
 
