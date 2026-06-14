@@ -83,6 +83,7 @@ function makeHass(opts) {
     // The status sensor carries the resolved costs-entity map (money_sources);
     // tests inject it via opts.moneySources to light up the long-term view.
     if (key === "status" && opts.moneySources) attributes.money_sources = opts.moneySources;
+    if (key === "status" && opts.levelSources) attributes.level_sources = opts.levelSources;
     states[id] = { state: stateFor(key), attributes: attributes };
   }
 
