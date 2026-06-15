@@ -20,6 +20,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     mock_restore_cache,
+    mock_restore_cache_with_extra_data,
 )
 
 from .conftest import MOCK_CONFIG
@@ -224,3 +225,50 @@ async def test_counterfactual_restores_running_total(hass: HomeAssistant) -> Non
     # First tick: house counter 10.0 vs restored 9.0 -> 1.50 + 1 kWh * 0.30.
     state = hass.states.get(eid)
     assert float(state.state) == pytest.approx(1.80)
+
+
+async def test_savings_breakdown_restores_across_restart(hass: HomeAssistant) -> None:
+    """The per-line breakdown accumulators resume after a restart, not reset to zero.
+
+    Covers both seed paths: self_use has a live first-tick baseline (merge: restored
+    running total + the down-time counter gap priced at the current rate); peak_shift
+    has no configured input (adopt the restored snapshot directly).
+    """
+    _arrange_entities(hass, soc="50")
+    _arrange_money_entities(hass)  # PV 8.0 - export 2.0 -> self_use counter 6.0; rate 0.30
+    entry = MockConfigEntry(domain=DOMAIN, data=COSTS_CONFIG, entry_id="m6")
+
+    eid = (
+        er.async_get(hass)
+        .async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{entry.entry_id}-savings-today",
+            suggested_object_id="ec_savings",
+        )
+        .entity_id
+    )
+    from homeassistant.util import dt as dt_util
+
+    today = dt_util.now().date().isoformat()
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State(eid, "1.20"),
+                {
+                    "accumulators": {
+                        "self_use": {"day": today, "last_counter_kwh": 4.0, "cost_gbp": 1.20},
+                        "peak_shift": {"day": today, "last_counter_kwh": 3.0, "cost_gbp": 0.50},
+                    }
+                },
+            )
+        ],
+    )
+
+    assert await _setup(hass, entry)
+    savings = hass.states.get(eid)
+    # self_use: restored 1.20 + (6.0 - 4.0) kWh * 0.30 = 1.80 (merge).
+    assert savings.attributes["solar_self_use_gbp"] == pytest.approx(1.80)
+    # peak_shift: no live input this run, so the restored snapshot is adopted as-is.
+    assert savings.attributes["battery_peak_shift_gbp"] == pytest.approx(0.50)

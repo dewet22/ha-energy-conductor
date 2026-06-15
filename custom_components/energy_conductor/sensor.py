@@ -11,7 +11,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOf
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -786,20 +786,63 @@ class EVChargeCostSensor(_DailyMoneySensor):
         }
 
 
-class SavingsTodaySensor(_MoneySensorBase):
+class SavingsTodaySensor(_MoneySensorBase, RestoreEntity):
     """Modelled savings vs the no-PV/no-battery counterfactual.
 
-    No restore needed: the headline recomputes from the counterfactual sensor (which
-    restores) and the billing-grade read-throughs. Only the per-line breakdown
-    attributes lose intraday history across a restart.
+    The headline (native_value) recomputes from the counterfactual sensor (which
+    restores) and the billing-grade read-throughs, so it needs no restore of its own.
+    But the per-line breakdown accumulators (self-use, peak-shift, hot-water, EV-solar)
+    are surfaced ONLY as attributes here and have no dedicated sensor, so without a
+    restore path they zero out on every restart (counterfactual survives, the breakdown
+    doesn't). Persist them in an extra-data blob and seed them back, mirroring
+    _DailyMoneySensor — keeps the breakdown intact across restarts without new entities.
     """
 
     _attr_translation_key = "savings_today"
     _attr_name = "Savings today"
+    _BREAKDOWN_ACCS = (ACC_SELF_USE, ACC_PEAK_SHIFT, ACC_HOTWATER_GAS, ACC_EV_SOLAR)
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}-savings-today"
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData | None:
+        """Persist the breakdown accumulators so a restart doesn't lose their day."""
+        money = self._money
+        if money is None:
+            return None
+        accumulators: dict[str, Any] = {}
+        for name in self._BREAKDOWN_ACCS:
+            acc = money.daily.get(name)
+            if acc is not None:
+                accumulators[name] = {
+                    "day": acc.day.isoformat(),
+                    "last_counter_kwh": acc.last_counter_kwh,
+                    "cost_gbp": acc.cost_gbp,
+                }
+        return RestoredExtraData({"accumulators": accumulators})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._money is None:
+            return
+        last = await self.async_get_last_extra_data()
+        accumulators = (last.as_dict() if last else {}).get("accumulators", {})
+        for name in self._BREAKDOWN_ACCS:
+            raw = accumulators.get(name)
+            if not raw:
+                continue
+            try:
+                restored = DailyCost(
+                    day=date.fromisoformat(raw["day"]),
+                    last_counter_kwh=float(raw["last_counter_kwh"]),
+                    cost_gbp=float(raw["cost_gbp"]),
+                )
+            except KeyError, TypeError, ValueError:
+                continue
+            self._money.seed_daily(name, restored)
+        self.async_write_ha_state()
 
     @property
     def available(self) -> bool:
