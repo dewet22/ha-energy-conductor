@@ -830,9 +830,12 @@ class Adapter:
         ]
         if not full_times:
             return None, set()
+        # Fetch from one window before `start` so a full event in the first hour of the
+        # lookback still sees its preceding hour's diversion (else it could falsely drop).
+        diversion_start = start - timedelta(hours=HOTWATER_FULL_WINDOW_HOURS - 1)
         corroborated = corroborated_full_events(
             full_times,
-            self._hot_water_hourly_kwh(start, now, green_entity),
+            self._hot_water_hourly_kwh(diversion_start, now, green_entity),
             window_hours=HOTWATER_FULL_WINDOW_HOURS,
             min_kwh=HOTWATER_FULL_MIN_KWH,
         )
@@ -859,7 +862,10 @@ class Adapter:
             kwh = float(change)
             if not math.isfinite(kwh):
                 continue
-            by_hour[ts.replace(minute=0, second=0, microsecond=0)] = kwh
+            # Clamp negatives: a meter reset/correction can emit a negative hourly delta,
+            # which would otherwise cancel real diversion in the corroboration window and
+            # falsely drop a genuine full. Negative diversion is not physical.
+            by_hour[ts.replace(minute=0, second=0, microsecond=0)] = max(0.0, kwh)
         return by_hour
 
     def _hot_water_daily_kwh(self, now: datetime, entity: str) -> dict:

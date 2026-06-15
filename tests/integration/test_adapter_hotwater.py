@@ -216,6 +216,25 @@ async def test_non_finite_recorder_rows_skipped(hass, now):
     assert list(daily.values()) == [2.5]
 
 
+async def test_hourly_kwh_clamps_negative_and_skips_nonfinite(hass, now):
+    """Corroboration buckets: a negative meter-reset delta clamps to 0 (so it can't cancel
+    real diversion in the window and falsely drop a genuine full); non-finite rows skip."""
+    adapter = _adapter(hass)
+    h10 = datetime(2026, 6, 8, 10, 0, tzinfo=UTC)
+    h11 = datetime(2026, 6, 8, 11, 0, tzinfo=UTC)
+    h12 = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    rows = [
+        {"start": h10, "change": 0.3},
+        {"start": h11, "change": -0.5},  # meter reset/correction → clamped to 0
+        {"start": h12, "change": float("nan")},  # skipped
+    ]
+    with patch(_PATCH_STATS, return_value={GREEN: rows}):
+        by_hour = adapter._hot_water_hourly_kwh(now, now, GREEN)
+    assert by_hour[h10] == 0.3
+    assert by_hour[h11] == 0.0
+    assert h12 not in by_hour
+
+
 TOTAL = "sensor.eddi_total"
 
 
