@@ -178,6 +178,31 @@ describe("downsample", () => {
   });
 });
 
+describe("extendToNow", () => {
+  test("carries a stale write-on-change series forward to the cursor", () => {
+    // SoC pinned at 100 since two hours ago; the live value is still 100.
+    const pts = [{ t: at(-4), v: 96 }, { t: at(-2), v: 100 }];
+    const out = T.extendToNow(pts, NOW, 100);
+    expect(out.length).toBe(3);
+    expect(out[2]).toEqual({ t: NOW, v: 100 });
+  });
+
+  test("leaves a series that already reaches now untouched", () => {
+    const pts = [{ t: at(-1), v: 50 }, { t: NOW, v: 52 }];
+    expect(T.extendToNow(pts, NOW, 52)).toEqual(pts);
+  });
+
+  test("does not fabricate a point when the live value is unavailable", () => {
+    const pts = [{ t: at(-3), v: 80 }];
+    expect(T.extendToNow(pts, NOW, NaN)).toEqual(pts);
+    expect(T.extendToNow(pts, NOW, undefined)).toEqual(pts);
+  });
+
+  test("empty series passes through", () => {
+    expect(T.extendToNow([], NOW, 100)).toEqual([]);
+  });
+});
+
 describe("projectionPoints", () => {
   test("parses the soc_projection attribute", () => {
     const attr = [
