@@ -494,13 +494,24 @@
               }
             });
             if (bHtml) {
+              // The four lines are a GROSS, mechanism-by-mechanism attribution
+              // (each = energy counter x import/gas rate); the net figure below is
+              // a separate counterfactual identity (counterfactual - actual import
+              // + export). They are NOT a partition of each other - the gross lines
+              // overlap (solar that charges the battery counts in both self-use and
+              // peak-shift) and are priced gross of the actual bill - so a caption +
+              // relabel stop the row reading as a column sum of the four lines.
               html +=
                 sectionHeader("Avoided costs", MODELLED) +
                 tableOpen() +
                 columnHeader() +
                 bHtml +
+                '<tr><td colspan="4" style="padding:2px 0 6px;font-size:0.78em;opacity:0.55;">' +
+                "Gross attribution at the import rate - overlapping, so these don't sum to the net below." +
+                "</td></tr>" +
                 '<tr style="border-top:1px solid var(--divider-color, #444);">' +
-                '<td style="padding:5px 0;font-weight:500;">Total</td>' +
+                '<td style="padding:5px 0;font-weight:500;">Net saved ' +
+                '<span style="font-weight:400;opacity:0.55;">vs no battery / solar</span></td>' +
                 [savings, this._since(c.savings_entity, 7), this._since(c.savings_entity, 30)]
                   .map(function (v) {
                     return (
