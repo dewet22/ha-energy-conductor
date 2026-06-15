@@ -195,9 +195,9 @@ describe("weeklySvg", () => {
     });
   }
 
-  test("renders a taller chart with month-start gridlines", () => {
+  test("renders a tall chart (280px) with month-start gridlines", () => {
     const svg = LT.weeklySvg(series);
-    expect(svg).toContain("height:140px");
+    expect(svg).toContain("height:280px");
     expect(svg).toContain("<line");
   });
 
@@ -242,22 +242,6 @@ describe("socDailyFromHourly", () => {
   test("empty input gives no days", () => {
     expect(LT.socDailyFromHourly([])).toEqual([]);
     expect(LT.socDailyFromHourly(undefined)).toEqual([]);
-  });
-});
-
-describe("socWeeklySeries", () => {
-  test("weekly mean is the mean of the week's daily means", () => {
-    // 2026-06-08 is a Monday; these four days share one ISO week.
-    const series = [
-      { day: "2026-06-08", mean: 40 },
-      { day: "2026-06-09", mean: 60 },
-      { day: "2026-06-10", mean: 50 },
-      { day: "2026-06-11", mean: 70 },
-    ];
-    const out = LT.socWeeklySeries(series);
-    expect(out.length).toBe(1);
-    expect(out[0].weekStart).toBe("2026-06-08");
-    expect(out[0].mean).toBeCloseTo(55, 6);
   });
 });
 
@@ -308,25 +292,23 @@ describe("flowsFromLevelSources", () => {
 });
 
 describe("socWeeklySvg", () => {
-  const socSeries = [];
+  // ~6 weeks of hourly rows spanning the May->June boundary.
+  const rows = [];
   for (let i = 0; i < 42; i++) {
-    const d = new Date(2026, 4, 4 + i); // spans the May->June boundary
-    const pad = (n) => (n < 10 ? "0" : "") + n;
-    socSeries.push({
-      day: d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()),
-      mean: 60,
-    });
+    const day = new Date(2026, 4, 4 + i);
+    rows.push({ start: day.setHours(3), mean: 30 });
+    rows.push({ start: new Date(2026, 4, 4 + i).setHours(14), mean: 95 });
   }
 
-  test("renders the mean polyline and month gridlines (no band)", () => {
-    const svg = LT.socWeeklySvg(socSeries);
-    expect(svg).toContain("<polyline");
-    expect(svg).not.toContain("<polygon");
-    expect(svg).toContain("height:140px");
-    expect(svg).toContain("<line");
+  test("renders the min-max band, mean line, and a tall (280px) chart", () => {
+    const svg = LT.socWeeklySvg(rows);
+    expect(svg).toContain("<polygon"); // the min-max band
+    expect(svg).toContain("<polyline"); // the mean line
+    expect(svg).toContain("height:280px");
+    expect(svg).toContain("<line"); // month gridlines
   });
 
-  test("empty series renders nothing", () => {
+  test("empty rows render nothing", () => {
     expect(LT.socWeeklySvg([])).toBe("");
   });
 });
@@ -362,5 +344,61 @@ describe("calendarGrid with an explicit window", () => {
     expect(c.col).toBe(1);
     expect(c.row).toBe(1);
     expect(grid.cells.find((x) => x.day === "2026-04-01")).toBeUndefined();
+  });
+});
+
+describe("windowDays", () => {
+  test("ordered day keys spanning the lookback to now (inclusive)", () => {
+    expect(LT.windowDays(ms(2026, 6, 3), 2)).toEqual([
+      "2026-06-01",
+      "2026-06-02",
+      "2026-06-03",
+    ]);
+  });
+
+  test("a year lookback ends today and spans ~367 days", () => {
+    const days = LT.windowDays(ms(2026, 6, 14), 366);
+    expect(days[days.length - 1]).toBe("2026-06-14");
+    expect(days.length).toBeGreaterThanOrEqual(366);
+    expect(days.length).toBeLessThanOrEqual(367);
+  });
+});
+
+describe("densityGrid with an explicit day window", () => {
+  test("columns are the provided days; out-of-window cells are dropped", () => {
+    const days = ["2026-06-01", "2026-06-02", "2026-06-03"];
+    const rows = [
+      { start: ms(2026, 6, 2, 12), change: 2.5 },
+      { start: ms(2026, 5, 1, 12), change: 9 }, // before the window
+    ];
+    const g = LT.densityGrid(rows, days);
+    expect(g.days).toEqual(days);
+    expect(g.cells.find((c) => c.day === "2026-06-02" && c.hour === 12).kwh).toBe(2.5);
+    expect(g.cells.find((c) => c.day === "2026-05-01")).toBeUndefined();
+  });
+});
+
+describe("socWeeklyBand", () => {
+  test("weekly min/mean/max from hourly means (spike-safe operating envelope)", () => {
+    // week of 2026-06-08 (a Monday).
+    const rows = [
+      { start: ms(2026, 6, 8, 3), mean: 30 },
+      { start: ms(2026, 6, 8, 14), mean: 90 },
+      { start: ms(2026, 6, 9, 4), mean: 25 },
+      { start: ms(2026, 6, 9, 13), mean: 100 },
+    ];
+    const out = LT.socWeeklyBand(rows);
+    expect(out.length).toBe(1);
+    expect(out[0]).toMatchObject({ weekStart: "2026-06-08", min: 25, max: 100 });
+    expect(out[0].mean).toBeCloseTo((30 + 90 + 25 + 100) / 4, 6);
+  });
+
+  test("clamps and skips null means", () => {
+    const rows = [
+      { start: ms(2026, 6, 8, 3), mean: null },
+      { start: ms(2026, 6, 8, 4), mean: -5 },
+      { start: ms(2026, 6, 8, 5), mean: 110 },
+    ];
+    expect(LT.socWeeklyBand(rows)[0]).toMatchObject({ min: 0, max: 100 });
   });
 });

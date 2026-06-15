@@ -84,41 +84,61 @@
     });
   }
 
-  // Weekly mean SoC: the mean of the week's daily means.
-  function socWeeklySeries(series) {
-    var order = [];
-    var agg = {};
-    series.forEach(function (s) {
-      var wk = mondayOf(s.day);
-      if (!(wk in agg)) {
-        agg[wk] = { sum: 0, n: 0 };
-        order.push(wk);
-      }
-      agg[wk].sum += s.mean;
-      agg[wk].n += 1;
-    });
-    return order.map(function (wk) {
-      return { weekStart: wk, mean: agg[wk].sum / agg[wk].n };
-    });
-  }
-
   // Hour-of-day x day grid of mean SoC, on a fixed 0..100 scale (a level means
-  // the same in any season, so no quantile/data-derived max).
-  function socDensityGrid(rows) {
-    var days = [];
+  // the same in any season, so no quantile/data-derived max). `days`, when
+  // given, fixes the column set (the annual window); out-of-window rows drop.
+  function socDensityGrid(rows, days) {
+    var inWindow = null;
+    if (days) {
+      inWindow = {};
+      days.forEach(function (d) {
+        inWindow[d] = true;
+      });
+    } else {
+      days = [];
+    }
     var seen = {};
     var cells = [];
     (rows || []).forEach(function (r) {
       if (r.mean == null) return;
       var d = toDate(r.start);
       var day = localDayKey(d);
-      if (!seen[day]) {
+      if (inWindow) {
+        if (!inWindow[day]) return;
+      } else if (!seen[day]) {
         seen[day] = true;
         days.push(day);
       }
       cells.push({ day: day, hour: d.getHours(), soc: clampPct(r.mean) });
     });
     return { days: days, cells: cells, maxPct: 100 };
+  }
+
+  // Weekly SoC operating envelope from HOURLY means: per week the lowest and
+  // highest hourly mean (the trough/peak the battery actually reached) plus the
+  // average. Built on hourly means, so it is spike-safe the same way the daily
+  // mean is - never the 0-poisoned day-period min.
+  function socWeeklyBand(rows) {
+    var order = [];
+    var agg = {};
+    (rows || []).forEach(function (r) {
+      if (r.mean == null) return;
+      var v = clampPct(r.mean);
+      var wk = mondayOf(localDayKey(toDate(r.start)));
+      if (!(wk in agg)) {
+        agg[wk] = { min: v, max: v, sum: 0, n: 0 };
+        order.push(wk);
+      }
+      var a = agg[wk];
+      if (v < a.min) a.min = v;
+      if (v > a.max) a.max = v;
+      a.sum += v;
+      a.n += 1;
+    });
+    return order.map(function (wk) {
+      var a = agg[wk];
+      return { weekStart: wk, min: a.min, max: a.max, mean: a.sum / a.n };
+    });
   }
 
   // Evenly spaced thresholds partitioning [0, maxVal] into n+1 bands - the
@@ -154,6 +174,25 @@
     return order.map(function (wk) {
       return { weekStart: wk, kwh: totals[wk] };
     });
+  }
+
+  // Ordered day keys spanning a fixed lookback window to now (inclusive). Used
+  // so the deep-view density shares one annual column grid: a short-history
+  // flow right-aligns its data with blank columns on the left, rather than
+  // smearing a few weeks across the full width.
+  function windowDays(nowMs, lookbackDays) {
+    var out = [];
+    var cur = new Date(nowMs - lookbackDays * 86400000);
+    var end = new Date(nowMs);
+    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate());
+    var endKey = localDayKey(end);
+    while (true) {
+      var key = localDayKey(cur);
+      out.push(key);
+      if (key === endKey) break;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
   }
 
   // Ordered Monday keys spanning a fixed lookback window to now. Used so every
@@ -201,8 +240,17 @@
 
   // Hour-period statistics rows -> day columns x hour rows. kWh over one hour
   // doubles as the hour's average kW, so this is the power-envelope view.
-  function densityGrid(rows) {
-    var days = [];
+  // `days`, when given, fixes the column set (the annual window).
+  function densityGrid(rows, days) {
+    var inWindow = null;
+    if (days) {
+      inWindow = {};
+      days.forEach(function (d) {
+        inWindow[d] = true;
+      });
+    } else {
+      days = [];
+    }
     var seen = {};
     var cells = [];
     var max = 0;
@@ -210,7 +258,9 @@
       if (r.change == null) return;
       var d = toDate(r.start);
       var day = localDayKey(d);
-      if (!seen[day]) {
+      if (inWindow) {
+        if (!inWindow[day]) return;
+      } else if (!seen[day]) {
         seen[day] = true;
         days.push(day);
       }
@@ -328,8 +378,11 @@
     return Math.round(v) + " kWh";
   }
 
-  // Battery teal for the SoC weekly mean line (matches the mission tape).
+  // Battery teal for the SoC weekly mean line + a faint fill for the min-max
+  // operating band (matches the mission tape).
   var SOC_LINE = "#009688";
+  var SOC_BAND = "rgba(0,150,136,0.18)";
+  var WEEKLY_H = 280; // a readable chart, not a sparkline
 
   // opts.stops overrides the default quantile scale (energy); SoC passes fixed
   // linearStops so a level's absolute value maps to the same colour year-round.
@@ -365,8 +418,9 @@
 
   // Paints the hour-by-day power envelope; returns the day columns and max
   // hourly kWh so the caller can label the time axis and the colour scale.
-  function paintDensity(canvas, rows) {
-    var grid = densityGrid(rows);
+  // `days` fixes the annual column window so a short flow right-aligns.
+  function paintDensity(canvas, rows, days) {
+    var grid = densityGrid(rows, days);
     var w = 2;
     var h = 6;
     canvas.width = Math.max(1, grid.days.length * w);
@@ -401,9 +455,10 @@
   }
 
   // Hour-by-day mean-SoC envelope on a fixed 0..100 scale. Returns the day
-  // columns so the caller can label the time axis.
-  function paintSocDensity(canvas, rows) {
-    var grid = socDensityGrid(rows);
+  // columns so the caller can label the time axis. `days` fixes the annual
+  // column window so a short history right-aligns.
+  function paintSocDensity(canvas, rows, days) {
+    var grid = socDensityGrid(rows, days);
     var w = 2;
     var h = 6;
     canvas.width = Math.max(1, grid.days.length * w);
@@ -427,35 +482,51 @@
     return { days: grid.days };
   }
 
-  // Weekly mean SoC line on a fixed 0..100% y-axis (so height reads as level
-  // directly, comparable across the year).
-  function socWeeklySvg(socSeries) {
-    var weekly = socWeeklySeries(socSeries);
-    if (!weekly.length) return "";
+  // Weekly SoC operating envelope: a shaded min..max band with the mean line on
+  // top, on a fixed 0..100% y-axis. `weeks`, when given, is the annual x-window
+  // so a short history right-aligns (data only on the right) instead of
+  // stretching across the full width.
+  function socWeeklySvg(rows, weeks) {
+    var band = socWeeklyBand(rows);
+    if (!band.length) return "";
     var W = 640;
-    var H = 140;
-    var n = Math.max(1, weekly.length - 1);
-    var x = function (i) {
-      return (i / n) * W;
+    var H = WEEKLY_H;
+    var axisWeeks = weeks || band.map(function (p) {
+      return p.weekStart;
+    });
+    var n = Math.max(1, axisWeeks.length - 1);
+    var idx = {};
+    axisWeeks.forEach(function (w, i) {
+      idx[w] = i;
+    });
+    var x = function (w) {
+      return (idx[w] / n) * W;
     };
     var y = function (pct) {
       return H - 6 - (pct / 100) * (H - 12);
     };
     var inner = "";
-    monthMarks(
-      weekly.map(function (p) {
-        return p.weekStart;
-      })
-    ).forEach(function (m) {
+    monthMarks(axisWeeks).forEach(function (m) {
       if (m.frac <= 0) return;
       var gx = (m.frac * W).toFixed(1);
       inner +=
         '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H +
         '" stroke="' + C_GRIDLINE + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
     });
-    var meanPts = weekly
-      .map(function (p, i) {
-        return x(i).toFixed(1) + "," + y(p.mean).toFixed(1);
+    var present = band.filter(function (p) {
+      return p.weekStart in idx;
+    });
+    var top = present.map(function (p) {
+      return x(p.weekStart).toFixed(1) + "," + y(p.max).toFixed(1);
+    });
+    var bottom = present
+      .map(function (p) {
+        return x(p.weekStart).toFixed(1) + "," + y(p.min).toFixed(1);
+      })
+      .reverse();
+    var meanPts = present
+      .map(function (p) {
+        return x(p.weekStart).toFixed(1) + "," + y(p.mean).toFixed(1);
       })
       .join(" ");
     return (
@@ -463,6 +534,8 @@
       '" preserveAspectRatio="none" style="width:100%;height:' + H +
       'px;display:block;">' +
       inner +
+      '<polygon points="' + top.concat(bottom).join(" ") +
+      '" fill="' + SOC_BAND + '" stroke="none"/>' +
       '<polyline points="' + meanPts +
       '" fill="none" stroke="' + SOC_LINE + '" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>'
     );
@@ -483,48 +556,52 @@
     );
   }
 
-  function weeklySvg(series) {
+  // Weekly energy line. `weeks`, when given, is the annual x-window so a short
+  // history right-aligns rather than stretching across the full width.
+  function weeklySvg(series, weeks) {
     var weekly = weeklySeries(series);
     if (!weekly.length) return "";
     var W = 640;
-    var H = 140; // a chart, not a sparkline: enough height to read the shape
+    var H = WEEKLY_H;
     var max = 0;
     weekly.forEach(function (p) {
       if (p.kwh > max) max = p.kwh;
     });
     if (max <= 0) max = 1;
+    var axisWeeks = weeks || weekly.map(function (p) {
+      return p.weekStart;
+    });
+    var n = Math.max(1, axisWeeks.length - 1);
+    var idx = {};
+    axisWeeks.forEach(function (w, i) {
+      idx[w] = i;
+    });
     var inner = "";
     // Month-start gridlines anchoring the labels above. non-scaling-stroke
     // keeps them hairline despite the preserveAspectRatio="none" stretch.
-    monthMarks(
-      weekly.map(function (p) {
-        return p.weekStart;
-      })
-    ).forEach(function (m) {
+    monthMarks(axisWeeks).forEach(function (m) {
       if (m.frac <= 0) return;
-      var x = (m.frac * W).toFixed(1);
+      var gx = (m.frac * W).toFixed(1);
       inner +=
-        '<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + H +
+        '<line x1="' + gx + '" y1="0" x2="' + gx + '" y2="' + H +
         '" stroke="' + C_GRIDLINE + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
     });
     var pts = weekly
-      .map(function (p, i) {
-        var x = (i / Math.max(1, weekly.length - 1)) * W;
-        var y = H - 6 - (p.kwh / max) * (H - 12);
-        return x.toFixed(1) + "," + y.toFixed(1);
+      .filter(function (p) {
+        return p.weekStart in idx;
+      })
+      .map(function (p) {
+        var px = (idx[p.weekStart] / n) * W;
+        var py = H - 6 - (p.kwh / max) * (H - 12);
+        return px.toFixed(1) + "," + py.toFixed(1);
       })
       .join(" ");
     return (
-      '<svg viewBox="0 0 ' +
-      W +
-      " " +
-      H +
-      '" preserveAspectRatio="none" style="width:100%;height:' +
-      H +
+      '<svg viewBox="0 0 ' + W + " " + H +
+      '" preserveAspectRatio="none" style="width:100%;height:' + H +
       'px;display:block;">' +
       inner +
-      '<polyline points="' +
-      pts +
+      '<polyline points="' + pts +
       '" fill="none" stroke="#1d9e75" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>'
     );
   }
@@ -693,7 +770,12 @@
         _paintDensity(rows, level) {
           var canvas = this.querySelector("canvas[data-density]");
           if (!canvas) return;
-          var info = level ? paintSocDensity(canvas, rows) : paintDensity(canvas, rows);
+          // Fixed annual day window so a short history right-aligns (blank
+          // columns on the left) instead of smearing across the full width.
+          var days = windowDays(Date.now(), LOOKBACK_DAYS);
+          var info = level
+            ? paintSocDensity(canvas, rows, days)
+            : paintDensity(canvas, rows, days);
           if (!info) return;
           var months = this.querySelector("[data-density-months]");
           if (months) months.innerHTML = monthRowHtml(info.days);
@@ -831,19 +913,16 @@
             // The scaffold (month row, density canvas, scale, weekly area) is
             // shared; energy and SoC differ only in captions and the weekly
             // chart (single line vs min-max band).
+            // Both charts plot against the same annual week window as the
+            // chips, so a short history right-aligns rather than stretching.
             var densityCaption;
             var weeklyHeader;
             var weeklyChart;
-            var weeklyDays;
+            var weeklyDays = annualWeeks;
             if (selectedFlow.kind === "level") {
-              var socSeriesD = this._socSeries();
-              var socWeekly = socWeeklySeries(socSeriesD);
               densityCaption = "(colour = mean SoC in that hour)";
-              weeklyHeader = "Weekly mean SoC";
-              weeklyChart = socWeeklySvg(socSeriesD);
-              weeklyDays = socWeekly.map(function (p) {
-                return p.weekStart;
-              });
+              weeklyHeader = "Weekly SoC (min-max band, mean line)";
+              weeklyChart = socWeeklySvg(this._socRows(), annualWeeks);
             } else {
               var series = dailySeries((this._daily || {})[selectedFlow.entity] || []);
               var weekly = weeklySeries(series);
@@ -857,10 +936,7 @@
                 (weeklyPeak > 0
                   ? ' <span style="opacity:0.8;">(peak ' + fmtKwh(weeklyPeak) + "/week)</span>"
                   : "");
-              weeklyChart = weeklySvg(series);
-              weeklyDays = weekly.map(function (p) {
-                return p.weekStart;
-              });
+              weeklyChart = weeklySvg(series, annualWeeks);
             }
             html +=
               '<div style="margin-top:14px;border-top:1px solid var(--divider-color, #444);padding-top:10px;">' +
@@ -937,8 +1013,9 @@
     linearStops: linearStops,
     bucket: bucket,
     socDailyFromHourly: socDailyFromHourly,
-    socWeeklySeries: socWeeklySeries,
     socDensityGrid: socDensityGrid,
+    socWeeklyBand: socWeeklyBand,
+    windowDays: windowDays,
     windowWeeks: windowWeeks,
     flowsFromSources: flowsFromSources,
     flowsFromLevelSources: flowsFromLevelSources,
