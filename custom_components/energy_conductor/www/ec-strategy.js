@@ -350,14 +350,16 @@
 
   // --- long-term view ---------------------------------------------------------
   //
-  // Emitted when the status sensor's `money_sources` attribute names at least one
-  // energy-counter flow (set via the integration's Costs options). The card itself
-  // re-resolves the sources at render time; the strategy only gates the view.
+  // Emitted when the status sensor names at least one long-term series: an
+  // energy-counter flow in `money_sources` (set via the Costs options) or the
+  // battery SoC in `level_sources`. The card re-resolves both at render time;
+  // the strategy only gates the view.
   var LONGTERM_FLOW_KEYS = [
     "pv",
     "house",
     "grid_import",
     "grid_export",
+    "battery_discharge",
     "ev",
     "hot_water",
     "gas",
@@ -366,11 +368,14 @@
   function hasLongtermFlows(states, statusId) {
     if (!statusId) return false;
     var s = states[statusId];
-    var sources = s && s.attributes && s.attributes.money_sources;
-    if (!sources) return false;
-    return LONGTERM_FLOW_KEYS.some(function (key) {
-      return Boolean(sources[key]);
-    });
+    var attrs = (s && s.attributes) || {};
+    var money = attrs.money_sources || {};
+    var level = attrs.level_sources || {};
+    return (
+      LONGTERM_FLOW_KEYS.some(function (key) {
+        return Boolean(money[key]);
+      }) || Boolean(level.battery_soc)
+    );
   }
 
   // Bounded wait for a bundled custom card. Lovelace-resource registration makes

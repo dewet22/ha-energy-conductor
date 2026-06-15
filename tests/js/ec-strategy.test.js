@@ -267,7 +267,25 @@ describe("long-term view", () => {
     expect(lt.cards[0].status_entity).toBe(statusId);
   });
 
-  it("omits the view without money sources", async () => {
+  it("emits the view when battery throughput is the only flow", async () => {
+    const dash = await EC.generateDashboard(
+      {},
+      makeHass({ moneySources: { battery_discharge: "sensor.batt_out" } })
+    );
+    expect(dash.views.some((v) => v.path === "long-term")).toBe(true);
+  });
+
+  it("emits the view for a SoC-only install (level source, no energy counters)", async () => {
+    // A battery SoC source with no configured energy counters still gets the
+    // long-term view - it renders the SoC tiles alone.
+    const dash = await EC.generateDashboard(
+      {},
+      makeHass({ levelSources: { battery_soc: "sensor.soc" } })
+    );
+    expect(dash.views.some((v) => v.path === "long-term")).toBe(true);
+  });
+
+  it("omits the view without money or level sources", async () => {
     const dash = await EC.generateDashboard({}, makeHass({}));
     expect(dash.views.length).toBe(2);
     expect(dash.views.some((v) => v.path === "long-term")).toBe(false);

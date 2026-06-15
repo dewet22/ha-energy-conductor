@@ -185,8 +185,20 @@ _TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Measurement-type feeds for the long-term card (mean/min/max statistics, not
+# counter changes). Kept separate from money_sources so the card knows to use
+# the measurement pipeline. SoC reads the configured source - not EC's own
+# passthrough, whose LTS mean is dragged down by the inverter's 0-spikes.
+_LEVEL_SOURCE_KEYS: tuple[tuple[str, str], ...] = (("battery_soc", CONF_BATTERY_SOC_SENSOR),)
+
+
 def _tape_sources(config: dict[str, Any]) -> dict[str, str] | None:
     sources = {name: config[key] for name, key in _TAPE_SOURCE_KEYS if config.get(key)}
+    return sources or None
+
+
+def _level_sources(config: dict[str, Any]) -> dict[str, str] | None:
+    sources = {name: config[key] for name, key in _LEVEL_SOURCE_KEYS if config.get(key)}
     return sources or None
 
 
@@ -236,6 +248,7 @@ class StatusSensor(_BaseSensor):
             "verification_detail": self.coordinator.last_verification_detail,
             "money_sources": _money_sources(self.coordinator.config),
             "tape_sources": _tape_sources(self.coordinator.config),
+            "level_sources": _level_sources(self.coordinator.config),
         }
 
 

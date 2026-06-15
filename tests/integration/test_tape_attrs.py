@@ -62,3 +62,17 @@ async def test_status_sensor_exposes_tape_sources(hass: HomeAssistant) -> None:
     # Unconfigured feeds are absent keys.
     assert "solar_forecast" not in sources
     assert "grid_import_w" not in sources
+
+
+async def test_status_sensor_exposes_level_sources(hass: HomeAssistant) -> None:
+    # The long-term card renders SoC from mean/min/max statistics, so the
+    # battery SoC entity is published in its own map (measurement series, not a
+    # counter) - the configured source, not EC's spike-prone passthrough.
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="tp3")
+    assert await _setup(hass, entry)
+
+    status_id = _entity(hass, entry, "status")
+    sources = hass.states.get(status_id).attributes.get("level_sources")
+    assert sources is not None
+    assert sources["battery_soc"] == MOCK_CONFIG["battery_soc_sensor"]
