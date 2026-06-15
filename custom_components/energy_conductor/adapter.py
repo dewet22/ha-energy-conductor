@@ -81,6 +81,8 @@ from .const import (
     HOTWATER_DEPLETION_MIN_SAMPLES,
     HOTWATER_DEPLETION_PERCENTILE,
     HOTWATER_DIVERSION_FRACTION,
+    HOTWATER_FULL_MIN_KWH,
+    HOTWATER_FULL_WINDOW_HOURS,
     HOTWATER_LOOKBACK_DAYS,
     HOTWATER_MAX_BOOST_HOURS,
     HOTWATER_MIN_BOOST_HOURS,
@@ -93,7 +95,12 @@ from .const import (
     STATS_PERCENTILE,
 )
 from .fallback import forecast_implausible, seasonal_fallback_kwh
-from .hotwater import boost_recommendation, estimate_reserve, learn_depletion
+from .hotwater import (
+    boost_recommendation,
+    corroborated_full_events,
+    estimate_reserve,
+    learn_depletion,
+)
 from .learn_daily_target import learned_daily_kwh
 from .model import (
     Battery,
@@ -737,7 +744,7 @@ class Adapter:
             )
 
             last_full_at, full_dates = self._hot_water_full_events(
-                now, status_sensor, max_temp_state
+                now, status_sensor, max_temp_state, green_sensor
             )
             daily_green = self._hot_water_daily_kwh(now, green_sensor)
             # Use total-in sensor (green + boost) for depletion learning when available.
@@ -796,9 +803,17 @@ class Adapter:
             return None
 
     def _hot_water_full_events(
-        self, now: datetime, status_entity: str, max_temp_state: str
+        self, now: datetime, status_entity: str, max_temp_state: str, green_entity: str
     ) -> tuple[datetime | None, set]:
-        """Return (last 'Max temp reached' timestamp, set of local dates it occurred on)."""
+        """Return (last CORROBORATED 'Max temp reached' timestamp, set of local dates).
+
+        A 'Max temp reached' only counts when real diversion flowed into the tank in the
+        hours leading up to it: the diverter reports it falsely when the element is isolated
+        at the safety switch (open circuit, no current draw) or when the status is
+        republished on a reconnect/restart. Corroborating each event against the green
+        diversion energy rejects those phantoms, so the reserve isn't pinned full (and the
+        depletion clock isn't reset on every restart by a boot-time false anchor).
+        """
         start = now - timedelta(days=HOTWATER_LOOKBACK_DAYS)
         states_by_entity = state_changes_during_period(
             self.hass,
@@ -815,8 +830,43 @@ class Adapter:
         ]
         if not full_times:
             return None, set()
-        full_dates = {dt_util.as_local(ts).date() for ts in full_times}
-        return max(full_times), full_dates
+        # Fetch from one window before `start` so a full event in the first hour of the
+        # lookback still sees its preceding hour's diversion (else it could falsely drop).
+        diversion_start = start - timedelta(hours=HOTWATER_FULL_WINDOW_HOURS - 1)
+        corroborated = corroborated_full_events(
+            full_times,
+            self._hot_water_hourly_kwh(diversion_start, now, green_entity),
+            window_hours=HOTWATER_FULL_WINDOW_HOURS,
+            min_kwh=HOTWATER_FULL_MIN_KWH,
+        )
+        if not corroborated:
+            return None, set()
+        full_dates = {dt_util.as_local(ts).date() for ts in corroborated}
+        return max(corroborated), full_dates
+
+    def _hot_water_hourly_kwh(self, start: datetime, now: datetime, entity: str) -> dict:
+        """Map each hour-bucket start (UTC, hour-aligned) to that hour's diverted kWh.
+
+        Feeds the full-anchor corroboration: aligning to the same hour key the status
+        event timestamps fall into lets a 'Max temp reached' be matched to the diversion
+        flowing in its hour (and the preceding one).
+        """
+        stats = statistics_during_period(self.hass, start, now, {entity}, "hour", None, {"change"})
+        by_hour: dict = {}
+        for row in stats.get(entity, []):
+            change = row.get("change")
+            ts = row.get("start")
+            if change is None or ts is None:
+                continue
+            ts = ts if isinstance(ts, datetime) else dt_util.utc_from_timestamp(ts)
+            kwh = float(change)
+            if not math.isfinite(kwh):
+                continue
+            # Clamp negatives: a meter reset/correction can emit a negative hourly delta,
+            # which would otherwise cancel real diversion in the corroboration window and
+            # falsely drop a genuine full. Negative diversion is not physical.
+            by_hour[ts.replace(minute=0, second=0, microsecond=0)] = max(0.0, kwh)
+        return by_hour
 
     def _hot_water_daily_kwh(self, now: datetime, entity: str) -> dict:
         """Map each complete local date in the lookback to that day's energy (kWh).

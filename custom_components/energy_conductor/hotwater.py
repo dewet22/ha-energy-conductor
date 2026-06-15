@@ -14,12 +14,43 @@ inputs (last full timestamp, green energy since, learned depletion).
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta
 
 from .learn_daily_target import learned_daily_kwh
 
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def corroborated_full_events(
+    full_events: list[datetime],
+    diversion_by_hour: dict[datetime, float],
+    *,
+    window_hours: int,
+    min_kwh: float,
+) -> list[datetime]:
+    """The 'Max temp reached' events with real diversion in the hours leading up to them.
+
+    A genuine full is the terminus of an active diversion session, so meaningful green
+    energy flowed in the window ending at the event. The diverter's false 'Max temp
+    reached' — element isolated at the safety switch (open circuit, no current draw) or
+    the status republished on a reconnect/restart — carries zero diversion in that window
+    and must not anchor the reserve. ``diversion_by_hour`` maps each hour-bucket start to
+    that hour's diverted kWh; an event is corroborated when the buckets covering its hour
+    and the ``window_hours - 1`` preceding hours sum to at least ``min_kwh``. The adapter
+    takes the latest of these as the reserve anchor (a later false event never overrides an
+    earlier genuine one) and their dates for steady-day depletion learning.
+    """
+    corroborated: list[datetime] = []
+    for event in full_events:
+        bucket = event.replace(minute=0, second=0, microsecond=0)
+        recent_kwh = sum(
+            diversion_by_hour.get(bucket - timedelta(hours=i), 0.0) for i in range(window_hours)
+        )
+        if recent_kwh >= min_kwh:
+            corroborated.append(event)
+    return corroborated
 
 
 def estimate_reserve(
