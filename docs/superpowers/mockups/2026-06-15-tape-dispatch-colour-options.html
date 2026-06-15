@@ -1,0 +1,50 @@
+<!-- EC mission tape: EV-dispatch schedule-rail colour options (2026-06-15 UX review).
+     Problem: off-peak (#488fc2 blue) vs EV dispatch (#00acc1 cyan) read too similarly.
+     Palette constraints: off-peak stays grid-blue (semantic tie to grid-charge shading);
+     dodge battery teal #009688, solar/export orange #ff9800, decision indigo #534ab7.
+     Candidates: A Rose #d4537e (recommended), B Magenta #c2185b, C Violet #8e24aa (near indigo). -->
+<div style="padding:1rem 0;font-family:var(--font-sans);">
+  <div style="display:flex;flex-direction:column;gap:10px;">
+
+    <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:12px 16px;">
+      <div><div style="font-size:14px;font-weight:500;">Current</div><div style="font-size:12px;color:var(--color-text-secondary);">dispatch #00acc1</div></div>
+      <svg viewBox="0 0 560 44" style="width:100%;height:44px;display:block;">
+        <line x1="20" y1="22" x2="150" y2="22" stroke="#488fc2" stroke-width="4"/><line x1="20" y1="15" x2="20" y2="29" stroke="#488fc2" stroke-width="2"/><line x1="150" y1="15" x2="150" y2="29" stroke="#488fc2" stroke-width="2"/><text x="85" y="40" font-size="11" fill="#488fc2" text-anchor="middle">off-peak</text>
+        <line x1="172" y1="22" x2="302" y2="22" stroke="#00acc1" stroke-width="4"/><line x1="172" y1="15" x2="172" y2="29" stroke="#00acc1" stroke-width="2"/><line x1="302" y1="15" x2="302" y2="29" stroke="#00acc1" stroke-width="2"/><text x="237" y="40" font-size="11" fill="#00acc1" text-anchor="middle">EV dispatch</text>
+        <rect x="350" y="14" width="12" height="12" transform="rotate(45 356 20)" fill="#534ab7"/><text x="356" y="40" font-size="11" fill="#534ab7" text-anchor="middle">decision</text>
+        <rect x="440" y="10" width="22" height="20" fill="#009688" opacity="0.5"/><rect x="470" y="10" width="22" height="20" fill="#488fc2" opacity="0.5"/><rect x="500" y="10" width="22" height="20" fill="#ff9800" opacity="0.5"/>
+      </svg>
+    </div>
+
+    <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;background:var(--color-background-primary);border:2px solid var(--color-border-info);border-radius:var(--border-radius-lg);padding:12px 16px;">
+      <div><div style="font-size:14px;font-weight:500;">A · Rose</div><div style="font-size:12px;color:var(--color-text-secondary);">dispatch #d4537e</div></div>
+      <svg viewBox="0 0 560 44" style="width:100%;height:44px;display:block;">
+        <line x1="20" y1="22" x2="150" y2="22" stroke="#488fc2" stroke-width="4"/><line x1="20" y1="15" x2="20" y2="29" stroke="#488fc2" stroke-width="2"/><line x1="150" y1="15" x2="150" y2="29" stroke="#488fc2" stroke-width="2"/><text x="85" y="40" font-size="11" fill="#488fc2" text-anchor="middle">off-peak</text>
+        <line x1="172" y1="22" x2="302" y2="22" stroke="#d4537e" stroke-width="4"/><line x1="172" y1="15" x2="172" y2="29" stroke="#d4537e" stroke-width="2"/><line x1="302" y1="15" x2="302" y2="29" stroke="#d4537e" stroke-width="2"/><text x="237" y="40" font-size="11" fill="#d4537e" text-anchor="middle">EV dispatch</text>
+        <rect x="350" y="14" width="12" height="12" transform="rotate(45 356 20)" fill="#534ab7"/><text x="356" y="40" font-size="11" fill="#534ab7" text-anchor="middle">decision</text>
+        <rect x="440" y="10" width="22" height="20" fill="#009688" opacity="0.5"/><rect x="470" y="10" width="22" height="20" fill="#488fc2" opacity="0.5"/><rect x="500" y="10" width="22" height="20" fill="#ff9800" opacity="0.5"/>
+      </svg>
+    </div>
+
+    <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:12px 16px;">
+      <div><div style="font-size:14px;font-weight:500;">B · Magenta</div><div style="font-size:12px;color:var(--color-text-secondary);">dispatch #c2185b</div></div>
+      <svg viewBox="0 0 560 44" style="width:100%;height:44px;display:block;">
+        <line x1="20" y1="22" x2="150" y2="22" stroke="#488fc2" stroke-width="4"/><line x1="20" y1="15" x2="20" y2="29" stroke="#488fc2" stroke-width="2"/><line x1="150" y1="15" x2="150" y2="29" stroke="#488fc2" stroke-width="2"/><text x="85" y="40" font-size="11" fill="#488fc2" text-anchor="middle">off-peak</text>
+        <line x1="172" y1="22" x2="302" y2="22" stroke="#c2185b" stroke-width="4"/><line x1="172" y1="15" x2="172" y2="29" stroke="#c2185b" stroke-width="2"/><line x1="302" y1="15" x2="302" y2="29" stroke="#c2185b" stroke-width="2"/><text x="237" y="40" font-size="11" fill="#c2185b" text-anchor="middle">EV dispatch</text>
+        <rect x="350" y="14" width="12" height="12" transform="rotate(45 356 20)" fill="#534ab7"/><text x="356" y="40" font-size="11" fill="#534ab7" text-anchor="middle">decision</text>
+        <rect x="440" y="10" width="22" height="20" fill="#009688" opacity="0.5"/><rect x="470" y="10" width="22" height="20" fill="#488fc2" opacity="0.5"/><rect x="500" y="10" width="22" height="20" fill="#ff9800" opacity="0.5"/>
+      </svg>
+    </div>
+
+    <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:12px 16px;">
+      <div><div style="font-size:14px;font-weight:500;">C · Violet</div><div style="font-size:12px;color:var(--color-text-secondary);">dispatch #8e24aa (near indigo)</div></div>
+      <svg viewBox="0 0 560 44" style="width:100%;height:44px;display:block;">
+        <line x1="20" y1="22" x2="150" y2="22" stroke="#488fc2" stroke-width="4"/><line x1="20" y1="15" x2="20" y2="29" stroke="#488fc2" stroke-width="2"/><line x1="150" y1="15" x2="150" y2="29" stroke="#488fc2" stroke-width="2"/><text x="85" y="40" font-size="11" fill="#488fc2" text-anchor="middle">off-peak</text>
+        <line x1="172" y1="22" x2="302" y2="22" stroke="#8e24aa" stroke-width="4"/><line x1="172" y1="15" x2="172" y2="29" stroke="#8e24aa" stroke-width="2"/><line x1="302" y1="15" x2="302" y2="29" stroke="#8e24aa" stroke-width="2"/><text x="237" y="40" font-size="11" fill="#8e24aa" text-anchor="middle">EV dispatch</text>
+        <rect x="350" y="14" width="12" height="12" transform="rotate(45 356 20)" fill="#534ab7"/><text x="356" y="40" font-size="11" fill="#534ab7" text-anchor="middle">decision</text>
+        <rect x="440" y="10" width="22" height="20" fill="#009688" opacity="0.5"/><rect x="470" y="10" width="22" height="20" fill="#488fc2" opacity="0.5"/><rect x="500" y="10" width="22" height="20" fill="#ff9800" opacity="0.5"/>
+      </svg>
+    </div>
+
+  </div>
+</div>

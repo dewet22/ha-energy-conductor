@@ -254,6 +254,20 @@
     return out;
   }
 
+  // Carry the last observed sample forward to `now`. A write-on-change series
+  // (battery SoC pinned at 100% or sitting at the overnight reserve) stops
+  // emitting once it settles, so its history ends mid-window and the line would
+  // simply stop drawing - looking like the SoC vanished. Appending the live
+  // value at the cursor draws the true flat segment up to NOW, meeting the
+  // projection. Only extends when a live numeric value is in hand: if the
+  // sensor is genuinely offline we leave the line ending honestly at last data.
+  function extendToNow(points, now, liveV) {
+    if (!points.length || typeof liveV !== "number" || isNaN(liveV)) return points;
+    var last = points[points.length - 1];
+    if (last.t.getTime() >= now.getTime()) return points;
+    return points.concat([{ t: now, v: liveV }]);
+  }
+
   function projectionPoints(attr) {
     if (!Array.isArray(attr)) return [];
     var out = [];
@@ -268,13 +282,13 @@
 
   // HA Energy colour language: solar orange, grid blue, battery teal.
   // Consumption renders as a plain dashed line in the theme text colour.
-  // Dispatch cyan is deliberately distinct from the grid blue so an IG bonus
-  // slot never reads as plain off-peak.
+  // Dispatch rose is a deliberately separate hue family from the grid blue so an
+  // IG bonus slot never reads as plain off-peak (a cyan shade was too close).
   var C_SOLAR = "#ff9800";
   var C_GRID = "#488fc2";
   var C_BATTERY = "#009688";
   var C_EVENT = "#534ab7";
-  var C_DISPATCH = "#00acc1";
+  var C_DISPATCH = "#d4537e";
 
   // Legend entries for the configured layers only - an unconfigured feed has
   // no colour on the tape, so it earns no legend row. Grouped by function:
@@ -580,7 +594,15 @@
           // --- SoC data (needed before the regime tints draw) ----------------
           var plan = this._state(c.plan_entity);
           var socClean = rejectSocSpikes(this._numSeries(c.soc_entity), SOC_SPIKE_PTS);
-          var socPts = downsample(socClean, 300);
+          // Extend the history line to NOW: SoC is write-on-change, so a battery
+          // pinned at 100% (or sitting at reserve) stops emitting and the line
+          // would otherwise stop mid-window instead of meeting the projection.
+          var liveSoc = this._state(c.soc_entity);
+          var socPts = extendToNow(
+            downsample(socClean, 300),
+            win.now,
+            liveSoc ? parseFloat(liveSoc.state) : NaN
+          );
           var projection = plan ? projectionPoints(plan.attributes.soc_projection) : [];
 
           // --- regime shading: what the system is doing ----------------------
@@ -909,6 +931,7 @@
     bandsFromBinary: bandsFromBinary,
     forecastCurve: forecastCurve,
     downsample: downsample,
+    extendToNow: extendToNow,
     projectionPoints: projectionPoints,
     legendItems: legendItems,
     seriesAbove: seriesAbove,

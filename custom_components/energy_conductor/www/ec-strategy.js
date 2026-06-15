@@ -205,10 +205,14 @@
         "**Mode:** {{ (state_attr('" + statusId + "', 'write_mode') or 'unknown') | upper }}",
       ];
       if (dischargeId) {
+        // The discharge-decision value is the GivEnergy %-max discharge RATE (0-50), not
+        // watts: EC writes 0 to hold the battery idle (off-peak) or max to release it.
+        // Render the regime semantically (matching the tape's decision rail) with the raw
+        // %-max as a parenthetical, rather than the misleading " W" unit.
         lines.push(
-          "**Discharge limit:** {{ states('" +
+          "**Discharge:** {% set d = states('" +
             dischargeId +
-            "') }} W - {{ state_attr('" +
+            "') | int(-1) %}{% if d == 0 %}held (battery idle){% elif d > 0 %}released ({{ d }}% max){% else %}unknown{% endif %} - {{ state_attr('" +
             dischargeId +
             "', 'outcome') }}",
         );
