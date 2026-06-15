@@ -182,6 +182,11 @@ HOTWATER_DEPLETION_MAX_KWH = 20.0  # reject implausible steady-day green totals
 HOTWATER_DIVERSION_FRACTION = 0.15
 HOTWATER_MIN_BOOST_HOURS = 1
 HOTWATER_MAX_BOOST_HOURS = 2
+# A "Max temp reached" only anchors the reserve when real diversion flowed in the hours
+# leading up to it — the diverter reports it falsely when the element is isolated at the
+# safety switch (open circuit) or on a reconnect/restart republish.
+HOTWATER_FULL_WINDOW_HOURS = 2  # hours before the event to check for diversion
+HOTWATER_FULL_MIN_KWH = 0.05  # min diverted kWh in that window for the full to be genuine
 
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes

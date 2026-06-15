@@ -7,7 +7,7 @@ tests/core/test_hotwater.py; here we check the recorder-derived inputs are assem
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -53,6 +53,17 @@ def _daily_green(days: list[int], kwh: float) -> list[dict]:
     return [{"start": datetime(2026, 6, d, 0, 0, tzinfo=UTC), "change": kwh} for d in days]
 
 
+def _full_hours(days: list[int], *, hour: int = 3) -> list[datetime]:
+    """Datetimes of the 'Max temp reached' events — where adjacent diversion must sit."""
+    return [datetime(2026, 6, day, hour, 0, tzinfo=UTC) for day in days]
+
+
+def _hourly_corroboration_rows(full_hours: list[datetime], kwh: float = 0.3) -> list[dict]:
+    """Hourly green rows placing diversion in each full event's own hour, so the
+    corroboration honours those fulls as genuine (a real diversion session ran into them)."""
+    return [{"start": h, "change": kwh} for h in full_hours]
+
+
 def _adapter(hass, extra: dict | None = None) -> Adapter:
     config = {
         CONF_HOTWATER_GREEN_SENSOR: GREEN,
@@ -66,11 +77,14 @@ def _adapter(hass, extra: dict | None = None) -> Adapter:
     return Adapter(hass, config)
 
 
-def _stats_side_effect(daily_rows: list[dict], hourly_total: float):
+def _stats_side_effect(daily_rows: list[dict], hourly_total: float, full_hours=()):
     def _impl(hass, start, end, ids, period, units, types):
         if period == "day":
             return {GREEN: daily_rows}
-        # hourly green-since-full query
+        # Two hourly queries share this branch; the corroboration one spans the full
+        # lookback, the green-since-full one only [last_full, now].
+        if end - start >= timedelta(days=9):
+            return {GREEN: _hourly_corroboration_rows(list(full_hours))}
         return {GREEN: [{"start": start, "change": hourly_total}]}
 
     return _impl
@@ -91,7 +105,12 @@ async def test_recent_full_reserve_high_no_boost(hass, now):
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
-        patch(_PATCH_STATS, side_effect=_stats_side_effect(daily_rows, hourly_total=0.5)),
+        patch(
+            _PATCH_STATS,
+            side_effect=_stats_side_effect(
+                daily_rows, hourly_total=0.5, full_hours=_full_hours(full_days)
+            ),
+        ),
     ):
         hw = adapter._hot_water_state(now, _forecast())
 
@@ -109,15 +128,50 @@ async def test_stale_full_low_reserve_recommends_boost(hass, now):
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
-        patch(_PATCH_STATS, side_effect=_stats_side_effect(daily_rows, hourly_total=0.0)),
+        patch(
+            _PATCH_STATS,
+            side_effect=_stats_side_effect(
+                daily_rows, hourly_total=0.0, full_hours=_full_hours(full_days)
+            ),
+        ),
     ):
         hw = adapter._hot_water_state(now, _forecast())
 
     assert hw is not None
+    assert hw.last_full_at == datetime(2026, 6, 2, 3, 0, tzinfo=UTC)  # genuine, stale
     assert hw.reserve_percent < 20
     assert hw.boost_recommended is True
     assert hw.suggested_boost_hours in (1.0, 2.0)
     assert hw.depletion_source == "default"
+
+
+async def test_uncorroborated_full_ignored_anchors_last_genuine(hass, now):
+    """A 'Max temp reached' with no diversion behind it (element isolated at the safety
+    switch, or republished on a reconnect/restart) must not anchor the reserve; the last
+    genuine full stands. Regression for the live bug where a phantom full pinned it to ~100%.
+    """
+    # Genuine full on day 6 (diversion in its hour); phantom full this morning (none).
+    full_days = [6, 8]
+    daily_rows = _daily_green([6, 7], 2.5)
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(
+            _PATCH_STATS,
+            side_effect=_stats_side_effect(
+                daily_rows,
+                hourly_total=0.0,
+                full_hours=_full_hours([6]),  # only day 6 corroborated
+            ),
+        ),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    # Day 8's full is uncorroborated → ignored; the anchor is the genuine day-6 full,
+    # and the reserve has depleted since then rather than snapping back to capacity.
+    assert hw.last_full_at == datetime(2026, 6, 6, 3, 0, tzinfo=UTC)
+    assert hw.reserve_percent < 90
 
 
 async def test_no_full_in_lookback_assumes_depleted(hass, now):
@@ -166,7 +220,7 @@ TOTAL = "sensor.eddi_total"
 
 
 def _stats_side_effect_with_total(
-    green_daily: list[dict], total_daily: list[dict], hourly_total: float
+    green_daily: list[dict], total_daily: list[dict], hourly_total: float, full_hours=()
 ):
     """Stats mock that distinguishes green vs total entity for day-period queries."""
 
@@ -175,8 +229,9 @@ def _stats_side_effect_with_total(
             if TOTAL in ids:
                 return {TOTAL: total_daily}
             return {GREEN: green_daily}
-        # hourly green-since-full query
-        return {GREEN: [{"start": start, "change": hourly_total}]}
+        if end - start >= timedelta(days=9):  # full-lookback corroboration query
+            return {GREEN: _hourly_corroboration_rows(list(full_hours))}
+        return {GREEN: [{"start": start, "change": hourly_total}]}  # green-since-full
 
     return _impl
 
@@ -196,7 +251,9 @@ async def test_total_sensor_used_for_depletion_learning(hass, now):
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
         patch(
             _PATCH_STATS,
-            side_effect=_stats_side_effect_with_total(green_daily, total_daily, 0.5),
+            side_effect=_stats_side_effect_with_total(
+                green_daily, total_daily, 0.5, full_hours=_full_hours(full_days)
+            ),
         ),
     ):
         hw = adapter._hot_water_state(now, _forecast())

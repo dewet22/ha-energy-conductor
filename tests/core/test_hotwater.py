@@ -7,11 +7,68 @@ Recap:
   falls below the comfort threshold; suggested hours = ceil(deficit/heater_kw), clamped 1..2
 """
 
+from datetime import UTC, datetime
+
 from energy_conductor.hotwater import (
     boost_recommendation,
+    corroborated_full_events,
     estimate_reserve,
     learn_depletion,
 )
+
+
+def _hour(h: int, *, day: int = 13) -> datetime:
+    return datetime(2026, 6, day, h, 0, 0, tzinfo=UTC)
+
+
+def _corroborate(events, diversion):
+    return corroborated_full_events(events, diversion, window_hours=2, min_kwh=0.05)
+
+
+class TestCorroboratedFullEvents:
+    """A 'Max temp reached' anchors the reserve only when real diversion flowed into
+    the tank in the hours leading up to it — the isolated-element / reconnect-republished
+    false events have no adjacent diversion and must be ignored."""
+
+    def test_genuine_full_with_adjacent_diversion_is_kept(self):
+        event = datetime(2026, 6, 13, 5, 52, tzinfo=UTC)  # real top-up, 0.16 kWh in its hour
+        assert _corroborate([event], {_hour(5): 0.16}) == [event]
+
+    def test_false_full_without_diversion_is_dropped(self):
+        event = datetime(
+            2026, 6, 15, 0, 10, tzinfo=UTC
+        )  # isolated element / boot republish, zero diversion
+        assert _corroborate([event], {}) == []
+
+    def test_later_false_full_does_not_displace_earlier_genuine(self):
+        genuine = datetime(2026, 6, 13, 5, 52, tzinfo=UTC)
+        false_later = datetime(2026, 6, 15, 0, 10, tzinfo=UTC)
+        # Only the genuine event has adjacent diversion; the anchor (max of the result)
+        # must therefore be the earlier genuine event, not the later false one.
+        result = _corroborate([genuine, false_later], {_hour(5): 0.16})
+        assert result == [genuine]
+        assert max(result) == genuine
+
+    def test_keeps_all_corroborated_for_learning(self):
+        early = datetime(2026, 6, 12, 14, 30, tzinfo=UTC)
+        late = datetime(2026, 6, 13, 5, 52, tzinfo=UTC)
+        result = _corroborate([early, late], {_hour(14, day=12): 1.0, _hour(5): 0.16})
+        assert result == [early, late]
+        assert max(result) == late
+
+    def test_diversion_in_preceding_hour_still_corroborates(self):
+        event = datetime(
+            2026, 6, 13, 6, 3, tzinfo=UTC
+        )  # event in hour 06; diversion was in hour 05
+        assert _corroborate([event], {_hour(5): 0.20}) == [event]
+
+    def test_diversion_below_threshold_is_dropped(self):
+        event = datetime(2026, 6, 13, 5, 52, tzinfo=UTC)
+        assert _corroborate([event], {_hour(5): 0.02}) == []  # below 0.05 — noise
+
+    def test_no_events_returns_empty(self):
+        assert _corroborate([], {}) == []
+
 
 CAPACITY = 11.0
 THRESHOLD = 20.0
