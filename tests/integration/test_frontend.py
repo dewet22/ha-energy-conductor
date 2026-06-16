@@ -34,6 +34,11 @@ async def test_async_setup_registers_static_paths_and_js() -> None:
     hass.http.async_register_static_paths.assert_awaited_once()
     paths = hass.http.async_register_static_paths.call_args[0][0]
     assert [p.url_path for p in paths] == [_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL, _LEDGER_URL]
+    # cache_headers ON: the browser must serve these from cache on reload, not re-fetch
+    # them into the ~6-connection-per-origin queue and lose HA's fixed 5s custom-strategy
+    # registration race (frontend get-strategy.ts MAX_WAIT_STRATEGY_LOAD). The ?v= stamp
+    # busts the cache on any JS change, so a month-long cache is safe. Regression for #27.
+    assert all(p.cache_headers is True for p in paths)
     added = [call.args[1] for call in add_js.call_args_list]
     assert added == [f"{url}?v={_STRATEGY_VERSION}" for url in _MODULE_URLS]
 

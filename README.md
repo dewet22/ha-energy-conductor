@@ -102,6 +102,8 @@ strategy:
   device: blithe   # device name, or the config-entry id
 ```
 
+> **Occasional "Error loading the dashboard strategy" on a cold load.** On a hard refresh, a first visit, or a load competing with many other custom frontend resources, the dashboard may briefly show *"Error loading the dashboard strategy: Timeout waiting for strategy element …"*. This is a Home Assistant limitation affecting all network-loaded dashboard strategies — HA gives the strategy module a fixed 5-second window to register and loads custom resources without awaiting them, so a contended load can lose that race. A normal reload serves the module from cache and isn't affected, so it doesn't bite in day-to-day use; if you hit it, just reload. Tracked upstream at [home-assistant/frontend#52570](https://github.com/home-assistant/frontend/issues/52570).
+
 ---
 
 ## The problem

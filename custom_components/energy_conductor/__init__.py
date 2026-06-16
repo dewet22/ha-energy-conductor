@@ -34,7 +34,7 @@ _LONGTERM_URL = f"/{DOMAIN}/{_LONGTERM_FILENAME}"
 _TAPE_URL = f"/{DOMAIN}/{_TAPE_FILENAME}"
 _LEDGER_URL = f"/{DOMAIN}/{_LEDGER_FILENAME}"
 _MODULE_URLS = (_STRATEGY_URL, _LONGTERM_URL, _TAPE_URL, _LEDGER_URL)
-_STRATEGY_VERSION = "20"
+_STRATEGY_VERSION = "21"
 
 
 async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
@@ -91,8 +91,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return True
     try:
         www = Path(__file__).parent / "www"
+        # cache_headers=True: serve the modules with a long Cache-Control so the browser
+        # serves them from cache on reload instead of re-fetching every time. An uncached
+        # re-fetch queues behind the browser's ~6-connection-per-origin limit and can lose
+        # the frontend's fixed 5s custom-strategy registration race (get-strategy.ts
+        # MAX_WAIT_STRATEGY_LOAD) -> "Timeout waiting for strategy element" (#27). The
+        # ?v=_STRATEGY_VERSION stamp busts the cache on any JS change, so this is safe.
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(url, str(www / url.rsplit("/", 1)[1]), False) for url in _MODULE_URLS]
+            [StaticPathConfig(url, str(www / url.rsplit("/", 1)[1]), True) for url in _MODULE_URLS]
         )
         for url in _MODULE_URLS:
             add_extra_js_url(hass, f"{url}?v={_STRATEGY_VERSION}")
