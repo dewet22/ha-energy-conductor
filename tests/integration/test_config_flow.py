@@ -13,6 +13,7 @@ from custom_components.energy_conductor.const import (
     CONF_ENTITY_REFS,
     CONF_FORECAST_SOLCAST_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_HOTWATER_POWER_SENSOR,
     CONF_IMPORT_COST_SENSOR,
     CONF_IMPORT_RATE_SENSOR,
     CONF_NOTIFY_TARGET,
@@ -220,6 +221,115 @@ async def test_options_battery_substep_persists_and_preserves(hass):
     }
     # An untouched key from another group is not clobbered (still only in data).
     assert entry.data[CONF_NOTIFY_TARGET] == "notify.test"
+
+
+async def test_options_hotwater_substep_persists_power_sensor(hass):
+    """Regression: the diverter-power field must survive _save (be in HOTWATER_KEYS),
+    not merely render in the form - else the tape's diversion rail never wires up."""
+    power = _register(hass, "sensor", "myenergi", "eddi-power", "eddi_hwc_power")
+    entry = _v3_entry()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "hotwater"}
+    )
+    assert result["step_id"] == "hotwater"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_HOTWATER_POWER_SENSOR: power}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_HOTWATER_POWER_SENSOR] == power
+
+
+def test_no_options_field_is_silently_dropped_on_save():
+    """Every field rendered in an options sub-step must be in that step's save whitelist
+    (the *_KEYS passed to _save). A field in the schema but not the whitelist is silently
+    filtered out by _save and the user's input is lost - the diverter-power regression.
+    This guards the whole flow against that class, not just the one field."""
+    from custom_components.energy_conductor import config_flow as cf
+
+    def form_fields(schema):
+        return {getattr(m, "schema", m) for m in schema.schema}
+
+    pairs = {
+        "battery": (cf.battery_schema({}, options=True), cf.BATTERY_KEYS),
+        "tariff": (cf.tariff_schema({}, options=True), cf.TARIFF_KEYS),
+        "forecast/solcast": (
+            cf.forecast_schema(FORECAST_SOURCE_SOLCAST, {}, options=True),
+            cf.SOLAR_KEYS,
+        ),
+        "forecast/daily": (
+            cf.forecast_schema(FORECAST_SOURCE_DAILY, {}, options=True),
+            cf.SOLAR_KEYS,
+        ),
+        "loads": (cf.loads_schema({}, options=True), cf.LOADS_KEYS),
+        "ev": (cf.ev_schema({}, options=True), cf.EV_KEYS),
+        "hotwater": (cf.hotwater_schema({}, options=True), cf.HOTWATER_KEYS),
+        "grid": (cf.grid_schema({}, options=True), cf.GRID_KEYS),
+        "costs": (cf.costs_schema({}, options=True), cf.COSTS_KEYS),
+        "behaviour": (cf.behaviour_schema({}, options=True), cf.BEHAVIOUR_KEYS),
+    }
+    dropped = {
+        name: sorted(form_fields(schema) - set(keys))
+        for name, (schema, keys) in pairs.items()
+        if form_fields(schema) - set(keys)
+    }
+    assert not dropped, f"options fields rendered but not persisted by _save: {dropped}"
+
+
+def test_every_config_flow_field_has_a_translation():
+    """A field rendered without an en.json label shows its raw key in the UI (the
+    hotwater_power_sensor regression). Every config and options field must be labelled."""
+    import json
+    from pathlib import Path
+
+    from custom_components.energy_conductor import config_flow as cf
+
+    def form_fields(schema):
+        return {getattr(m, "schema", m) for m in schema.schema}
+
+    def forecast(opts):
+        return form_fields(
+            cf.forecast_schema(FORECAST_SOURCE_SOLCAST, {}, options=opts)
+        ) | form_fields(cf.forecast_schema(FORECAST_SOURCE_DAILY, {}, options=opts))
+
+    config_steps = {
+        "battery": form_fields(cf.battery_schema({}, options=False)),
+        "tariff": form_fields(cf.tariff_schema({}, options=False)),
+        "forecast_source": form_fields(cf.forecast_source_schema({}, options=False)),
+        "forecast": forecast(False),
+        "loads": form_fields(cf.loads_schema({}, options=False)),
+        "ev": form_fields(cf.ev_schema({}, options=False)),
+        "hotwater": form_fields(cf.hotwater_schema({}, options=False)),
+        "grid": form_fields(cf.grid_schema({}, options=False)),
+        "costs": form_fields(cf.costs_schema({}, options=False)),
+        "behaviour": form_fields(cf.behaviour_schema({}, options=False)),
+    }
+    options_steps = {
+        "battery": form_fields(cf.battery_schema({}, options=True)),
+        "tariff": form_fields(cf.tariff_schema({}, options=True)),
+        "solar": form_fields(cf.forecast_source_schema({}, options=True)),
+        "solar_details": forecast(True),
+        "loads": form_fields(cf.loads_schema({}, options=True)),
+        "ev": form_fields(cf.ev_schema({}, options=True)),
+        "hotwater": form_fields(cf.hotwater_schema({}, options=True)),
+        "grid": form_fields(cf.grid_schema({}, options=True)),
+        "costs": form_fields(cf.costs_schema({}, options=True)),
+        "behaviour": form_fields(cf.behaviour_schema({}, options=True)),
+    }
+    tr = json.loads((Path(cf.__file__).parent / "translations" / "en.json").read_text())
+
+    missing = {}
+    for flow, steps in (("config", config_steps), ("options", options_steps)):
+        block = tr[flow]["step"]
+        for step, flds in steps.items():
+            data = block.get(step, {}).get("data", {})
+            gap = sorted(flds - set(data))
+            if gap:
+                missing[f"{flow}.{step}"] = gap
+    assert not missing, f"config-flow fields without an en.json label: {missing}"
 
 
 async def test_options_form_shows_resolved_entity_not_stored(hass):

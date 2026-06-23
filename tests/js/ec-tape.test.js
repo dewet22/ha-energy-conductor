@@ -178,6 +178,38 @@ describe("downsample", () => {
   });
 });
 
+describe("smooth", () => {
+  test("rejects a lone spike via the median, neighbours intact", () => {
+    const pts = [
+      { t: at(-4), v: 800 },
+      { t: at(-3), v: 810 },
+      { t: at(-2), v: 5000 }, // spurious async-subtraction spike
+      { t: at(-1), v: 820 },
+      { t: at(0), v: 815 },
+    ];
+    const out = T.smooth(pts, 1);
+    expect(out.map((p) => p.v)).not.toContain(5000);
+    expect(out[2].v).toBe(820); // median of [810, 5000, 820]
+  });
+
+  test("preserves timestamps and length", () => {
+    const pts = [{ t: at(-2), v: 1 }, { t: at(-1), v: 9 }, { t: at(0), v: 2 }];
+    const out = T.smooth(pts, 1);
+    expect(out.map((p) => p.t.getTime())).toEqual(pts.map((p) => p.t.getTime()));
+  });
+
+  test("a steady signal is unchanged", () => {
+    const pts = [{ t: at(-2), v: 500 }, { t: at(-1), v: 500 }, { t: at(0), v: 500 }];
+    expect(T.smooth(pts, 2).every((p) => p.v === 500)).toBe(true);
+  });
+
+  test("short series or zero window pass through", () => {
+    expect(T.smooth([{ t: at(0), v: 5 }], 2)).toEqual([{ t: at(0), v: 5 }]);
+    const pts = [{ t: at(-1), v: 1 }, { t: at(0), v: 2 }];
+    expect(T.smooth(pts, 0)).toEqual(pts);
+  });
+});
+
 describe("extendToNow", () => {
   test("carries a stale write-on-change series forward to the cursor", () => {
     // SoC pinned at 100 since two hours ago; the live value is still 100.
@@ -238,6 +270,7 @@ describe("legendItems", () => {
     off_peak: "binary_sensor.op",
     dispatching: "binary_sensor.disp",
     grid_export_w: "sensor.export_w",
+    diversion_power: "sensor.div",
   };
   const FULL_CONFIG = { soc_entity: "sensor.soc", decision_entity: "sensor.dec" };
 
@@ -246,7 +279,7 @@ describe("legendItems", () => {
     expect(keys).toEqual([
       "pv_charge", "grid_charge", "export",
       "solar", "forecast", "consumption", "soc",
-      "off_peak", "dispatch", "decisions",
+      "off_peak", "dispatch", "diversion", "decisions",
     ]);
   });
 
@@ -257,7 +290,7 @@ describe("legendItems", () => {
     });
     expect(byGroup.shading).toEqual(["pv_charge", "grid_charge", "export"]);
     expect(byGroup.lines).toEqual(["solar", "forecast", "consumption", "soc"]);
-    expect(byGroup.events).toEqual(["off_peak", "dispatch", "decisions"]);
+    expect(byGroup.events).toEqual(["off_peak", "dispatch", "diversion", "decisions"]);
   });
 
   test("charging-regime entries need the SoC entity; export needs the export feed", () => {
@@ -307,9 +340,38 @@ describe("legendItems", () => {
     });
   });
 
+  test("the diversion entry needs the diversion_power feed", () => {
+    const withDiv = T.legendItems({ diversion_power: "sensor.div" }, {});
+    expect(withDiv.map((i) => i.key)).toEqual(["diversion"]);
+    expect(withDiv[0].group).toBe("events");
+    const noDiv = T.legendItems({ solar_power: "sensor.pv" }, {});
+    expect(noDiv.map((i) => i.key)).not.toContain("diversion");
+  });
+
   test("empty inputs give an empty legend", () => {
     expect(T.legendItems({}, {})).toEqual([]);
     expect(T.legendItems(null, null)).toEqual([]);
+  });
+});
+
+describe("diversionStages", () => {
+  test("zero / non-positive / non-finite power is zero stages", () => {
+    expect(T.diversionStages(0)).toBe(0);
+    expect(T.diversionStages(-50)).toBe(0);
+    expect(T.diversionStages(NaN)).toBe(0);
+  });
+
+  test("power buckets into 500 W stages", () => {
+    expect(T.diversionStages(1)).toBe(1);
+    expect(T.diversionStages(500)).toBe(1);
+    expect(T.diversionStages(501)).toBe(2);
+    expect(T.diversionStages(2000)).toBe(4);
+  });
+
+  test("caps at six stages for the 2.7-3 kW immersion", () => {
+    expect(T.diversionStages(2700)).toBe(6);
+    expect(T.diversionStages(3000)).toBe(6);
+    expect(T.diversionStages(5000)).toBe(6);
   });
 });
 
@@ -519,5 +581,38 @@ describe("band set operations", () => {
 
   test("full coverage subtracts to nothing", () => {
     expect(T.subtractBands([b(-2, -1)], [b(-3, 0)])).toEqual([]);
+  });
+
+  test("mergeBands coalesces overlapping bands", () => {
+    const out = T.mergeBands([b(-4, -2), b(-3, -1)]);
+    expect(out.length).toBe(1);
+    expect(out[0].start.getTime()).toBe(at(-4).getTime());
+    expect(out[0].end.getTime()).toBe(at(-1).getTime());
+  });
+
+  test("mergeBands coalesces coterminous (touching) bands - the dispatch-slot case", () => {
+    const out = T.mergeBands([b(-4, -2), b(-2, 0)]);
+    expect(out.length).toBe(1);
+    expect(out[0].start.getTime()).toBe(at(-4).getTime());
+    expect(out[0].end.getTime()).toBe(at(0).getTime());
+  });
+
+  test("mergeBands sorts and keeps disjoint bands", () => {
+    const out = T.mergeBands([b(-2, -1), b(-5, -4)]);
+    expect(out.length).toBe(2);
+    expect(out[0].start.getTime()).toBe(at(-5).getTime());
+    expect(out[1].start.getTime()).toBe(at(-2).getTime());
+  });
+
+  test("mergeBands does not mutate its input", () => {
+    const input = [b(-4, -2), b(-2, 0)];
+    const before = input[0].end.getTime();
+    T.mergeBands(input);
+    expect(input[0].end.getTime()).toBe(before);
+  });
+
+  test("mergeBands handles empty and single", () => {
+    expect(T.mergeBands([])).toEqual([]);
+    expect(T.mergeBands([b(-2, -1)]).length).toBe(1);
   });
 });

@@ -46,6 +46,7 @@ from .const import (
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
     CONF_HOTWATER_GREEN_SENSOR,
+    CONF_HOTWATER_POWER_SENSOR,
     CONF_IMPORT_COST_OFF_PEAK_SENSOR,
     CONF_IMPORT_COST_PEAK_SENSOR,
     CONF_IMPORT_COST_SENSOR,
@@ -182,6 +183,7 @@ _TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
     ("dispatching", CONF_DISPATCHING_SENSOR),
     ("grid_import_w", CONF_GRID_IMPORT_SENSOR),
     ("grid_export_w", CONF_GRID_EXPORT_SENSOR),
+    ("diversion_power", CONF_HOTWATER_POWER_SENSOR),
 )
 
 

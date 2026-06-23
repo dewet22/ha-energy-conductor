@@ -55,6 +55,7 @@ CONF_EV_MIN_ACTIVATION_W = "ev_min_activation_power_w"
 CONF_HOTWATER_GREEN_SENSOR = "hotwater_green_sensor"
 CONF_HOTWATER_STATUS_SENSOR = "hotwater_status_sensor"
 CONF_HOTWATER_ENERGY_SENSOR = "hotwater_energy_sensor"  # optional total-in, display only
+CONF_HOTWATER_POWER_SENSOR = "hotwater_power_sensor"  # optional diverter power (W); tape rail
 CONF_HOTWATER_CAPACITY_KWH = "hotwater_capacity_kwh"
 CONF_HOTWATER_DEPLETION_KWH = "hotwater_depletion_kwh"  # fallback when not learned
 CONF_HOTWATER_THRESHOLD_PERCENT = "hotwater_threshold_percent"
