@@ -13,7 +13,9 @@ from energy_conductor.hotwater import (
     boost_recommendation,
     corroborated_full_events,
     estimate_reserve,
+    estimate_reserve_cold_fill,
     learn_depletion,
+    transition_gated_full_events,
 )
 
 
@@ -68,6 +70,65 @@ class TestCorroboratedFullEvents:
 
     def test_no_events_returns_empty(self):
         assert _corroborate([], {}) == []
+
+
+def _gate(events_with_prior):
+    return transition_gated_full_events(events_with_prior, active_states=("Diverting", "Boosting"))
+
+
+class TestTransitionGatedFullEvents:
+    """A 'Max temp reached' anchors the reserve only when it follows active heating
+    (Diverting/Boosting): a real full trips to max temp while power is flowing. A trip from
+    an idle origin — Stopped, a reconnect 'unavailable' republish, or a supply-dip 'Paused' —
+    on a cold/isolated tank is a phantom and must be dropped."""
+
+    def test_full_from_diverting_is_kept(self):
+        ts = _hour(10)
+        assert _gate([(ts, "Diverting")]) == [ts]
+
+    def test_full_from_boosting_is_kept(self):
+        ts = _hour(10)
+        assert _gate([(ts, "Boosting")]) == [ts]
+
+    def test_full_from_stopped_is_dropped(self):
+        # The live 2026-06-23 blip: Stopped → Max temp on a cold tank.
+        assert _gate([(_hour(8), "Stopped")]) == []
+
+    def test_full_from_unavailable_is_dropped(self):
+        # Reconnect/restart status republish.
+        assert _gate([(_hour(0), "unavailable")]) == []
+
+    def test_full_from_paused_is_dropped(self):
+        # The 06-13 phantom: trip during a supply-dip pause; only 0.16 kWh delivered all day.
+        assert _gate([(_hour(5), "Paused")]) == []
+
+    def test_full_with_unknown_prior_is_dropped(self):
+        assert _gate([(_hour(5), None)]) == []
+
+    def test_keeps_only_active_prior_in_order(self):
+        genuine_a, phantom, genuine_b = _hour(10), _hour(11), _hour(12)
+        events = [(genuine_a, "Diverting"), (phantom, "Stopped"), (genuine_b, "Boosting")]
+        assert _gate(events) == [genuine_a, genuine_b]
+
+    def test_no_events_returns_empty(self):
+        assert _gate([]) == []
+
+
+class TestEstimateReserveColdFill:
+    """No trusted anchor: integrate measured green diversion up from an assumed-empty tank,
+    capped at capacity — the gradual rise while a cold tank fills."""
+
+    def test_integrates_green_up_from_zero(self):
+        assert estimate_reserve_cold_fill(3.0, 12.0) == 3.0
+
+    def test_zero_green_is_zero(self):
+        assert estimate_reserve_cold_fill(0.0, 12.0) == 0.0
+
+    def test_caps_at_capacity(self):
+        assert estimate_reserve_cold_fill(20.0, 12.0) == 12.0
+
+    def test_negative_clamps_to_zero(self):
+        assert estimate_reserve_cold_fill(-1.0, 12.0) == 0.0
 
 
 CAPACITY = 11.0

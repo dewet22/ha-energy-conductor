@@ -42,11 +42,15 @@ def _forecast(kwh: float = 10.0) -> SolarForecast:
 
 
 def _full_states(days_with_full: list[int], *, hour: int = 3) -> list[SimpleNamespace]:
-    """Status states reaching 'Max temp reached' at HH:00 on each given June day."""
-    return [
-        SimpleNamespace(state=MAX_TEMP, last_changed=datetime(2026, 6, day, hour, 0, tzinfo=UTC))
-        for day in days_with_full
-    ]
+    """Status states reaching 'Max temp reached' at HH:00 on each given June day, each
+    preceded by an active 'Diverting' state so the transition gate honours them as genuine
+    fulls (a real full trips to max temp while power is flowing)."""
+    states: list[SimpleNamespace] = []
+    for day in days_with_full:
+        at = datetime(2026, 6, day, hour, 0, tzinfo=UTC)
+        states.append(SimpleNamespace(state="Diverting", last_changed=at - timedelta(minutes=5)))
+        states.append(SimpleNamespace(state=MAX_TEMP, last_changed=at))
+    return states
 
 
 def _daily_green(days: list[int], kwh: float) -> list[dict]:
@@ -119,6 +123,7 @@ async def test_recent_full_reserve_high_no_boost(hass, now):
     assert hw.boost_recommended is False
     assert hw.depletion_source == "stats"  # 6 steady (full→full) days ≥ min samples
     assert hw.last_full_at == datetime(2026, 6, 8, 3, 0, tzinfo=UTC)
+    assert hw.reserve_source == "anchored"
 
 
 async def test_stale_full_low_reserve_recommends_boost(hass, now):
@@ -143,6 +148,7 @@ async def test_stale_full_low_reserve_recommends_boost(hass, now):
     assert hw.boost_recommended is True
     assert hw.suggested_boost_hours in (1.0, 2.0)
     assert hw.depletion_source == "default"
+    assert hw.reserve_source == "anchored"
 
 
 async def test_uncorroborated_full_ignored_anchors_last_genuine(hass, now):
@@ -174,6 +180,60 @@ async def test_uncorroborated_full_ignored_anchors_last_genuine(hass, now):
     assert hw.reserve_percent < 90
 
 
+async def test_full_from_stopped_not_anchored(hass, now):
+    """Regression for 2026-06-23: a 'Max temp reached' that transitions from an idle 'Stopped'
+    state (cold tank, 30 s spurious blip) must not anchor the reserve — even though diversion
+    is flowing — while the genuine earlier Diverting→Max full stands. The transition gate drops
+    it; the corroboration gate would NOT (diversion is present), so this is the sharper sibling
+    of test_uncorroborated_full_ignored_anchors_last_genuine.
+    """
+    day6 = datetime(2026, 6, 6, 3, 0, tzinfo=UTC)
+    day8 = datetime(2026, 6, 8, 3, 0, tzinfo=UTC)
+    status = [
+        SimpleNamespace(state="Diverting", last_changed=day6 - timedelta(minutes=5)),
+        SimpleNamespace(state=MAX_TEMP, last_changed=day6),
+        SimpleNamespace(state="Stopped", last_changed=day8 - timedelta(minutes=5)),
+        SimpleNamespace(state=MAX_TEMP, last_changed=day8),
+    ]
+    daily_rows = _daily_green([6, 7], 2.5)
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: status}),
+        patch(
+            _PATCH_STATS,
+            side_effect=_stats_side_effect(
+                daily_rows,
+                hourly_total=0.0,
+                full_hours=_full_hours([6, 8]),  # BOTH corroborated
+            ),
+        ),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    # Day-8 Stopped→Max dropped by the transition gate (despite its diversion); anchor = day 6.
+    assert hw.last_full_at == day6
+    assert hw.reserve_source == "anchored"
+    assert hw.reserve_percent < 90  # depleted since day 6, not snapped to 100
+
+
+async def test_cold_fill_integrates_up_from_zero(hass, now):
+    """No full survives the gates, but green has been diverting into a cold tank → the reserve
+    integrates up from zero with the absorbed kWh (capped at capacity) instead of a flat 0."""
+    adapter = _adapter(hass, extra={CONF_HOTWATER_CAPACITY_KWH: 12.0})
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: []}),  # no full events at all
+        patch(_PATCH_STATS, side_effect=_stats_side_effect([], hourly_total=4.0)),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.last_full_at is None
+    assert hw.reserve_source == "cold_fill"
+    assert hw.reserve_kwh == pytest.approx(4.0)  # green-since-midnight, capped at 12
+    assert hw.reserve_percent == pytest.approx(33.3, abs=0.1)
+
+
 async def test_no_full_in_lookback_assumes_depleted(hass, now):
     adapter = _adapter(hass)
     with (
@@ -185,6 +245,7 @@ async def test_no_full_in_lookback_assumes_depleted(hass, now):
     assert hw is not None
     assert hw.last_full_at is None
     assert hw.reserve_kwh == 0.0
+    assert hw.reserve_source == "cold_fill"
     assert hw.boost_recommended is True
 
 

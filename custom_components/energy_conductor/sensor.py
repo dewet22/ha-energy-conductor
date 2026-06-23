@@ -681,6 +681,7 @@ class HotWaterReserveSensor(_BaseSensor):
             "last_full_at": hw.last_full_at.isoformat() if hw.last_full_at else None,
             "depletion_kwh_per_day": hw.depletion_kwh_per_day,
             "depletion_source": hw.depletion_source,
+            "reserve_source": hw.reserve_source,
             "boost_recommended": hw.boost_recommended,
             "suggested_boost_hours": hw.suggested_boost_hours,
         }
