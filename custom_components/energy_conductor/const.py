@@ -187,6 +187,11 @@ HOTWATER_MAX_BOOST_HOURS = 2
 # safety switch (open circuit) or on a reconnect/restart republish.
 HOTWATER_FULL_WINDOW_HOURS = 2  # hours before the event to check for diversion
 HOTWATER_FULL_MIN_KWH = 0.05  # min diverted kWh in that window for the full to be genuine
+# A genuine full trips to max temp while power is flowing, so only a "Max temp reached" whose
+# immediately-prior status was active heating anchors the reserve. A trip from an idle origin
+# (Stopped, a reconnect "unavailable" republish, or a supply-dip "Paused") on a cold/isolated
+# tank is a phantom. "Paused" is excluded deliberately — every observed Paused→full was false.
+HOTWATER_ACTIVE_DIVERSION_STATES = ("Diverting", "Boosting")
 
 # Staleness thresholds
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes

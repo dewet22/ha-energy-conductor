@@ -114,6 +114,7 @@ class HotWaterState:
     depletion_source: str | None  # "stats" | "default"
     boost_recommended: bool
     suggested_boost_hours: float | None = None
+    reserve_source: str | None = None  # "anchored" (confirmed full) | "cold_fill" (no anchor)
 
     def __post_init__(self) -> None:
         _require_aware("HotWaterState.last_full_at", self.last_full_at)

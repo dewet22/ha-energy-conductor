@@ -77,6 +77,7 @@ from .const import (
     FORECAST_SOURCE_DAILY,
     FORECAST_SOURCE_NONE,
     FORECAST_SOURCE_SOLCAST,
+    HOTWATER_ACTIVE_DIVERSION_STATES,
     HOTWATER_DEPLETION_MAX_KWH,
     HOTWATER_DEPLETION_MIN_SAMPLES,
     HOTWATER_DEPLETION_PERCENTILE,
@@ -99,7 +100,9 @@ from .hotwater import (
     boost_recommendation,
     corroborated_full_events,
     estimate_reserve,
+    estimate_reserve_cold_fill,
     learn_depletion,
+    transition_gated_full_events,
 )
 from .learn_daily_target import learned_daily_kwh
 from .model import (
@@ -764,8 +767,13 @@ class Adapter:
             )
 
             if last_full_at is None:
-                # No confirmed-full event in the lookback window → assume depleted.
-                reserve = 0.0
+                # No trusted full anchor → treat the tank as empty at the start of today's
+                # diversion session and integrate green diversion up from zero, so a cold
+                # tank's reserve rises with absorbed kWh instead of reading a flat 0.
+                cold_fill_since = dt_util.start_of_local_day(now)
+                green_since = self._hot_water_green_since(cold_fill_since, now, green_sensor)
+                reserve = estimate_reserve_cold_fill(green_since, capacity)
+                reserve_source = "cold_fill"
             else:
                 green_since = self._hot_water_green_since(last_full_at, now, green_sensor)
                 reserve = estimate_reserve(
@@ -774,6 +782,7 @@ class Adapter:
                     depletion_kwh_per_day=depletion,
                     capacity_kwh=capacity,
                 )
+                reserve_source = "anchored"
 
             expected_refill = min(
                 capacity, max(0.0, solar_forecast.total_kwh_forecast * HOTWATER_DIVERSION_FRACTION)
@@ -797,6 +806,7 @@ class Adapter:
                 depletion_source=depletion_source,
                 boost_recommended=boost_recommended,
                 suggested_boost_hours=hours,
+                reserve_source=reserve_source,
             )
         except Exception:  # recorder/parse failures must not crash the tick
             _LOGGER.exception("Hot-water reserve estimate failed; skipping")
@@ -805,14 +815,15 @@ class Adapter:
     def _hot_water_full_events(
         self, now: datetime, status_entity: str, max_temp_state: str, green_entity: str
     ) -> tuple[datetime | None, set]:
-        """Return (last CORROBORATED 'Max temp reached' timestamp, set of local dates).
+        """Return (last genuine 'Max temp reached' timestamp, set of local dates).
 
-        A 'Max temp reached' only counts when real diversion flowed into the tank in the
-        hours leading up to it: the diverter reports it falsely when the element is isolated
-        at the safety switch (open circuit, no current draw) or when the status is
-        republished on a reconnect/restart. Corroborating each event against the green
-        diversion energy rejects those phantoms, so the reserve isn't pinned full (and the
-        depletion clock isn't reset on every restart by a boot-time false anchor).
+        A 'Max temp reached' anchors the reserve only when it passes two gates: (1) the
+        transition gate — its immediately-prior status was active heating (Diverting/Boosting),
+        since a genuine full trips to max temp while power is flowing, whereas a trip from an
+        idle origin (Stopped, a reconnect "unavailable" republish, or a supply-dip "Paused")
+        on a cold/isolated tank is a phantom; and (2) the corroboration gate — real green
+        diversion flowed in the hours leading up to it. Both reject the diverter's false fulls,
+        so the reserve isn't pinned full (and the depletion clock isn't reset by a boot anchor).
         """
         start = now - timedelta(days=HOTWATER_LOOKBACK_DAYS)
         states_by_entity = state_changes_during_period(
@@ -823,15 +834,27 @@ class Adapter:
             no_attributes=True,  # status is very chatty; we only need state + last_changed
             include_start_time_state=False,
         )
-        full_times = [
-            s.last_changed
-            for s in states_by_entity.get(status_entity, [])
+        states = states_by_entity.get(status_entity, [])
+        # Pair each "Max temp reached" with the status immediately before it (None for the
+        # first state in the window — unverifiable). The transition gate uses this prior to
+        # reject phantoms that trip from an idle origin (Stopped / reconnect "unavailable" /
+        # supply-dip "Paused") while a genuine full follows active heating.
+        events_with_prior = [
+            (s.last_changed, states[i - 1].state if i > 0 else None)
+            for i, s in enumerate(states)
             if s.state == max_temp_state
         ]
+        if not events_with_prior:
+            return None, set()
+        # Gate 1 (transition): keep only fulls that follow active heating (Diverting/Boosting).
+        full_times = transition_gated_full_events(
+            events_with_prior, active_states=HOTWATER_ACTIVE_DIVERSION_STATES
+        )
         if not full_times:
             return None, set()
-        # Fetch from one window before `start` so a full event in the first hour of the
-        # lookback still sees its preceding hour's diversion (else it could falsely drop).
+        # Gate 2 (corroboration): real diversion flowed in the window before the event. Fetch
+        # from one window before `start` so a full event in the first hour of the lookback
+        # still sees its preceding hour's diversion (else it could falsely drop).
         diversion_start = start - timedelta(hours=HOTWATER_FULL_WINDOW_HOURS - 1)
         corroborated = corroborated_full_events(
             full_times,

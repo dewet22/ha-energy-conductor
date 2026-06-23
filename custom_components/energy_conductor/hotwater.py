@@ -53,6 +53,23 @@ def corroborated_full_events(
     return corroborated
 
 
+def transition_gated_full_events(
+    events_with_prior: list[tuple[datetime, str | None]],
+    *,
+    active_states: tuple[str, ...],
+) -> list[datetime]:
+    """The 'Max temp reached' events that follow active heating (in ``active_states``).
+
+    A genuine full trips to max temp while power is flowing, so the status immediately
+    before the transition is an active-diversion state (Diverting/Boosting). A trip from
+    an idle origin — Stopped, a reconnect "unavailable" republish, or a supply-dip "Paused"
+    — on a cold or isolated tank is a phantom and is dropped (a ``None`` prior, the first
+    state in the fetched window, is likewise unverifiable → dropped). Composes with
+    ``corroborated_full_events``: both gates must pass for an event to anchor the reserve.
+    """
+    return [ts for ts, prior in events_with_prior if prior in active_states]
+
+
 def estimate_reserve(
     *,
     elapsed_hours_since_full: float,
@@ -69,6 +86,18 @@ def estimate_reserve(
     elapsed_days = max(0.0, elapsed_hours_since_full) / 24.0
     reserve = capacity_kwh - depletion_kwh_per_day * elapsed_days + energy_in_since_full_kwh
     return _clamp(reserve, 0.0, capacity_kwh)
+
+
+def estimate_reserve_cold_fill(energy_accumulated_kwh: float, capacity_kwh: float) -> float:
+    """Estimated reserve (kWh) when there is no trusted full anchor in the lookback.
+
+    No corroborated full in the lookback ⇒ the tank has depleted, so it is treated as empty
+    at the start of the current diversion session and measured green diversion is integrated
+    up from zero. Raw green capped at capacity — no depletion term: over the short intra-day
+    fill window standing loss is negligible against fill power, and subtracting it would risk
+    pinning a genuinely warming tank at zero.
+    """
+    return _clamp(energy_accumulated_kwh, 0.0, capacity_kwh)
 
 
 def learn_depletion(
