@@ -113,6 +113,10 @@ async def test_money_sensors_created_and_accumulate(hass: HomeAssistant) -> None
     assert "recovered_pct" in attrs
     assert "run_rate_gbp_per_year" in attrs
     assert "projected_breakeven" in attrs
+    # Fresh tracking window (day one) is under a season, so the run-rate is
+    # flagged provisional and the dated break-even withheld.
+    assert attrs["run_rate_provisional"] is True
+    assert attrs["projected_breakeven"] is None
 
 
 async def test_money_sensor_unavailable_during_rate_outage(hass: HomeAssistant) -> None:

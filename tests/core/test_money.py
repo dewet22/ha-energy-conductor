@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from custom_components.energy_conductor.money import (
+    DAYS_PER_YEAR,
     CumulativeSavings,
     DailyCost,
     accumulate_daily_cost,
@@ -204,16 +205,18 @@ class TestPaybackProjection:
         assert p.run_rate_gbp_per_year == pytest.approx(3.6525 * 365.25)
 
     def test_projected_breakeven_date(self):
-        # 1 GBP/day over ten completed days, 9990 remaining -> 9990 days out.
+        # 1 GBP/day over a hundred completed days (past the provisional window),
+        # 9900 remaining -> 9900 days out. Default flat seasonality keeps k=1.
         p = payback_projection(
             capital_cost_gbp=10000.0,
-            recovered_gbp=10.0,
-            started=date(2026, 6, 2),
+            recovered_gbp=100.0,
+            started=DAY - timedelta(days=100),
             today=DAY,
         )
         assert p is not None
+        assert p.provisional is False
         remaining_days = (p.projected_breakeven - DAY).days
-        assert remaining_days == 9990
+        assert remaining_days == 9900
 
     def test_todays_partial_day_is_excluded_from_the_run_rate(self):
         # Overnight the battery buys cheap grid energy before the daytime
@@ -231,7 +234,9 @@ class TestPaybackProjection:
         assert p.run_rate_gbp_per_year == pytest.approx(7.28 * 365.25)
 
     def test_first_day_falls_back_to_the_running_total(self):
-        # Zero completed days: today's running figure is the only sample.
+        # Zero completed days: today's running figure is the only sample. The
+        # window is provisional, so the dated break-even is withheld even though
+        # the run-rate is still reported.
         p = payback_projection(
             capital_cost_gbp=12000.0,
             recovered_gbp=7.17,
@@ -241,7 +246,8 @@ class TestPaybackProjection:
         )
         assert p is not None
         assert p.run_rate_gbp_per_year == pytest.approx(7.17 * 365.25)
-        assert p.projected_breakeven is not None
+        assert p.provisional is True
+        assert p.projected_breakeven is None
 
     def test_zero_run_rate_has_no_breakeven(self):
         p = payback_projection(
@@ -252,9 +258,77 @@ class TestPaybackProjection:
         assert p.projected_breakeven is None
 
     def test_already_broken_even(self):
+        # Capital already recovered: the break-even is a fact (today), surfaced
+        # regardless of the provisional guard.
         p = payback_projection(
             capital_cost_gbp=100.0, recovered_gbp=150.0, started=date(2026, 6, 3), today=DAY
         )
         assert p is not None
         assert p.recovered_pct == pytest.approx(150.0)
         assert p.projected_breakeven == DAY
+
+    def test_summer_window_scales_run_rate_down(self):
+        # Ten high-solar June days over-represent the year, so annualising the
+        # raw rate over-projects. Seasonal de-bias pulls it toward the annual mean.
+        p = payback_projection(
+            capital_cost_gbp=12000.0,
+            recovered_gbp=36.525,
+            started=date(2026, 6, 2),
+            today=DAY,
+            winter_min=2.0,
+            summer_max=10.0,
+        )
+        assert p is not None
+        assert p.run_rate_gbp_per_year < 3.6525 * DAYS_PER_YEAR
+
+    def test_winter_window_scales_run_rate_up(self):
+        # A low-solar December sample understates the year; de-bias scales up.
+        p = payback_projection(
+            capital_cost_gbp=12000.0,
+            recovered_gbp=10.0,
+            started=date(2025, 12, 2),
+            today=date(2025, 12, 12),
+            winter_min=2.0,
+            summer_max=10.0,
+        )
+        assert p is not None
+        assert p.run_rate_gbp_per_year > 1.0 * DAYS_PER_YEAR
+
+    def test_flat_seasonality_leaves_run_rate_unscaled(self):
+        # winter_min == summer_max: no seasonal signal, so no correction (k=1).
+        p = payback_projection(
+            capital_cost_gbp=12000.0,
+            recovered_gbp=36.525,
+            started=date(2026, 6, 2),
+            today=DAY,
+            winter_min=5.0,
+            summer_max=5.0,
+        )
+        assert p is not None
+        assert p.run_rate_gbp_per_year == pytest.approx(3.6525 * DAYS_PER_YEAR)
+
+    def test_short_window_is_provisional_and_hides_breakeven(self):
+        # Under a season of data the dated horizon is unreliable: keep the
+        # (de-biased) run-rate but withhold the projected break-even date.
+        p = payback_projection(
+            capital_cost_gbp=10000.0,
+            recovered_gbp=36.525,
+            started=date(2026, 6, 2),
+            today=DAY,
+        )
+        assert p is not None
+        assert p.provisional is True
+        assert p.projected_breakeven is None
+        assert p.run_rate_gbp_per_year == pytest.approx(3.6525 * DAYS_PER_YEAR)
+
+    def test_window_past_a_season_is_not_provisional(self):
+        # >= SEASONAL_CONFIDENCE_DAYS completed days: the projection firms up.
+        p = payback_projection(
+            capital_cost_gbp=10000.0,
+            recovered_gbp=100.0,
+            started=DAY - timedelta(days=100),
+            today=DAY,
+        )
+        assert p is not None
+        assert p.provisional is False
+        assert p.projected_breakeven is not None

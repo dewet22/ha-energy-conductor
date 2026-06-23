@@ -535,6 +535,7 @@
                 columnHeader() +
                 bHtml +
                 '<tr><td colspan="4" style="padding:2px 0 6px;font-size:0.78em;opacity:0.55;">' +
+                "Today only (the per-mechanism split isn't in long-term statistics). " +
                 "Gross attribution at the import rate - overlapping, so these don't sum to the net below." +
                 "</td></tr>" +
                 '<tr style="border-top:1px solid var(--divider-color, #444);">' +
@@ -563,16 +564,19 @@
               sectionHeader("EV", MODELLED) +
               tableOpen() +
               columnHeader();
+            // The month kWh rides on the Charged label; the old standalone
+            // "Month to date" row duplicated the 30-day column, so it's dropped.
+            var chargedLabel =
+              "Charged" +
+              (evMtdKwh !== null
+                ? ' <span style="opacity:0.55;">&#183; ' + evMtdKwh.toFixed(0) + " kWh this month</span>"
+                : "");
             html += row3(
-              "Charged",
+              chargedLabel,
               [evToday, this._since("ev_cost", c.ev_cost_entity, 7), this._since("ev_cost", c.ev_cost_entity, 30)],
               -1,
               true
             );
-            if (evMtdCost !== null) {
-              var kwhNote = evMtdKwh !== null ? evMtdKwh.toFixed(0) + " kWh - " : "";
-              html += rowSpan("Month to date", kwhNote + fmtGbpSigned(-evMtdCost), true);
-            }
             var comparator = evComparator(evMtdKwh, evMtdCost, publicRate);
             if (comparator !== null) {
               html += rowSpan(
@@ -592,6 +596,13 @@
           });
           if (pv) {
             var runRate = this._attr(c.cumulative_entity, "run_rate_gbp_per_year");
+            // Under a season of data the run-rate is de-biased but still shaky,
+            // so it's flagged provisional and the backend withholds the dated
+            // break-even (projected_breakeven is null -> fmtMonthYear drops it).
+            var provisional = this._attr(c.cumulative_entity, "run_rate_provisional") === true;
+            var runRateText = function (r) {
+              return fmtGbp(r) + "/yr run-rate" + (provisional ? " (provisional)" : "");
+            };
             // Month + year only: a modelled break-even is a horizon, and an
             // exact day would be false precision.
             var breakeven = fmtMonthYear(this._attr(c.cumulative_entity, "projected_breakeven"));
@@ -601,7 +612,7 @@
               // run-rate projection. NB tracking start, not system install -
               // savings made before the accumulator existed are not counted.
               var lead = [];
-              if (typeof runRate === "number") lead.push(fmtGbp(runRate) + "/yr run-rate");
+              if (typeof runRate === "number") lead.push(runRateText(runRate));
               if (breakeven) lead.push("on track for break-even around " + breakeven);
               if (lead.length) {
                 html +=
@@ -614,7 +625,7 @@
                 (pv.days !== null ? " (day " + pv.days + ")" : "") + "</div>";
             } else {
               var subBits = [];
-              if (typeof runRate === "number") subBits.push(fmtGbp(runRate) + "/yr run-rate");
+              if (typeof runRate === "number") subBits.push(runRateText(runRate));
               if (breakeven) subBits.push("break-even around " + breakeven);
               if (pv.days !== null) subBits.push("day " + pv.days + " of tracking");
               html +=

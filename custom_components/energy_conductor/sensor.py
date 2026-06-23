@@ -947,6 +947,7 @@ class CumulativeSavingsSensor(_MoneySensorBase, RestoreEntity):
                     if payback is not None and payback.projected_breakeven is not None
                     else None
                 ),
+                "run_rate_provisional": None if payback is None else payback.provisional,
             }
         )
         return attrs
