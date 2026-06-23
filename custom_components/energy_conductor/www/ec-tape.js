@@ -739,8 +739,13 @@
             return { t: p.t, v: p.v / 1000 };
           };
           var loadKw = loadPts.map(toKw);
+          // Smoothed copy drives both the drawn line AND the axis scale, so a
+          // spurious subtraction spike (rejected from the line) can't still
+          // inflate maxKw and crush the real curves. loadKw stays raw for the
+          // live "load" chip below.
+          var loadLineKw = smooth(loadKw, 2);
           var solarKw = solarPts.map(toKw);
-          loadKw.concat(solarKw).forEach(function (p) {
+          loadLineKw.concat(solarKw).forEach(function (p) {
             if (p.v > maxKw) maxKw = p.v;
           });
           forecastPts.forEach(function (p) {
@@ -762,12 +767,8 @@
           // Consumption draws after solar so the dashed line stays legible on
           // top of the orange area (HA Energy style: line, not area).
           if (loadKw.length) {
-            // Median-smooth the consumption LINE only - the netted house-load
-            // sensor carries spurious spikes from subtracting two async sources.
-            // loadKw itself stays raw, so the live chip and axis max keep the
-            // real latest reading rather than a median of the last few samples.
             svg +=
-              '<path d="' + linePath(smooth(loadKw, 2), win, yPow) +
+              '<path d="' + linePath(loadLineKw, win, yPow) +
               '" fill="none" stroke="currentColor" stroke-width="1.25" ' +
               'stroke-dasharray="6 3" opacity="0.8"/>';
           } else if (sources.home_load) {
