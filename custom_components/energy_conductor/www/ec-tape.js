@@ -122,6 +122,34 @@
     return bands;
   }
 
+  // Solar-diversion power (W) -> quantised stage 0..6, one per ~500 W, capping
+  // at the immersion's ~2.7-3 kW. Drives the diversion rail's line width.
+  function diversionStages(w) {
+    if (!(w > 0)) return 0; // also rejects NaN
+    return Math.min(6, Math.ceil(w / 500));
+  }
+
+  // Rolling-median smoother for the consumption line. Netting two
+  // independently-sampled sensors (house load minus diverter power) injects
+  // spurious spikes whenever one source is mid-update and the other is stale; a
+  // median over a centered window of 2*half+1 points rejects those outliers (a
+  // mean would chase them). Timestamps preserved; <=2 points pass through.
+  function smooth(points, half) {
+    if (points.length <= 2 || half < 1) return points;
+    return points.map(function (p, i) {
+      var win = [];
+      var lo = Math.max(0, i - half);
+      var hi = Math.min(points.length - 1, i + half);
+      for (var j = lo; j <= hi; j++) win.push(points[j].v);
+      win.sort(function (a, b) {
+        return a - b;
+      });
+      var mid = Math.floor(win.length / 2);
+      var med = win.length % 2 ? win[mid] : (win[mid - 1] + win[mid]) / 2;
+      return { t: p.t, v: med };
+    });
+  }
+
   // Intervals where the series climbs (battery charging sessions from SoC).
   // Flat/falling gaps shorter than gapMs merge into the surrounding climb;
   // runs shorter than minMs or gaining less than minRise are SoC wobble.
@@ -188,6 +216,28 @@
       });
       out = out.concat(pieces);
     });
+    return out;
+  }
+
+  // Coalesce overlapping OR touching bands into one. Octopus returns a dispatch
+  // window as several adjacent half-hour slots; drawn raw, each slot's end-caps
+  // chop one continuous dispatch into coterminous-looking blocks. Merging first
+  // gives one clean segment. Pure: returns new band objects, input untouched.
+  function mergeBands(bands) {
+    if (!bands || !bands.length) return [];
+    var sorted = bands.slice().sort(function (a, b) {
+      return a.start - b.start;
+    });
+    var out = [{ start: sorted[0].start, end: sorted[0].end }];
+    for (var i = 1; i < sorted.length; i++) {
+      var last = out[out.length - 1];
+      var band = sorted[i];
+      if (band.start <= last.end) {
+        if (band.end > last.end) last.end = band.end;
+      } else {
+        out.push({ start: band.start, end: band.end });
+      }
+    }
     return out;
   }
 
@@ -280,13 +330,22 @@
     return out;
   }
 
-  // HA Energy colour language: solar orange, grid blue, battery teal.
-  // Consumption renders as a plain dashed line in the theme text colour.
-  // Dispatch rose is a deliberately separate hue family from the grid blue so an
-  // IG bonus slot never reads as plain off-peak (a cyan shade was too close).
+  // Modality palette - one hue per energy modality, reused across that modality's
+  // line, its full-height regime shading, AND its bottom rail, so a colour means the
+  // same thing everywhere (line + shading + rail + legend):
+  //   solar / PV        orange  generation line + "exporting" shading
+  //   grid              blue    grid power + off-peak rail + grid-charge shading
+  //   battery           teal    SoC line + PV-charge shading
+  //   solar diversion   lime    the diversion rail (myenergi's "green" surplus -
+  //                             a yellow-green, kept clear of the blue-green battery teal)
+  //   EV dispatch       rose    the dispatch rail (a separate hue family from grid
+  //                             blue so an IG bonus slot never reads as off-peak)
+  //   decisions         indigo  guard-flip diamonds
+  // Consumption is the one exception: a plain dashed line in the theme text colour.
   var C_SOLAR = "#ff9800";
   var C_GRID = "#488fc2";
   var C_BATTERY = "#009688";
+  var C_DIVERSION = "#7cb342";
   var C_EVENT = "#534ab7";
   var C_DISPATCH = "#d4537e";
 
@@ -309,7 +368,7 @@
       out.push({ key: "export", group: "shading", label: "exporting", color: C_SOLAR, style: "band" });
     }
     // lines: the curves themselves
-    if (s.solar_power) out.push({ key: "solar", group: "lines", label: "solar", color: C_SOLAR, style: "area" });
+    if (s.solar_power) out.push({ key: "solar", group: "lines", label: "solar", color: C_SOLAR, style: "line" });
     if (s.solar_forecast || s.solar_forecast_today) {
       out.push({ key: "forecast", group: "lines", label: "forecast", color: C_SOLAR, style: "dash" });
     }
@@ -321,6 +380,9 @@
     if (s.off_peak) out.push({ key: "off_peak", group: "events", label: "off-peak", color: C_GRID, style: "segment" });
     if (s.dispatching) {
       out.push({ key: "dispatch", group: "events", label: "EV dispatch", color: C_DISPATCH, style: "segment" });
+    }
+    if (s.diversion_power) {
+      out.push({ key: "diversion", group: "events", label: "solar diversion", color: C_DIVERSION, style: "segment" });
     }
     if (c.decision_entity) {
       out.push({ key: "decisions", group: "events", label: "decisions", color: C_EVENT, style: "diamond" });
@@ -383,10 +445,12 @@
   // ---- rendering ----------------------------------------------------------
 
   var W = 960;
-  var H = 292;
+  var H = 322;
   var AX = 218; // power/area baseline
-  var SCHED = 242; // schedule rail (off-peak / dispatch segments)
-  var RAIL = 258; // event diamond rail
+  var LANE_OFFPEAK = 242; // off-peak tariff window rail
+  var LANE_DISPATCH = 256; // EV dispatch rail
+  var LANE_DIVERSION = 272; // solar-diversion rail (variable-width line)
+  var RAIL = 292; // decision diamond rail
   var SOC_TOP = 26;
   var EXPORT_THRESHOLD_W = 50;
   var EXPORT_DEBOUNCE_MS = 10 * 60 * 1000;
@@ -412,16 +476,6 @@
     points.forEach(function (p, i) {
       d += (i ? " L " : "M ") + timeToX(p.t, win, W).toFixed(1) + " " + yFn(p.v).toFixed(1);
     });
-    return d;
-  }
-
-  function areaPath(points, win, yFn) {
-    if (!points.length) return "";
-    var d = "M " + timeToX(points[0].t, win, W).toFixed(1) + " " + AX;
-    points.forEach(function (p) {
-      d += " L " + timeToX(p.t, win, W).toFixed(1) + " " + yFn(p.v).toFixed(1);
-    });
-    d += " L " + timeToX(points[points.length - 1].t, win, W).toFixed(1) + " " + AX + " Z";
     return d;
   }
 
@@ -491,6 +545,7 @@
             sources.off_peak,
             sources.dispatching,
             sources.grid_export_w,
+            sources.diversion_power,
           ].forEach(function (id) {
             if (id) ids.push(id);
           });
@@ -641,6 +696,14 @@
           );
           drawRegime(exportBands, C_SOLAR);
 
+          // Faint reference gridlines at the 50% and 100% SoC marks (behind the
+          // curves, aligned with the right-edge % labels).
+          [50, 100].forEach(function (pct) {
+            svg +=
+              '<line x1="0" y1="' + socY(pct).toFixed(1) + '" x2="' + W + '" y2="' + socY(pct).toFixed(1) +
+              '" stroke="currentColor" stroke-width="1" opacity="0.15"/>';
+          });
+
           // --- EC plan block ------------------------------------------------
           if (plan && ws && we) {
             var pStart = new Date(Date.parse(ws.state));
@@ -662,7 +725,9 @@
           }
 
           // --- energy curves -----------------------------------------------
-          var loadPts = downsample(this._numSeries(sources.home_load), 300);
+          // Median-smooth the consumption line (only) - the netted house-load
+          // sensor carries spurious spikes from subtracting two async sources.
+          var loadPts = smooth(downsample(this._numSeries(sources.home_load), 300), 2);
           var solarPts = downsample(this._numSeries(sources.solar_power), 300);
           var fTodayState = sources.solar_forecast_today ? this._state(sources.solar_forecast_today) : null;
           var fTmrState = sources.solar_forecast ? this._state(sources.solar_forecast) : null;
@@ -687,7 +752,9 @@
             return powerY(v, maxKw);
           };
           if (solarKw.length) {
-            svg += '<path d="' + areaPath(solarKw, win, yPow) + '" fill="' + C_SOLAR + '" opacity="0.25"/>';
+            // PV as a line only - the orange background shading is reserved for
+            // export periods (the regime band above), so the under-curve fill is
+            // dropped to keep "orange = exporting" unambiguous.
             svg +=
               '<path d="' + linePath(solarKw, win, yPow) +
               '" fill="none" stroke="' + C_SOLAR + '" stroke-width="1.5"/>';
@@ -732,25 +799,46 @@
           }
 
           // --- schedule rail: start-stop segments below the axis --------------
-          // Off-peak (minus dispatch overlap, so an IG bonus slot reads as
-          // dispatch cyan, not plain off-peak blue) and EV dispatch windows.
-          var drawSegments = function (segBands, color) {
+          // Off-peak and EV dispatch live on their own lanes now, so each shows
+          // its full window (no subtraction); mergeBands coalesces the adjacent
+          // half-hour dispatch slots into one clean block per window.
+          var drawSegments = function (segBands, color, y) {
             segBands.forEach(function (b) {
               if (b.end < win.start || b.start > win.end) return;
               var x0 = timeToX(b.start < win.start ? win.start : b.start, win, W);
               var x1 = timeToX(b.end > win.end ? win.end : b.end, win, W);
               svg +=
-                '<line x1="' + x0.toFixed(1) + '" y1="' + SCHED + '" x2="' + x1.toFixed(1) +
-                '" y2="' + SCHED + '" stroke="' + color + '" stroke-width="3" opacity="0.85"/>';
+                '<line x1="' + x0.toFixed(1) + '" y1="' + y + '" x2="' + x1.toFixed(1) +
+                '" y2="' + y + '" stroke="' + color + '" stroke-width="3" opacity="0.85"/>';
               [x0, x1].forEach(function (x) {
                 svg +=
-                  '<line x1="' + x.toFixed(1) + '" y1="' + (SCHED - 4) + '" x2="' + x.toFixed(1) +
-                  '" y2="' + (SCHED + 4) + '" stroke="' + color + '" stroke-width="1.5" opacity="0.85"/>';
+                  '<line x1="' + x.toFixed(1) + '" y1="' + (y - 4) + '" x2="' + x.toFixed(1) +
+                  '" y2="' + (y + 4) + '" stroke="' + color + '" stroke-width="1.5" opacity="0.85"/>';
               });
             });
           };
-          drawSegments(subtractBands(bands, dispatchBands), C_GRID);
-          drawSegments(dispatchBands, C_DISPATCH);
+          // Stacked lanes (no overlap): off-peak, then EV dispatch, then the
+          // diversion rail below it.
+          drawSegments(mergeBands(bands), C_GRID, LANE_OFFPEAK);
+          drawSegments(mergeBands(dispatchBands), C_DISPATCH, LANE_DISPATCH);
+
+          // --- solar-diversion rail: line width steps with diverted power ----
+          var divPts = downsample(this._numSeries(sources.diversion_power), 300);
+          if (divPts.length) {
+            for (var di = 0; di < divPts.length - 1; di++) {
+              var st = diversionStages(divPts[di].v);
+              if (st <= 0) continue;
+              var dvx0 = timeToX(divPts[di].t, win, W);
+              var dvx1 = timeToX(divPts[di + 1].t, win, W);
+              if (dvx1 <= dvx0) continue;
+              svg +=
+                '<line x1="' + dvx0.toFixed(1) + '" y1="' + LANE_DIVERSION + '" x2="' + dvx1.toFixed(1) +
+                '" y2="' + LANE_DIVERSION + '" stroke="' + C_DIVERSION + '" stroke-width="' + st * 2 +
+                '" opacity="0.7"/>';
+            }
+          } else if (sources.diversion_power) {
+            notes.push("diversion");
+          }
 
           // --- decision rail --------------------------------------------------
           var events = [];
@@ -935,9 +1023,12 @@
     projectionPoints: projectionPoints,
     legendItems: legendItems,
     seriesAbove: seriesAbove,
+    diversionStages: diversionStages,
+    smooth: smooth,
     risingIntervals: risingIntervals,
     intersectBands: intersectBands,
     subtractBands: subtractBands,
+    mergeBands: mergeBands,
     regimeBands: regimeBands,
     holdIntervals: holdIntervals,
     fmtGlanceValue: fmtGlanceValue,

@@ -74,10 +74,33 @@ The config flow walks through these steps:
 | Forecast details | ✓ | Optional live generation sensor, winter/summer fallback range, hemisphere |
 | Loads & learning | ✓ | Optional home-load and managed-load sensors, optional daily-energy sensor, daily kWh target |
 | EV charger | optional | Power sensor, minimum activation power |
-| Hot water | optional | Eddi diverted-energy and status sensors, optional total-energy sensor, tank capacity, heater power, reserve threshold, depletion fallback |
-| Behaviour | ✓ | Write mode (dry-run / live), notify target, plan time, minimum target SoC, device name |
+| Hot water | optional | Eddi diverted-energy and status sensors, optional total-energy and diverter-power sensors (the latter draws the dashboard's diversion rail), tank capacity, heater power, reserve threshold, depletion fallback |
+| Behaviour | ✓ | Write mode (dry-run / live), notify target, plan time, device name |
 
 Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
+
+### Adapting your sensors with template sensors
+
+Conductor reads each input as a *role* — house load, solar power, diverter power, and so on — not a specific device. Where your hardware doesn't expose a clean entity for a role, compose one with a Home Assistant [template sensor](https://www.home-assistant.io/integrations/template/) and point conductor at it. The adaptation lives in your configuration, which is what keeps conductor itself device-agnostic.
+
+The common case is **house load excluding a solar diverter**. Most house-load (or "consumption") power sensors sit upstream of the diverter, so when an Eddi soaks up surplus solar the reading spikes — which both jumps the dashboard's consumption line and inflates the learned baseline that sizes the overnight charge. Netting the diverter out gives conductor a clean household floor. Create this as a UI Template helper, or in YAML:
+
+```yaml
+template:
+  - sensor:
+      - name: House load excluding diversion
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {{ [ states('sensor.house_load_power')|float(0)
+               - states('sensor.eddi_power')|float(0), 0 ] | max }}
+        availability: "{{ has_value('sensor.house_load_power') }}"
+```
+
+Replace `sensor.house_load_power` with your inverter's load/consumption power sensor and `sensor.eddi_power` with the diverter's active-power entity, then set it as the house-load sensor under **Loads & learning**. The `device_class` and `state_class` lines matter — they let conductor read the sensor's history and learn the baseline from it.
+
+One caveat: a freshly-created template sensor records only from the moment it exists, so the dashboard's consumption line backfills over the following ~12 hours and the baseline relearns over a couple of days. Both are one-time — the underlying inverter and diverter sensors keep their own full history.
 
 ---
 

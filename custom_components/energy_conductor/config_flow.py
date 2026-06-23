@@ -67,6 +67,7 @@ from .const import (
     CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_MAX_TEMP_STATE,
+    CONF_HOTWATER_POWER_SENSOR,
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_THRESHOLD_PERCENT,
     CONF_IMPORT_COST_OFF_PEAK_SENSOR,
@@ -157,6 +158,7 @@ HOTWATER_KEYS = (
     CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
+    CONF_HOTWATER_POWER_SENSOR,
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_THRESHOLD_PERCENT,
@@ -496,6 +498,9 @@ def hotwater_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
             ),
             _marker(CONF_HOTWATER_ENERGY_SENSOR, options=options, defaults=defaults): (
                 _sensor_selector(device_class="energy")
+            ),
+            _marker(CONF_HOTWATER_POWER_SENSOR, options=options, defaults=defaults): (
+                _sensor_selector(device_class="power")
             ),
             _marker(
                 CONF_HOTWATER_CAPACITY_KWH,
