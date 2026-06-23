@@ -28,7 +28,12 @@ from .const import (
     CONF_IMPORT_COST_SENSOR,
     CONF_IMPORT_RATE_SENSOR,
     CONF_PV_ENERGY_SENSOR,
+    CONF_SOUTHERN_HEMISPHERE,
+    CONF_SUMMER_MAX_KWH,
     CONF_SYSTEM_CAPITAL_COST,
+    CONF_WINTER_MIN_KWH,
+    DEFAULT_SUMMER_MAX_KWH,
+    DEFAULT_WINTER_MIN_KWH,
 )
 from .money import (
     CumulativeSavings,
@@ -244,4 +249,7 @@ class MoneyTracker:
             started=self.cumulative.started,
             today=today,
             today_gbp=self.cumulative.today_gbp,
+            winter_min=float(self.config.get(CONF_WINTER_MIN_KWH, DEFAULT_WINTER_MIN_KWH)),
+            summer_max=float(self.config.get(CONF_SUMMER_MAX_KWH, DEFAULT_SUMMER_MAX_KWH)),
+            southern_hemisphere=bool(self.config.get(CONF_SOUTHERN_HEMISPHERE, False)),
         )

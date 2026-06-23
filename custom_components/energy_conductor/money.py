@@ -9,7 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from .fallback import seasonal_weight
+
 DAYS_PER_YEAR = 365.25
+
+# A run-rate annualised from less than one season of data is unreliable however
+# it's de-biased, so the projection is flagged provisional and the dated
+# break-even withheld until the window reaches this many completed days.
+SEASONAL_CONFIDENCE_DAYS = 90
 
 # A counter dropping below this fraction of its previous value (from a non-trivial
 # previous value) is a reset; smaller dips are meter jitter / composite-counter
@@ -154,6 +161,38 @@ class PaybackProjection:
     recovered_pct: float
     run_rate_gbp_per_year: float
     projected_breakeven: date | None
+    provisional: bool
+
+
+def _seasonal_correction(
+    started: date, today: date, winter_min: float, summer_max: float, southern_hemisphere: bool
+) -> float:
+    """Ratio of the annual-mean solar weight to the tracked window's mean weight.
+
+    Savings track the solar season, so a window that isn't a representative slice
+    of the year (all summer, all winter) biases the raw run-rate. Scaling the
+    per-day rate by this ratio de-biases it: a high-solar window scales down, a
+    low-solar one up. Returns 1.0 (no correction) when seasonality is unconfigured
+    (winter_min == summer_max) or the window holds no completed days.
+    """
+    completed_days = (today - started).days
+    if winter_min == summer_max or completed_days < 1:
+        return 1.0
+    # Mean of the normalised cosine over a full year is 0.5, so the annual-mean
+    # weight has a closed form - no need to sum 365 days.
+    annual_mean = winter_min + (summer_max - winter_min) * 0.5
+    total = 0.0
+    day = started
+    for _ in range(completed_days):
+        total += seasonal_weight(
+            day.timetuple().tm_yday,
+            winter_min,
+            summer_max,
+            southern_hemisphere=southern_hemisphere,
+        )
+        day += timedelta(days=1)
+    window_mean = total / completed_days
+    return annual_mean / window_mean if window_mean > 0 else 1.0
 
 
 def payback_projection(
@@ -163,6 +202,9 @@ def payback_projection(
     started: date,
     today: date,
     today_gbp: float = 0.0,
+    winter_min: float = 0.0,
+    summer_max: float = 0.0,
+    southern_hemisphere: bool = False,
 ) -> PaybackProjection | None:
     """Project break-even from the recovery run-rate since tracking started.
 
@@ -173,16 +215,24 @@ def payback_projection(
     daytime payoff, so the intraday number dips negative and would flap the
     projection by years between dusk and the small hours. On the first day
     there is nothing banked yet, so the running total is the only sample.
+
+    The per-day rate is seasonally de-biased (see _seasonal_correction) so a
+    window of all-summer days doesn't over-project the year. Below
+    SEASONAL_CONFIDENCE_DAYS the projection is flagged provisional and the dated
+    break-even withheld - an already-recovered system still reports its
+    break-even (today), since that's a fact rather than a projection.
     None when no capital cost is configured.
     """
     if not capital_cost_gbp or capital_cost_gbp <= 0:
         return None
     completed_days = (today - started).days
     per_day = (recovered_gbp - today_gbp) / completed_days if completed_days >= 1 else recovered_gbp
+    per_day *= _seasonal_correction(started, today, winter_min, summer_max, southern_hemisphere)
+    provisional = completed_days < SEASONAL_CONFIDENCE_DAYS
     recovered_pct = recovered_gbp / capital_cost_gbp * 100.0
     if recovered_gbp >= capital_cost_gbp:
         breakeven: date | None = today
-    elif per_day <= 0:
+    elif per_day <= 0 or provisional:
         breakeven = None
     else:
         breakeven = today + timedelta(days=round((capital_cost_gbp - recovered_gbp) / per_day))
@@ -190,4 +240,5 @@ def payback_projection(
         recovered_pct=recovered_pct,
         run_rate_gbp_per_year=per_day * DAYS_PER_YEAR,
         projected_breakeven=breakeven,
+        provisional=provisional,
     )

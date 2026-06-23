@@ -1,8 +1,42 @@
 import pytest
 
-from energy_conductor.fallback import forecast_implausible, seasonal_fallback_kwh
+from energy_conductor.fallback import (
+    NORTHERN_PEAK_DAY,
+    SOUTHERN_PEAK_DAY,
+    forecast_implausible,
+    seasonal_fallback_kwh,
+    seasonal_weight,
+)
 
 from .conftest import utc
+
+
+class TestSeasonalWeight:
+    def test_northern_peak_day_returns_summer_max(self):
+        assert seasonal_weight(NORTHERN_PEAK_DAY, 0.0, 10.0) == pytest.approx(10.0, abs=0.01)
+
+    def test_northern_trough_returns_near_winter_min(self):
+        # Half a year past the peak sits at the cosine trough.
+        trough = (NORTHERN_PEAK_DAY + 183) % 365
+        assert seasonal_weight(trough, 1.0, 10.0) == pytest.approx(1.0, abs=0.05)
+
+    def test_quarter_year_from_peak_is_midpoint(self):
+        # A quarter-period from the peak the cosine crosses zero → midpoint.
+        quarter = NORTHERN_PEAK_DAY + 91
+        assert seasonal_weight(quarter, 0.0, 10.0) == pytest.approx(5.0, abs=0.2)
+
+    def test_southern_hemisphere_peaks_half_a_year_later(self):
+        north = seasonal_weight(NORTHERN_PEAK_DAY, 1.0, 10.0)
+        south = seasonal_weight(NORTHERN_PEAK_DAY, 1.0, 10.0, southern_hemisphere=True)
+        assert north == pytest.approx(10.0, abs=0.01)
+        assert south == pytest.approx(1.0, abs=0.05)
+        assert seasonal_weight(SOUTHERN_PEAK_DAY, 1.0, 10.0, southern_hemisphere=True) == (
+            pytest.approx(10.0, abs=0.01)
+        )
+
+    def test_flat_config_has_no_seasonality(self):
+        for doy in range(1, 366, 30):
+            assert seasonal_weight(doy, 5.0, 5.0) == pytest.approx(5.0)
 
 
 class TestSeasonalFallback:

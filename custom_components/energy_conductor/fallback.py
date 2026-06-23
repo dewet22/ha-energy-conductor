@@ -14,6 +14,25 @@ NORTHERN_PEAK_DAY = 172  # summer solstice (June 21, day-of-year)
 SOUTHERN_PEAK_DAY = 355  # December 21
 
 
+def seasonal_weight(
+    day_of_year: int,
+    winter_min: float,
+    summer_max: float,
+    *,
+    southern_hemisphere: bool = False,
+) -> float:
+    """Cosine season profile between `winter_min` and `summer_max`.
+
+    Peaks on the relevant solstice and troughs half a year away. Used both for
+    the solar fallback estimate and to de-bias a savings run-rate measured over
+    a window that isn't a representative slice of the year.
+    """
+    peak_day = SOUTHERN_PEAK_DAY if southern_hemisphere else NORTHERN_PEAK_DAY
+    phase = math.cos(2 * math.pi * (day_of_year - peak_day) / 365)  # -1..+1
+    normalised = (phase + 1) / 2  # 0..1
+    return winter_min + (summer_max - winter_min) * normalised
+
+
 def seasonal_fallback_kwh(
     now: datetime,
     winter_min: float,
@@ -28,11 +47,12 @@ def seasonal_fallback_kwh(
     """
     if now.tzinfo is None:
         raise ValueError("seasonal_fallback_kwh requires a timezone-aware datetime")
-    peak_day = SOUTHERN_PEAK_DAY if southern_hemisphere else NORTHERN_PEAK_DAY
-    day_of_year = now.timetuple().tm_yday
-    phase = math.cos(2 * math.pi * (day_of_year - peak_day) / 365)  # -1..+1
-    normalised = (phase + 1) / 2  # 0..1
-    return winter_min + (summer_max - winter_min) * normalised
+    return seasonal_weight(
+        now.timetuple().tm_yday,
+        winter_min,
+        summer_max,
+        southern_hemisphere=southern_hemisphere,
+    )
 
 
 def forecast_implausible(total_kwh: float, summer_max_kwh: float, *, margin: float) -> bool:
