@@ -445,7 +445,7 @@
   // ---- rendering ----------------------------------------------------------
 
   var W = 960;
-  var H = 322;
+  var H = 330; // fits the decision-rail labels at RAIL+26 (318) + descender room
   var AX = 218; // power/area baseline
   var LANE_OFFPEAK = 242; // off-peak tariff window rail
   var LANE_DISPATCH = 256; // EV dispatch rail
@@ -725,9 +725,7 @@
           }
 
           // --- energy curves -----------------------------------------------
-          // Median-smooth the consumption line (only) - the netted house-load
-          // sensor carries spurious spikes from subtracting two async sources.
-          var loadPts = smooth(downsample(this._numSeries(sources.home_load), 300), 2);
+          var loadPts = downsample(this._numSeries(sources.home_load), 300);
           var solarPts = downsample(this._numSeries(sources.solar_power), 300);
           var fTodayState = sources.solar_forecast_today ? this._state(sources.solar_forecast_today) : null;
           var fTmrState = sources.solar_forecast ? this._state(sources.solar_forecast) : null;
@@ -764,8 +762,12 @@
           // Consumption draws after solar so the dashed line stays legible on
           // top of the orange area (HA Energy style: line, not area).
           if (loadKw.length) {
+            // Median-smooth the consumption LINE only - the netted house-load
+            // sensor carries spurious spikes from subtracting two async sources.
+            // loadKw itself stays raw, so the live chip and axis max keep the
+            // real latest reading rather than a median of the last few samples.
             svg +=
-              '<path d="' + linePath(loadKw, win, yPow) +
+              '<path d="' + linePath(smooth(loadKw, 2), win, yPow) +
               '" fill="none" stroke="currentColor" stroke-width="1.25" ' +
               'stroke-dasharray="6 3" opacity="0.8"/>';
           } else if (sources.home_load) {
@@ -823,7 +825,15 @@
           drawSegments(mergeBands(dispatchBands), C_DISPATCH, LANE_DISPATCH);
 
           // --- solar-diversion rail: line width steps with diverted power ----
-          var divPts = downsample(this._numSeries(sources.diversion_power), 300);
+          // Extend to NOW: the diverter power is write-on-change, so a steady
+          // hold stops emitting and the last history sample sits short of the
+          // cursor - carry it forward (live value) so the rail reaches NOW.
+          var liveDiv = this._state(sources.diversion_power);
+          var divPts = extendToNow(
+            downsample(this._numSeries(sources.diversion_power), 300),
+            win.now,
+            liveDiv ? parseFloat(liveDiv.state) : NaN
+          );
           if (divPts.length) {
             for (var di = 0; di < divPts.length - 1; di++) {
               var st = diversionStages(divPts[di].v);
