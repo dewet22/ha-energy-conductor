@@ -96,6 +96,10 @@
     "standing_charge_electricity", "gas_cost", "standing_charge_gas",
   ];
 
+  // Flat per-day cost keys: their value is a daily rate, not a cumulative counter,
+  // so they window as rate x days (dailyRateSince), not sum-of-change.
+  var DAILY_RATE_KEYS = ["standing_charge_electricity", "standing_charge_gas"];
+
   function _netSum(values) {
     if (!values) return null;
     var hasSplit = ("import_cost_off_peak" in values) && ("import_cost_peak" in values);
@@ -153,6 +157,22 @@
       }
     });
     return hasValid ? sum : null;
+  }
+
+  // A flat daily-rate cost (standing charge) is a per-day amount, not a cumulative
+  // counter, so its day-to-day LTS `change` is ~0 and sumChangesSince underreads it
+  // to nothing. Bill it instead as `dailyRate` x the number of recorded days in the
+  // window (the same days the cumulative rows cover). The current rate is applied to
+  // every day - rate changes are infrequent enough that the approximation is pennies.
+  function dailyRateSince(rows, sinceMs, dailyRate) {
+    if (typeof dailyRate !== "number" || isNaN(dailyRate)) return null;
+    if (!rows || !rows.length) return null;
+    var days = 0;
+    rows.forEach(function (r) {
+      var startMs = typeof r.start === "number" ? r.start : Date.parse(r.start);
+      if (!isNaN(startMs) && startMs >= sinceMs) days += 1;
+    });
+    return days ? days * dailyRate : null;
   }
 
   function evComparator(monthKwh, monthCostGbp, publicRateGbpPerKwh) {
@@ -373,18 +393,26 @@
             });
         }
 
-        _mtd(entityId) {
-          // The fetch window can reach back before the month boundary (for
-          // the 7d/30d columns), so MTD must filter, not sum everything.
-          return entityId
-            ? sumChangesSince((this._stats || {})[entityId], monthStartMs())
-            : null;
+        _mtd(key, entityId) {
+          // The fetch window can reach back before the month boundary (for the
+          // 7d/30d columns), so MTD must filter to the month, not sum everything.
+          return this._windowedSum(key, entityId, monthStartMs());
         }
 
-        _since(entityId, days) {
-          return entityId
-            ? sumChangesSince((this._stats || {})[entityId], sinceDaysMs(days))
-            : null;
+        _since(key, entityId, days) {
+          return this._windowedSum(key, entityId, sinceDaysMs(days));
+        }
+
+        // Cumulative cost counters window by summing their day-to-day change; a
+        // flat daily-rate cost (standing charge) bills as its current rate x the
+        // recorded days in the window. Keyed so callers don't repeat the branch.
+        _windowedSum(key, entityId, sinceMs) {
+          if (!entityId) return null;
+          var rows = (this._stats || {})[entityId];
+          if (DAILY_RATE_KEYS.indexOf(key) !== -1) {
+            return dailyRateSince(rows, sinceMs, this._num(entityId));
+          }
+          return sumChangesSince(rows, sinceMs);
         }
 
         _render() {
@@ -405,7 +433,7 @@
           // distinguish "not configured" (absent key) from "no stats yet" (null).
           var mtdInput = {};
           ["import_cost", "import_cost_off_peak", "import_cost_peak", "standing_charge_electricity", "gas_cost", "standing_charge_gas", "export_earnings"].forEach(function (k) {
-            if (sources[k]) mtdInput[k] = self._mtd(sources[k]);
+            if (sources[k]) mtdInput[k] = self._mtd(k, sources[k]);
           });
           var mtd = mtdNet(mtdInput);
 
@@ -445,7 +473,7 @@
             rows.forEach(function (r) {
               html += row3(
                 r.label,
-                [self._num(r.entity), self._since(r.entity, 7), self._since(r.entity, 30)],
+                [self._num(r.entity), self._since(r.key, r.entity, 7), self._since(r.key, r.entity, 30)],
                 r.credit ? 1 : -1,
                 false
               );
@@ -456,7 +484,7 @@
               var winNet = function (days) {
                 var values = {};
                 NET_COST_KEYS.concat(["export_earnings"]).forEach(function (k) {
-                  if (sources[k]) values[k] = self._since(sources[k], days);
+                  if (sources[k]) values[k] = self._since(k, sources[k], days);
                 });
                 return mtdNet(values);
               };
@@ -512,7 +540,7 @@
                 '<tr style="border-top:1px solid var(--divider-color, #444);">' +
                 '<td style="padding:5px 0;font-weight:500;">Net saved ' +
                 '<span style="font-weight:400;opacity:0.55;">vs no battery / solar</span></td>' +
-                [savings, this._since(c.savings_entity, 7), this._since(c.savings_entity, 30)]
+                [savings, this._since("savings", c.savings_entity, 7), this._since("savings", c.savings_entity, 30)]
                   .map(function (v) {
                     return (
                       '<td style="text-align:right;white-space:nowrap;font-weight:500;color:' +
@@ -528,8 +556,8 @@
           // section C - EV
           if (c.ev_cost_entity) {
             var evToday = this._num(c.ev_cost_entity);
-            var evMtdCost = this._mtd(c.ev_cost_entity);
-            var evMtdKwh = this._mtd(sources.ev);
+            var evMtdCost = this._mtd("ev_cost", c.ev_cost_entity);
+            var evMtdKwh = this._mtd("ev", sources.ev);
             var publicRate = this._attr(c.ev_cost_entity, "public_charging_rate_gbp_per_kwh");
             html +=
               sectionHeader("EV", MODELLED) +
@@ -537,7 +565,7 @@
               columnHeader();
             html += row3(
               "Charged",
-              [evToday, this._since(c.ev_cost_entity, 7), this._since(c.ev_cost_entity, 30)],
+              [evToday, this._since("ev_cost", c.ev_cost_entity, 7), this._since("ev_cost", c.ev_cost_entity, 30)],
               -1,
               true
             );
@@ -631,6 +659,7 @@
     netToday: netToday,
     mtdNet: mtdNet,
     sumChangesSince: sumChangesSince,
+    dailyRateSince: dailyRateSince,
     evComparator: evComparator,
     paybackView: paybackView,
   };

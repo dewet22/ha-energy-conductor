@@ -254,3 +254,39 @@ describe("sumChangesSince", () => {
     expect(L.sumChangesSince(rows, day(7))).toBe(null);
   });
 });
+
+describe("dailyRateSince", () => {
+  const NOW = Date.parse("2026-06-12T20:00:00Z");
+  const day = (n) => NOW - n * 86400000;
+
+  test("bills a flat daily rate as rate x days-in-window (the ~0 change is ignored)", () => {
+    const rows = [
+      { start: day(10), change: 0 },
+      { start: day(5), change: 0 },
+      { start: day(2), change: 0 },
+      { start: day(1), change: 0 },
+    ];
+    expect(L.dailyRateSince(rows, day(7), 0.58)).toBeCloseTo(3 * 0.58, 10); // days 5,2,1
+    expect(L.dailyRateSince(rows, day(30), 0.58)).toBeCloseTo(4 * 0.58, 10); // all four
+  });
+
+  test("ISO-string starts count the same way", () => {
+    const rows = [
+      { start: new Date(day(2)).toISOString(), change: 0 },
+      { start: new Date(day(1)).toISOString(), change: 0 },
+    ];
+    expect(L.dailyRateSince(rows, day(7), 0.5)).toBeCloseTo(1.0, 10);
+  });
+
+  test("no rows in window, or no rate, is null", () => {
+    expect(L.dailyRateSince([{ start: day(20), change: 0 }], day(7), 0.5)).toBe(null);
+    expect(L.dailyRateSince([], day(7), 0.5)).toBe(null);
+    expect(L.dailyRateSince(undefined, day(7), 0.5)).toBe(null);
+    expect(L.dailyRateSince([{ start: day(1), change: 0 }], day(7), NaN)).toBe(null);
+    expect(L.dailyRateSince([{ start: day(1), change: 0 }], day(7), undefined)).toBe(null);
+  });
+
+  test("a zero daily rate is valid data (free standing charge), not null", () => {
+    expect(L.dailyRateSince([{ start: day(1), change: 0 }], day(7), 0)).toBe(0);
+  });
+});
