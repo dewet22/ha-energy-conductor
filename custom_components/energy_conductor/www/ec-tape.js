@@ -49,6 +49,24 @@
     return Math.max(0, Math.min(width, x));
   }
 
+  // Axis gridline ticks on round local clock hours that are multiples of stepH,
+  // within the window. The NOW cursor is drawn separately at its true position,
+  // so it floats between ticks. Previously ticks sat at now +/- k*stepH and the
+  // label dropped the minutes, so the now-tick read as a round hour (a "10:00"
+  // gridline rendered directly under a 10:52 cursor).
+  function hourTicks(win, stepH) {
+    var ticks = [];
+    var t = new Date(win.start.getTime());
+    t.setMinutes(0, 0, 0); // floor to the hour
+    while (t.getTime() < win.start.getTime() || t.getHours() % stepH !== 0) {
+      t = new Date(t.getTime() + 3600 * 1000); // advance to the next aligned hour
+    }
+    for (; t.getTime() <= win.end.getTime(); t = new Date(t.getTime() + stepH * 3600 * 1000)) {
+      ticks.push(new Date(t.getTime()));
+    }
+    return ticks;
+  }
+
   // Reject isolated samples that disagree with BOTH neighbours by more than
   // `threshold` - the inverter occasionally reports a single SoC 0 between two
   // sane reads, which would draw a plunge that never happened. A genuine fast
@@ -895,10 +913,10 @@
           svg +=
             '<line x1="0" y1="' + AX + '" x2="' + W + '" y2="' + AX +
             '" stroke="currentColor" stroke-width="1" opacity="0.25"/>';
-          for (var hOff = -12; hOff <= 12; hOff += 3) {
-            var tickT = new Date(win.now.getTime() + hOff * 3600 * 1000);
+          hourTicks(win, 3).forEach(function (tickT) {
             var tickX = timeToX(tickT, win, W);
-            var anchor = hOff === -12 ? "start" : hOff === 12 ? "end" : "middle";
+            // Clamp the anchor near the edges so a boundary label doesn't clip.
+            var anchor = tickX < 18 ? "start" : tickX > W - 18 ? "end" : "middle";
             svg +=
               '<line x1="' + tickX.toFixed(1) + '" y1="14" x2="' + tickX.toFixed(1) +
               '" y2="' + AX + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
@@ -906,7 +924,7 @@
               '<text x="' + tickX.toFixed(1) + '" y="' + (AX + 14) +
               '" font-size="11" fill="currentColor" opacity="0.55" text-anchor="' + anchor + '">' +
               ("0" + tickT.getHours()).slice(-2) + ":00</text>";
-          }
+          });
           // y-axis labels: kW on the left for the power curves, SoC % on the
           // right for the battery line.
           [maxKw, maxKw / 2].forEach(function (kw) {
@@ -1026,6 +1044,7 @@
   var API = {
     tapeWindow: tapeWindow,
     timeToX: timeToX,
+    hourTicks: hourTicks,
     rejectSocSpikes: rejectSocSpikes,
     valueChanges: valueChanges,
     parseDispatches: parseDispatches,
