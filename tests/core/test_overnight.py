@@ -182,6 +182,25 @@ class TestOvernightAlgorithm:
         decision = _plan(state)
         assert "Morning gap 1.5h" in decision.reason  # not 0.0h from today's past slots
 
+    def test_planner_fallback_uses_default_gap_even_with_a_healthy_today_projection(self):
+        # Codex review (#41): if the Tomorrow sensor falls back (no slots) but the
+        # Today sensor is healthy, the projection is today-only — all past at the
+        # evening boundary. The missing-forecast default (4h) must still apply, not
+        # the 6h cap; a Tomorrow outage must not get MORE aggressive because Today
+        # is up. (The "do we have a forecast?" guard stays on the planner forecast.)
+        today_only = a_forecast_with_slots(
+            first_slot_at=utc(2026, 6, 1, 12, 0), slot_count=8, kwh_per_slot=2.0
+        )
+        state = _state(
+            solar_forecast=a_forecast_with_fallback(kwh=3.0),  # Tomorrow down → fallback
+            projection_forecast=today_only,
+        )
+        decision = _plan(state)
+        # missing forecast → gap = MISSING_FORECAST_GAP_H (4) * 400 = 1.6 kWh
+        # deficit = 10 - 3 = 7 → usable 8.6 kWh = 86%; target = 10 + 86 = 96% (not 100)
+        assert decision.value == 96
+        assert "fallback" in decision.reason.lower()
+
     def test_missing_forecast_uses_default_gap_and_fallback(self):
         state = _state(solar_forecast=a_forecast_with_fallback(kwh=3.0))
         decision = _plan(state)
