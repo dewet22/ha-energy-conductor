@@ -152,6 +152,11 @@ class SiteState:
     daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
     hot_water: HotWaterState | None = None  # None when the diverter isn't configured
     grid: GridState | None = None  # None when the grid meter sensors aren't configured
+    # Forecast for the mission-tape SoC projection: spans the projection window
+    # (today-remaining + tomorrow), unlike `solar_forecast` which is tomorrow-only
+    # for the overnight planner. None falls back to `solar_forecast`. See
+    # overnight.project_soc / adapter._build_projection_forecast.
+    projection_forecast: SolarForecast | None = None
 
     def __post_init__(self) -> None:
         _require_aware("SiteState.now", self.now)

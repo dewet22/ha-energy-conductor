@@ -40,6 +40,7 @@ from .const import (
     CONF_EV_POWER_SENSOR,
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_GRID_EXPORT_SENSOR,
     CONF_GRID_IMPORT_SENSOR,
@@ -288,6 +289,9 @@ class Adapter:
 
         # Solar forecast
         solar_forecast = await self._build_forecast(now)
+        # Forecast for the SoC projection — today-remaining + tomorrow (the planner
+        # forecast above is tomorrow-only). None falls back to solar_forecast.
+        projection_forecast = self._build_projection_forecast(now, solar_forecast)
 
         # Baseline load — learned from the home-load sensor's idle-floor history.
         baseline_load_w, baseline_source, baseline_qualifying_buckets = self._compute_baseline(now)
@@ -317,6 +321,7 @@ class Adapter:
             daily_kwh_target_qualifying_days=daily_target_qualifying_days,
             hot_water=hot_water,
             grid=grid,
+            projection_forecast=projection_forecast,
         )
 
     def _battery_power_w(self) -> float | None:
@@ -471,6 +476,31 @@ class Adapter:
         fallback_kwh, fallback_source = await self._compute_fallback(now)
         return SolarForecast(slots=[], fallback_kwh=fallback_kwh, fallback_source=fallback_source)
 
+    def _build_projection_forecast(
+        self, now: datetime, planner_forecast: SolarForecast
+    ) -> SolarForecast | None:
+        """A forecast spanning the SoC-projection window (today-remaining + tomorrow).
+
+        The planner forecast is tomorrow-only by design, but the mission-tape SoC
+        projection runs forward over today's daylight — so without today's slots the
+        midday sun is invisible and a full battery is shown bleeding down at baseline.
+        Builds today's slots from the optional "Forecast Today" Solcast sensor and
+        concatenates the planner's tomorrow slots. Returns None (the projection then
+        falls back to the planner forecast) when no today sensor is configured or it
+        yields nothing — preserving the prior behaviour.
+        """
+        if self.config.get(CONF_FORECAST_SOURCE) != FORECAST_SOURCE_SOLCAST:
+            return None
+        today_sensor = self.config.get(CONF_FORECAST_SOLCAST_TODAY_SENSOR)
+        if not today_sensor:
+            return None
+        today = dt_util.as_local(now).date()
+        today_slots = self._slots_from_solcast(today_sensor, now, target_date=today)
+        if not today_slots:
+            return None
+        combined = today_slots + list(planner_forecast.slots)
+        return SolarForecast(slots=combined, fallback_kwh=None, fallback_source=None)
+
     def _checked_forecast(self, forecast: SolarForecast) -> SolarForecast:
         """Log a warning if the forecast total is physically implausible.
 
@@ -493,7 +523,9 @@ class Adapter:
             )
         return forecast
 
-    def _slots_from_solcast(self, sensor_id: str, now: datetime) -> list[ForecastSlot]:
+    def _slots_from_solcast(
+        self, sensor_id: str, now: datetime, target_date=None
+    ) -> list[ForecastSlot]:
         state = self.hass.states.get(sensor_id)
         if state is None:
             return []
@@ -501,8 +533,9 @@ class Adapter:
         # [{'period_start': datetime(2026-06-01, tzinfo=Europe/London), 'pv_estimate': 0.5}, ...]
         # period_start is a timezone-aware datetime in the HA instance's local timezone.
         raw = state.attributes.get("detailedForecast") or []
-        # Determine tomorrow in local time for the date filter below.
-        tomorrow_local = dt_util.as_local(now + timedelta(days=1)).date()
+        # Keep only the requested local date's slots (defaults to tomorrow, for the
+        # overnight planner; the SoC projection passes today to see today's sun).
+        keep_date = target_date or dt_util.as_local(now + timedelta(days=1)).date()
         slots: list[ForecastSlot] = []
         for item in raw:
             try:
@@ -519,11 +552,11 @@ class Adapter:
                 # slot raises ValueError in ForecastSlot.__post_init__ and is silently
                 # dropped by the except block, leaving the forecast always empty.
                 start_utc = dt_util.as_utc(start)
-                # Keep only tomorrow's local-date slots. This filters out today's
-                # past/current slots (which inflate the planning total) and multi-day
-                # lookahead — defence-in-depth if the user configures a "forecast today"
-                # or aggregate sensor instead of the dedicated "forecast tomorrow" sensor.
-                if dt_util.as_local(start_utc).date() != tomorrow_local:
+                # Keep only the target local-date's slots. For the planner (tomorrow)
+                # this filters out today's past/current slots (which inflate the
+                # planning total) and multi-day lookahead — defence-in-depth if the
+                # user points it at a "forecast today" or aggregate sensor.
+                if dt_util.as_local(start_utc).date() != keep_date:
                     continue
                 # pv_estimate is AVERAGE POWER (kW) over the 30-min slot, NOT energy.
                 # Energy for the slot = power * slot duration (0.5h).
