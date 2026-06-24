@@ -361,15 +361,20 @@ describe("diversionStages", () => {
     expect(T.diversionStages(NaN)).toBe(0);
   });
 
-  test("power buckets into 500 W stages", () => {
-    expect(T.diversionStages(1)).toBe(1);
+  test("sub-500 W (diverter-CT noise / standby) is the zero bucket - no line", () => {
+    expect(T.diversionStages(1)).toBe(0);
+    expect(T.diversionStages(300)).toBe(0);
+    expect(T.diversionStages(499)).toBe(0);
+  });
+
+  test("real diversion buckets into 500 W stages (stage N = at least N*500 W)", () => {
     expect(T.diversionStages(500)).toBe(1);
-    expect(T.diversionStages(501)).toBe(2);
+    expect(T.diversionStages(999)).toBe(1);
+    expect(T.diversionStages(1000)).toBe(2);
     expect(T.diversionStages(2000)).toBe(4);
   });
 
-  test("caps at six stages for the 2.7-3 kW immersion", () => {
-    expect(T.diversionStages(2700)).toBe(6);
+  test("caps at six stages for full immersion power", () => {
     expect(T.diversionStages(3000)).toBe(6);
     expect(T.diversionStages(5000)).toBe(6);
   });
