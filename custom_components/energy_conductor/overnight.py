@@ -31,21 +31,30 @@ def _morning_gap_hours(state: SiteState) -> float:
     would inflate the gap to the cap and substantially over-provision the written
     target. Falls back to the sensor-derived end when no configured boundary exists.
 
-    Uses the projection forecast (today-remaining + tomorrow) when available so the
-    pre-dawn boundary sees TODAY's imminent sunrise. The planner's solar_forecast is
-    tomorrow-only; after midnight the boundary still points at today's ~05:30 while
-    that forecast's first slot is ~24h out, which clamps the gap to the cap and
-    inflates the target every night between midnight and dawn. The first-slot search
-    is anchored at/after the boundary so today's already-past daytime slots (present
-    in the projection) don't collapse the gap. Falls back to solar_forecast when no
-    today forecast is configured.
+    The first-slot search uses the projection forecast (today-remaining + tomorrow)
+    when available so the pre-dawn boundary sees TODAY's imminent sunrise. The
+    planner's solar_forecast is tomorrow-only; after midnight the boundary still
+    points at today's ~05:30 while that forecast's first slot is ~24h out, which
+    clamps the gap to the cap and inflates the target every night between midnight
+    and dawn. The search is anchored at/after the boundary so today's already-past
+    daytime slots (present in the projection) don't collapse the gap.
+
+    The "do we have a forecast at all?" guard stays anchored to the planner's
+    solar_forecast (tomorrow): a Tomorrow-sensor outage must still fall back to the
+    default gap even when the optional Today sensor is healthy — otherwise a
+    today-only projection's past slots fall through to the 6h cap and a transient
+    outage gets MORE aggressive (Codex review, #41).
     """
-    forecast = state.projection_forecast or state.solar_forecast
-    if not forecast.slots:
+    if not state.solar_forecast.slots:
         return float(MISSING_FORECAST_GAP_H)
     boundary = state.tariff.overnight_window_end or state.tariff.off_peak_window_end
     if boundary is None:
         return float(MISSING_FORECAST_GAP_H)
+    forecast = (
+        state.projection_forecast
+        if state.projection_forecast and state.projection_forecast.slots
+        else state.solar_forecast
+    )
     first = _first_meaningful_slot_at_or_after(forecast, boundary)
     if first is None:
         return float(MORNING_GAP_CAP_H)
