@@ -132,6 +132,56 @@ class TestOvernightAlgorithm:
         # gap 1.5h * 400W = 0.6 kWh < 1.5 kWh floor → usable 15% → target 10 + 15
         assert decision.value == 25
 
+    def test_predawn_gap_sees_todays_sunrise_via_projection_forecast(self):
+        # Pre-dawn (02:00): the overnight boundary is TODAY's 05:30, but the planner's
+        # solar_forecast is tomorrow-only — so without today's slots the first solar
+        # looks ~24h out and the gap clamps to the 6h cap, inflating the target (the
+        # observed 1-6am jump). The projection_forecast (today+tomorrow) lets the gap
+        # see today's imminent sunrise at 06:00, 0.5h after the boundary.
+        tomorrow_only = a_forecast_with_slots(
+            first_slot_at=utc(2026, 6, 3, 6, 0), slot_count=8, kwh_per_slot=2.0
+        )
+        today_plus = a_forecast_with_slots(
+            first_slot_at=utc(2026, 6, 2, 6, 0), slot_count=8, kwh_per_slot=2.0
+        )
+        state = _state(
+            now=utc(2026, 6, 2, 2, 0),
+            solar_forecast=tomorrow_only,
+            projection_forecast=today_plus,
+            tariff=a_tariff(
+                off_peak_now=True,
+                off_peak_window_end=utc(2026, 6, 2, 5, 30),
+                overnight_window_end=utc(2026, 6, 2, 5, 30),  # TODAY 05:30
+            ),
+        )
+        decision = _plan(state)
+        assert "Morning gap 0.5h" in decision.reason  # not the 6.0h cap
+        # gap 0.5h * 400W = 0.2 kWh < 1.5 floor → usable 15% → target 10 + 15
+        assert decision.value == 25
+
+    def test_morning_gap_skips_solar_before_the_boundary(self):
+        # The projection forecast spans today+tomorrow, so in the evening today's
+        # already-past daytime slots precede TOMORROW's boundary. The gap must measure
+        # to tomorrow's sunrise (1.5h), not collapse to ~0 against today's past solar.
+        tomorrow_only = a_forecast_with_slots(
+            first_slot_at=utc(2026, 6, 2, 7, 0), slot_count=8, kwh_per_slot=2.0
+        )
+        today_plus_tomorrow = SolarForecast(
+            slots=[
+                ForecastSlot(start=utc(2026, 6, 1, 12, 0), energy_kwh=2.0),  # today, past
+                ForecastSlot(start=utc(2026, 6, 2, 7, 0), energy_kwh=2.0),  # tomorrow sunrise
+                ForecastSlot(start=utc(2026, 6, 2, 7, 30), energy_kwh=2.0),
+            ],
+            fallback_kwh=None,
+            fallback_source=None,
+        )
+        state = _state(  # default now=21:00, boundary tomorrow 05:30
+            solar_forecast=tomorrow_only,
+            projection_forecast=today_plus_tomorrow,
+        )
+        decision = _plan(state)
+        assert "Morning gap 1.5h" in decision.reason  # not 0.0h from today's past slots
+
     def test_missing_forecast_uses_default_gap_and_fallback(self):
         state = _state(solar_forecast=a_forecast_with_fallback(kwh=3.0))
         decision = _plan(state)
