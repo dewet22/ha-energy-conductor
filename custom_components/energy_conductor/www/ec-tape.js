@@ -62,10 +62,14 @@
     var ticks = [];
     var t = new Date(win.start.getTime());
     t.setMinutes(0, 0, 0); // floor to the hour
+    // Advance by setting the LOCAL hour, not by adding elapsed ms: a 24h window
+    // can straddle a DST boundary, and elapsed-ms stepping shifts the wallclock
+    // hour by the offset so ticks stop being multiples of stepH (a 25h fall-back
+    // day yields 00:00, 02:00, 05:00... instead of 00:00, 03:00, 06:00...).
     while (t.getTime() < win.start.getTime() || t.getHours() % stepH !== 0) {
-      t = new Date(t.getTime() + 3600 * 1000); // advance to the next aligned hour
+      t.setHours(t.getHours() + 1); // snap up to the next aligned local hour
     }
-    for (; t.getTime() <= win.end.getTime(); t = new Date(t.getTime() + stepH * 3600 * 1000)) {
+    for (; t.getTime() <= win.end.getTime(); t.setHours(t.getHours() + stepH)) {
       ticks.push(new Date(t.getTime()));
     }
     return ticks;

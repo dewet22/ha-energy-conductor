@@ -58,6 +58,28 @@ describe("hourTicks", () => {
     expect(T.hourTicks(win, -3)).toEqual([]);
     expect(T.hourTicks(win, NaN)).toEqual([]);
   });
+
+  // vitest.config pins TZ=Europe/London so these boundaries are real. Stepping by
+  // elapsed ms (the bug) drifts the wallclock hour across the transition, e.g. a
+  // 25h fall-back day yields a 02:00 / 05:00 tick — not multiples of 3.
+  // now = local midnight puts the transition mid-span where elapsed-ms stepping
+  // visibly drifts (verified: OLD yields 04:00/07:00 in spring, 02:00/05:00 in
+  // fall-back; NEW holds 03:00/06:00). A divergent fixture makes this a real
+  // regression test, not one that passes either way.
+  test.each([
+    ["spring-forward", new Date(2026, 2, 29, 0, 0)], // 29 Mar 2026, clocks 01:00->02:00
+    ["fall-back", new Date(2026, 9, 25, 0, 0)], // 25 Oct 2026, clocks 02:00->01:00
+  ])("ticks stay on round local hours across the %s DST boundary", (_label, now) => {
+    const win = T.tapeWindow(now, 12);
+    const ticks = T.hourTicks(win, 3);
+    expect(ticks.length).toBeGreaterThan(0);
+    ticks.forEach((t) => {
+      expect(t.getMinutes()).toBe(0);
+      expect(t.getHours() % 3).toBe(0);
+      expect(t.getTime()).toBeGreaterThanOrEqual(win.start.getTime());
+      expect(t.getTime()).toBeLessThanOrEqual(win.end.getTime());
+    });
+  });
 });
 
 describe("rejectSocSpikes", () => {
