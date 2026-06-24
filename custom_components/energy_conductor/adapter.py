@@ -535,7 +535,9 @@ class Adapter:
         raw = state.attributes.get("detailedForecast") or []
         # Keep only the requested local date's slots (defaults to tomorrow, for the
         # overnight planner; the SoC projection passes today to see today's sun).
-        keep_date = target_date or dt_util.as_local(now + timedelta(days=1)).date()
+        # Take the local date first, then add a day — adding a UTC timedelta before
+        # converting can land on the wrong local date across a DST transition.
+        keep_date = target_date or dt_util.as_local(now).date() + timedelta(days=1)
         slots: list[ForecastSlot] = []
         for item in raw:
             try:
