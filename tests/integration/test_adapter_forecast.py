@@ -22,12 +22,14 @@ from custom_components.energy_conductor.adapter import Adapter
 from custom_components.energy_conductor.const import (
     CONF_FORECAST_DAILY_SENSOR,
     CONF_FORECAST_SOLCAST_SENSOR,
+    CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_FORECAST_SOURCE,
     FORECAST_SOURCE_DAILY,
     FORECAST_SOURCE_SOLCAST,
 )
 
 SOLCAST = "sensor.solcast_forecast_tomorrow"
+SOLCAST_TODAY = "sensor.solcast_forecast_today"
 DAILY = "sensor.solar_today"
 
 BST = timezone(timedelta(hours=1), "BST")  # UTC+1, as Solcast returns for UK installs
@@ -161,6 +163,59 @@ async def test_solcast_non_finite_slots_skipped(hass, mock_config_entry, now_utc
 
     assert len(slots) == 2
     assert sum(s.energy_kwh for s in slots) == pytest.approx(1.5)
+
+
+async def test_projection_forecast_combines_today_and_tomorrow(hass, mock_config_entry, now_utc):
+    """The SoC-projection forecast carries today's slots, which the planner drops.
+
+    The planner forecast is tomorrow-only; the projection adds today's slots from the
+    'Forecast Today' sensor so a daytime projection sees today's sun.
+    """
+    today_bst = datetime(2026, 6, 1, 13, 0, tzinfo=BST)  # today (planner drops this)
+    tomorrow_bst = datetime(2026, 6, 2, 8, 0, tzinfo=BST)  # tomorrow
+    hass.states.async_set(
+        SOLCAST_TODAY, "2.0", {"detailedForecast": [_solcast_slot(today_bst, 4.0)]}
+    )
+    hass.states.async_set(SOLCAST, "0.75", {"detailedForecast": [_solcast_slot(tomorrow_bst, 1.5)]})
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {
+            CONF_FORECAST_SOURCE: FORECAST_SOURCE_SOLCAST,
+            CONF_FORECAST_SOLCAST_SENSOR: SOLCAST,
+            CONF_FORECAST_SOLCAST_TODAY_SENSOR: SOLCAST_TODAY,
+        },
+    )
+
+    planner = await adapter._build_forecast(now_utc)  # tomorrow-only
+    projection = adapter._build_projection_forecast(now_utc, planner)
+
+    assert projection is not None
+    starts = {s.start for s in projection.slots}
+    # today 13:00 BST = 12:00 UTC (absent from the planner) plus tomorrow 08:00 BST = 07:00 UTC.
+    assert datetime(2026, 6, 1, 12, 0, tzinfo=UTC) in starts
+    assert datetime(2026, 6, 2, 7, 0, tzinfo=UTC) in starts
+    assert len(projection.slots) == 2
+
+
+async def test_projection_forecast_none_without_today_sensor(hass, mock_config_entry, now_utc):
+    """No 'Forecast Today' sensor: projection_forecast is None and the SoC projection
+    falls back to the planner forecast (prior behaviour preserved)."""
+    tomorrow_bst = datetime(2026, 6, 2, 8, 0, tzinfo=BST)
+    hass.states.async_set(SOLCAST, "0.75", {"detailedForecast": [_solcast_slot(tomorrow_bst, 1.5)]})
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {
+            CONF_FORECAST_SOURCE: FORECAST_SOURCE_SOLCAST,
+            CONF_FORECAST_SOLCAST_SENSOR: SOLCAST,
+        },
+    )
+
+    planner = await adapter._build_forecast(now_utc)
+    assert adapter._build_projection_forecast(now_utc, planner) is None
 
 
 async def test_daily_sensor_uses_fallback_kwh_not_synthetic_slot(hass, mock_config_entry, now_utc):

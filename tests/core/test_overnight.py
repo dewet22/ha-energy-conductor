@@ -388,6 +388,57 @@ class TestProjectSoc:
         assert len(points) == 2
         assert points[1][1] == pytest.approx(68.0, abs=0.1)
 
+    def test_daytime_projection_uses_today_forecast_not_just_tomorrow(self):
+        # The planner forecast (solar_forecast) carries only TOMORROW's slots, but
+        # the projection runs over TODAY's daylight. Without a today-aware forecast
+        # the midday sun is invisible and a full battery bleeds down at baseline.
+        # projection_forecast carries today's slots so a sunny midday holds at 100%.
+        now = utc(2026, 6, 24, 12, 0)
+        tomorrow_only = SolarForecast(
+            slots=[ForecastSlot(start=now + timedelta(days=1), energy_kwh=2.0)],
+            fallback_kwh=None,
+            fallback_source=None,
+        )
+        today = SolarForecast(
+            slots=[
+                ForecastSlot(start=now + timedelta(minutes=30 * i), energy_kwh=2.0)
+                for i in range(4)
+            ],
+            fallback_kwh=None,
+            fallback_source=None,
+        )
+        state = a_site_state(
+            now=now,
+            battery=a_battery(soc_percent=100.0, capacity_kwh=10.0, reserve_percent=10.0),
+            baseline_load_w=500.0,
+            solar_forecast=tomorrow_only,
+            projection_forecast=today,
+            tariff=a_tariff(),  # midday, not off-peak
+        )
+        points = project_soc(state, target_percent=80, hours=2, step_minutes=30)
+        # 4 kW PV - 0.5 kW load = +3.5 kW net; already full, so it holds at 100%.
+        assert all(p[1] == pytest.approx(100.0) for p in points)
+
+    def test_projection_falls_back_to_planner_forecast_without_a_today_forecast(self):
+        # No projection_forecast (today sensor unconfigured): behaviour is unchanged
+        # - the projection reads the planner's solar_forecast slots as before.
+        now = utc(2026, 6, 24, 12, 0)
+        planner = SolarForecast(
+            slots=[ForecastSlot(start=now, energy_kwh=2.0)],
+            fallback_kwh=None,
+            fallback_source=None,
+        )
+        state = a_site_state(
+            now=now,
+            battery=a_battery(soc_percent=50.0, capacity_kwh=10.0, reserve_percent=10.0),
+            baseline_load_w=400.0,
+            solar_forecast=planner,
+            tariff=a_tariff(),
+        )
+        points = project_soc(state, target_percent=80, hours=0.5, step_minutes=30)
+        # 4 kW - 0.4 kW = 3.6 kW net over 0.5h on a 10 kWh pack -> +18%.
+        assert points[1][1] == pytest.approx(68.0, abs=0.1)
+
     def test_projection_charges_through_configured_dawn_not_dispatch_end(self):
         # Regression: off_peak_window_end can be a short Intelligent dispatch slot
         # (e.g. ending 22:30), while the overnight plan targets overnight_window_end
