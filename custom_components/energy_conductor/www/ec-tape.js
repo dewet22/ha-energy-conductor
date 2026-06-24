@@ -122,11 +122,13 @@
     return bands;
   }
 
-  // Solar-diversion power (W) -> quantised stage 0..6, one per ~500 W, capping
-  // at the immersion's ~2.7-3 kW. Drives the diversion rail's line width.
+  // Solar-diversion power (W) -> quantised stage 0..6, one per 500 W. Stage N
+  // means at least N*500 W genuinely diverted; sub-500 W readings are diverter-CT
+  // noise / standby (the Eddi flickers tens of watts when idle) and floor to
+  // stage 0 (no line), so the rail zeroes out overnight. Caps at 6 (>=3 kW).
   function diversionStages(w) {
     if (!(w > 0)) return 0; // also rejects NaN
-    return Math.min(6, Math.ceil(w / 500));
+    return Math.min(6, Math.floor(w / 500));
   }
 
   // Rolling-median smoother for the consumption line. Netting two
