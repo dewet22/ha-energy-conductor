@@ -51,6 +51,13 @@ describe("hourTicks", () => {
       expect(ticks[i].getTime() - ticks[i - 1].getTime()).toBe(3 * H);
     }
   });
+
+  test("a non-positive or non-finite step yields no ticks (no infinite loop)", () => {
+    const win = T.tapeWindow(new Date(2026, 5, 24, 10, 0), 12);
+    expect(T.hourTicks(win, 0)).toEqual([]);
+    expect(T.hourTicks(win, -3)).toEqual([]);
+    expect(T.hourTicks(win, NaN)).toEqual([]);
+  });
 });
 
 describe("rejectSocSpikes", () => {

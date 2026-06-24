@@ -55,6 +55,10 @@
   // label dropped the minutes, so the now-tick read as a round hour (a "10:00"
   // gridline rendered directly under a 10:52 cursor).
   function hourTicks(win, stepH) {
+    // Guard a bad step: a non-positive or NaN stepH would never satisfy the
+    // alignment test (so the while loop never terminates) and never advance the
+    // for loop - either freezes the tab. Callers pass a constant 3 today.
+    if (typeof stepH !== "number" || isNaN(stepH) || stepH <= 0) return [];
     var ticks = [];
     var t = new Date(win.start.getTime());
     t.setMinutes(0, 0, 0); // floor to the hour
