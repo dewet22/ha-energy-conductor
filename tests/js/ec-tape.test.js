@@ -27,6 +27,61 @@ describe("window arithmetic", () => {
   });
 });
 
+describe("hourTicks", () => {
+  test("ticks land on round clock hours, never on a fractional NOW", () => {
+    const now = new Date(2026, 5, 24, 10, 52); // 10:52 — deliberately off the hour
+    const win = T.tapeWindow(now, 12);
+    const ticks = T.hourTicks(win, 3);
+    expect(ticks.length).toBeGreaterThan(0);
+    ticks.forEach((t) => {
+      expect(t.getMinutes()).toBe(0);
+      expect(t.getSeconds()).toBe(0);
+      expect(t.getHours() % 3).toBe(0); // multiples of the step
+      expect(t.getTime()).toBeGreaterThanOrEqual(win.start.getTime());
+      expect(t.getTime()).toBeLessThanOrEqual(win.end.getTime());
+    });
+    // The cursor is at 10:52; no gridline snaps onto it.
+    expect(ticks.some((t) => t.getTime() === now.getTime())).toBe(false);
+  });
+
+  test("ticks step by the requested number of hours", () => {
+    const win = T.tapeWindow(new Date(2026, 5, 24, 10, 0), 12);
+    const ticks = T.hourTicks(win, 3);
+    for (let i = 1; i < ticks.length; i++) {
+      expect(ticks[i].getTime() - ticks[i - 1].getTime()).toBe(3 * H);
+    }
+  });
+
+  test("a non-positive or non-finite step yields no ticks (no infinite loop)", () => {
+    const win = T.tapeWindow(new Date(2026, 5, 24, 10, 0), 12);
+    expect(T.hourTicks(win, 0)).toEqual([]);
+    expect(T.hourTicks(win, -3)).toEqual([]);
+    expect(T.hourTicks(win, NaN)).toEqual([]);
+  });
+
+  // vitest.config pins TZ=Europe/London so these boundaries are real. Stepping by
+  // elapsed ms (the bug) drifts the wallclock hour across the transition, e.g. a
+  // 25h fall-back day yields a 02:00 / 05:00 tick — not multiples of 3.
+  // now = local midnight puts the transition mid-span where elapsed-ms stepping
+  // visibly drifts (verified: OLD yields 04:00/07:00 in spring, 02:00/05:00 in
+  // fall-back; NEW holds 03:00/06:00). A divergent fixture makes this a real
+  // regression test, not one that passes either way.
+  test.each([
+    ["spring-forward", new Date(2026, 2, 29, 0, 0)], // 29 Mar 2026, clocks 01:00->02:00
+    ["fall-back", new Date(2026, 9, 25, 0, 0)], // 25 Oct 2026, clocks 02:00->01:00
+  ])("ticks stay on round local hours across the %s DST boundary", (_label, now) => {
+    const win = T.tapeWindow(now, 12);
+    const ticks = T.hourTicks(win, 3);
+    expect(ticks.length).toBeGreaterThan(0);
+    ticks.forEach((t) => {
+      expect(t.getMinutes()).toBe(0);
+      expect(t.getHours() % 3).toBe(0);
+      expect(t.getTime()).toBeGreaterThanOrEqual(win.start.getTime());
+      expect(t.getTime()).toBeLessThanOrEqual(win.end.getTime());
+    });
+  });
+});
+
 describe("rejectSocSpikes", () => {
   test("drops an isolated sample disagreeing with both neighbours by > threshold", () => {
     const pts = [
