@@ -184,6 +184,7 @@ _TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
     ("grid_import_w", CONF_GRID_IMPORT_SENSOR),
     ("grid_export_w", CONF_GRID_EXPORT_SENSOR),
     ("diversion_power", CONF_HOTWATER_POWER_SENSOR),
+    ("ev_power", CONF_EV_POWER_SENSOR),
 )
 
 

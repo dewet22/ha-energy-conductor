@@ -435,6 +435,28 @@ describe("diversionStages", () => {
   });
 });
 
+describe("inBands", () => {
+  const b = (s, e) => ({ start: at(s), end: at(e) });
+
+  test("true inside any band, false in the gaps and outside", () => {
+    const bands = [b(-4, -2), b(1, 3)];
+    expect(T.inBands(at(-3), bands)).toBe(true);
+    expect(T.inBands(at(2), bands)).toBe(true);
+    expect(T.inBands(at(0), bands)).toBe(false);
+    expect(T.inBands(at(5), bands)).toBe(false);
+  });
+
+  test("start inclusive, end exclusive", () => {
+    const bands = [b(-2, -1)];
+    expect(T.inBands(at(-2), bands)).toBe(true);
+    expect(T.inBands(at(-1), bands)).toBe(false);
+  });
+
+  test("no bands is always false", () => {
+    expect(T.inBands(at(0), [])).toBe(false);
+  });
+});
+
 describe("regimeBands", () => {
   const b = (s, e) => ({ start: at(s), end: at(e) });
 
