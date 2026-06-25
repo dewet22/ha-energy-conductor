@@ -928,6 +928,11 @@
             svg +=
               '<line x1="' + tickX.toFixed(1) + '" y1="14" x2="' + tickX.toFixed(1) +
               '" y2="' + AX + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
+            // Continue the gridline through the event-rail zone (below the hour
+            // label) so rail events line up with the time axis temporally.
+            svg +=
+              '<line x1="' + tickX.toFixed(1) + '" y1="' + (AX + 22) + '" x2="' + tickX.toFixed(1) +
+              '" y2="' + (RAIL + 6) + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
             svg +=
               '<text x="' + tickX.toFixed(1) + '" y="' + (AX + 14) +
               '" font-size="11" fill="currentColor" opacity="0.55" text-anchor="' + anchor + '">' +
