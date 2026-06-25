@@ -455,6 +455,33 @@ describe("inBands", () => {
   test("no bands is always false", () => {
     expect(T.inBands(at(0), [])).toBe(false);
   });
+
+  test("null or invalid inputs return false safely", () => {
+    expect(T.inBands(null, [])).toBe(false);
+    expect(T.inBands(at(0), null)).toBe(false);
+    expect(T.inBands(at(0), [null])).toBe(false);
+  });
+});
+
+describe("EV interval spanning dispatch boundary splits into grid and solar parts", () => {
+  const b = (s, e) => ({ start: at(s), end: at(e) });
+
+  test("interval straddling a dispatch band is correctly partitioned", () => {
+    const dispatch = [b(-2, 1)]; // dispatch window from -2h to +1h
+    const interval = [b(-3, 2)]; // EV interval spans -3h to +2h
+    const gridParts = T.intersectBands(interval, dispatch);
+    const solarParts = T.subtractBands(interval, dispatch);
+    // Grid: only the overlap [-2h, +1h)
+    expect(gridParts).toHaveLength(1);
+    expect(gridParts[0].start.getTime()).toBe(at(-2).getTime());
+    expect(gridParts[0].end.getTime()).toBe(at(1).getTime());
+    // Solar: the two flanks [-3h, -2h) and [+1h, +2h)
+    expect(solarParts).toHaveLength(2);
+    expect(solarParts[0].start.getTime()).toBe(at(-3).getTime());
+    expect(solarParts[0].end.getTime()).toBe(at(-2).getTime());
+    expect(solarParts[1].start.getTime()).toBe(at(1).getTime());
+    expect(solarParts[1].end.getTime()).toBe(at(2).getTime());
+  });
 });
 
 describe("regimeBands", () => {

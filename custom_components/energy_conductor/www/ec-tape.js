@@ -161,9 +161,13 @@
   // exclusive). Used to attribute EV charge power to a regime: inside a dispatch
   // window it's grid charging, outside it's solar diversion.
   function inBands(t, bands) {
+    if (!t || typeof t.getTime !== "function" || !Array.isArray(bands)) return false;
     var ms = t.getTime();
     for (var i = 0; i < bands.length; i++) {
-      if (ms >= bands[i].start.getTime() && ms < bands[i].end.getTime()) return true;
+      var b = bands[i];
+      if (b && b.start && b.end) {
+        if (ms >= b.start.getTime() && ms < b.end.getTime()) return true;
+      }
     }
     return false;
   }
@@ -870,7 +874,8 @@
           // Stacked lanes (no overlap): off-peak, then EV dispatch, then the
           // diversion rail below it.
           drawSegments(mergeBands(bands), C_GRID, LANE_OFFPEAK);
-          drawSegments(mergeBands(dispatchBands), C_DISPATCH, LANE_DISPATCH);
+          var mergedDispatch = mergeBands(dispatchBands);
+          drawSegments(mergedDispatch, C_DISPATCH, LANE_DISPATCH);
 
           // --- solar-diversion rail: line width steps with diverted power ----
           // Extend to NOW: the diverter power is write-on-change, so a steady
@@ -914,16 +919,23 @@
           for (var evi = 0; evi < evPts.length - 1; evi++) {
             var est = diversionStages(evPts[evi].v);
             if (est <= 0) continue;
-            var evx0 = timeToX(evPts[evi].t, win, W);
-            var evx1 = timeToX(evPts[evi + 1].t, win, W);
-            if (evx1 <= evx0) continue;
-            var evGrid = inBands(evPts[evi].t, dispatchBands);
-            var evLane = evGrid ? LANE_DISPATCH : LANE_DIVERSION;
-            var evColor = evGrid ? C_DISPATCH : C_EV_SOLAR;
-            svg +=
-              '<line x1="' + evx0.toFixed(1) + '" y1="' + evLane + '" x2="' + evx1.toFixed(1) +
-              '" y2="' + evLane + '" stroke="' + evColor + '" stroke-width="' + est * 2 +
-              '" opacity="0.7"/>';
+            var ivBand = [{ start: evPts[evi].t, end: evPts[evi + 1].t }];
+            var evSegs = intersectBands(ivBand, mergedDispatch).map(function (b) {
+              return { b: b, grid: true };
+            }).concat(subtractBands(ivBand, mergedDispatch).map(function (b) {
+              return { b: b, grid: false };
+            }));
+            for (var pi = 0; pi < evSegs.length; pi++) {
+              var px0 = timeToX(evSegs[pi].b.start, win, W);
+              var px1 = timeToX(evSegs[pi].b.end, win, W);
+              if (isNaN(px0) || isNaN(px1) || px1 <= px0) continue;
+              var evLane = evSegs[pi].grid ? LANE_DISPATCH : LANE_DIVERSION;
+              var evColor = evSegs[pi].grid ? C_DISPATCH : C_EV_SOLAR;
+              svg +=
+                '<line x1="' + px0.toFixed(1) + '" y1="' + evLane + '" x2="' + px1.toFixed(1) +
+                '" y2="' + evLane + '" stroke="' + evColor + '" stroke-width="' + est * 2 +
+                '" opacity="0.7"/>';
+            }
           }
 
           // --- decision rail --------------------------------------------------
