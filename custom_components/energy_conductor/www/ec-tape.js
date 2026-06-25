@@ -157,6 +157,21 @@
     return Math.min(6, Math.floor(w / 500));
   }
 
+  // Whether time `t` falls inside any [start, end) band (start inclusive, end
+  // exclusive). Used to attribute EV charge power to a regime: inside a dispatch
+  // window it's grid charging, outside it's solar diversion.
+  function inBands(t, bands) {
+    if (!t || typeof t.getTime !== "function" || !Array.isArray(bands)) return false;
+    var ms = t.getTime();
+    for (var i = 0; i < bands.length; i++) {
+      var b = bands[i];
+      if (b && b.start && b.end) {
+        if (ms >= b.start.getTime() && ms < b.end.getTime()) return true;
+      }
+    }
+    return false;
+  }
+
   // Rolling-median smoother for the consumption line. Netting two
   // independently-sampled sensors (house load minus diverter power) injects
   // spurious spikes whenever one source is mid-update and the other is stale; a
@@ -376,6 +391,10 @@
   var C_DIVERSION = "#7cb342";
   var C_EVENT = "#534ab7";
   var C_DISPATCH = "#d4537e";
+  // EV charging in solar-diversion (eco) mode - shares the diversion lane with the
+  // Eddi (lime), so a pink in the EV/dispatch family keeps the car identifiable
+  // while staying distinct from the hot-water green.
+  var C_EV_SOLAR = "#e08aae";
 
   // Legend entries for the configured layers only - an unconfigured feed has
   // no colour on the tape, so it earns no legend row. Grouped by function:
@@ -411,6 +430,9 @@
     }
     if (s.diversion_power) {
       out.push({ key: "diversion", group: "events", label: "solar diversion", color: C_DIVERSION, style: "segment" });
+    }
+    if (s.ev_power) {
+      out.push({ key: "ev_solar", group: "events", label: "EV solar", color: C_EV_SOLAR, style: "segment" });
     }
     if (c.decision_entity) {
       out.push({ key: "decisions", group: "events", label: "decisions", color: C_EVENT, style: "diamond" });
@@ -574,6 +596,7 @@
             sources.dispatching,
             sources.grid_export_w,
             sources.diversion_power,
+            sources.ev_power,
           ].forEach(function (id) {
             if (id) ids.push(id);
           });
@@ -851,7 +874,8 @@
           // Stacked lanes (no overlap): off-peak, then EV dispatch, then the
           // diversion rail below it.
           drawSegments(mergeBands(bands), C_GRID, LANE_OFFPEAK);
-          drawSegments(mergeBands(dispatchBands), C_DISPATCH, LANE_DISPATCH);
+          var mergedDispatch = mergeBands(dispatchBands);
+          drawSegments(mergedDispatch, C_DISPATCH, LANE_DISPATCH);
 
           // --- solar-diversion rail: line width steps with diverted power ----
           // Extend to NOW: the diverter power is write-on-change, so a steady
@@ -877,6 +901,41 @@
             }
           } else if (sources.diversion_power) {
             notes.push("diversion");
+          }
+
+          // --- EV charge power: split by dispatch-window membership -----------
+          // Inside a dispatch window the car grid-charges (overlay on the dispatch
+          // rail, so a fired-but-idle window stays a thin segment while a real
+          // charge bulges it); outside one it's eating solar surplus (eco mode), so
+          // it sits on the diversion rail beside the Eddi. History is past-only, so
+          // the violin only ever lands on the past side - future predicted windows
+          // stay plain segments. Same write-on-change extend-to-NOW as the diverter.
+          var liveEv = this._state(sources.ev_power);
+          var evPts = extendToNow(
+            downsample(this._numSeries(sources.ev_power), 300),
+            win.now,
+            liveEv ? parseFloat(liveEv.state) : NaN
+          );
+          for (var evi = 0; evi < evPts.length - 1; evi++) {
+            var est = diversionStages(evPts[evi].v);
+            if (est <= 0) continue;
+            var ivBand = [{ start: evPts[evi].t, end: evPts[evi + 1].t }];
+            var evSegs = intersectBands(ivBand, mergedDispatch).map(function (b) {
+              return { b: b, grid: true };
+            }).concat(subtractBands(ivBand, mergedDispatch).map(function (b) {
+              return { b: b, grid: false };
+            }));
+            for (var pi = 0; pi < evSegs.length; pi++) {
+              var px0 = timeToX(evSegs[pi].b.start, win, W);
+              var px1 = timeToX(evSegs[pi].b.end, win, W);
+              if (isNaN(px0) || isNaN(px1) || px1 <= px0) continue;
+              var evLane = evSegs[pi].grid ? LANE_DISPATCH : LANE_DIVERSION;
+              var evColor = evSegs[pi].grid ? C_DISPATCH : C_EV_SOLAR;
+              svg +=
+                '<line x1="' + px0.toFixed(1) + '" y1="' + evLane + '" x2="' + px1.toFixed(1) +
+                '" y2="' + evLane + '" stroke="' + evColor + '" stroke-width="' + est * 2 +
+                '" opacity="0.7"/>';
+            }
           }
 
           // --- decision rail --------------------------------------------------
@@ -928,6 +987,11 @@
             svg +=
               '<line x1="' + tickX.toFixed(1) + '" y1="14" x2="' + tickX.toFixed(1) +
               '" y2="' + AX + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
+            // Continue the gridline through the event-rail zone (below the hour
+            // label) so rail events line up with the time axis temporally.
+            svg +=
+              '<line x1="' + tickX.toFixed(1) + '" y1="' + (AX + 22) + '" x2="' + tickX.toFixed(1) +
+              '" y2="' + (RAIL + 6) + '" stroke="currentColor" stroke-width="1" opacity="0.08"/>';
             svg +=
               '<text x="' + tickX.toFixed(1) + '" y="' + (AX + 14) +
               '" font-size="11" fill="currentColor" opacity="0.55" text-anchor="' + anchor + '">' +
@@ -1064,6 +1128,7 @@
     legendItems: legendItems,
     seriesAbove: seriesAbove,
     diversionStages: diversionStages,
+    inBands: inBands,
     smooth: smooth,
     risingIntervals: risingIntervals,
     intersectBands: intersectBands,
