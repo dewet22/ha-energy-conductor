@@ -200,6 +200,51 @@ describe("forecastCurve", () => {
   });
 });
 
+describe("mergeForecast", () => {
+  // The dashed forecast line is past (recorder history) + future (live Solcast
+  // attr). History carries yesterday across midnight; the live attr is the
+  // look-ahead. They join at `now` with no overlap.
+  test("joins past history with future-only live attr at the now boundary", () => {
+    const past = [
+      { t: at(-3), kw: 1.5 },
+      { t: at(-1), kw: 2.0 },
+    ];
+    const attr = [
+      { period_start: at(-1).toISOString(), pv_estimate: 9.9 }, // < now: history owns this
+      { period_start: at(2).toISOString(), pv_estimate: 3.0 }, // >= now: look-ahead
+    ];
+    const pts = T.mergeForecast(past, attr, T.tapeWindow(NOW, 12));
+    expect(pts).toEqual([
+      { t: at(-3), kw: 1.5 },
+      { t: at(-1), kw: 2.0 },
+      { t: at(2), kw: 3.0 },
+    ]);
+  });
+
+  test("a live slot exactly at now belongs to the future half", () => {
+    const attr = [{ period_start: NOW.toISOString(), pv_estimate: 4.0 }];
+    const pts = T.mergeForecast([], attr, T.tapeWindow(NOW, 12));
+    expect(pts).toEqual([{ t: NOW, kw: 4.0 }]);
+  });
+
+  test("empty past degrades to future-only (current pre-fix behaviour)", () => {
+    const attr = [
+      { period_start: at(1).toISOString(), pv_estimate: 2.4 },
+      { period_start: at(3).toISOString(), pv_estimate: 1.0 },
+    ];
+    const pts = T.mergeForecast(undefined, attr, T.tapeWindow(NOW, 12));
+    expect(pts.map((p) => p.kw)).toEqual([2.4, 1.0]);
+  });
+
+  test("past points outside [start, now) are dropped", () => {
+    const past = [
+      { t: at(-30), kw: 1.0 }, // before window start
+      { t: at(1), kw: 5.0 }, // after now — the future half owns t >= now
+    ];
+    expect(T.mergeForecast(past, [], T.tapeWindow(NOW, 12))).toEqual([]);
+  });
+});
+
 describe("downsample", () => {
   test("keeps at most maxPoints, preserving first and last", () => {
     const pts = [];

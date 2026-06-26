@@ -325,6 +325,29 @@
     return out;
   }
 
+  // The dashed forecast line spans the whole window: the PAST half comes from the
+  // recorder history of EC's pv-forecast-power sensor (so it survives midnight,
+  // when the live Solcast "today" sensor drops yesterday), the FUTURE half from
+  // the live detailedForecast look-ahead. They meet at `now` with no overlap —
+  // history owns t < now, the live attr owns t >= now.
+  function mergeForecast(pastKwPts, liveAttr, win) {
+    var past = (pastKwPts || []).filter(function (p) {
+      return (
+        p &&
+        p.t instanceof Date &&
+        !isNaN(p.t.getTime()) &&
+        p.t >= win.start &&
+        p.t < win.now &&
+        typeof p.kw === "number" &&
+        !isNaN(p.kw)
+      );
+    });
+    var future = forecastCurve(liveAttr, win).filter(function (p) {
+      return p.t >= win.now;
+    });
+    return past.concat(future);
+  }
+
   // Bucket-MEAN downsampling, not stride-picking: averaging each bucket is the
   // light smoothing pass that takes the shark teeth off the power curves while
   // keeping the endpoints exact (the NOW reading must be the real reading).
@@ -591,6 +614,7 @@
             c.soc_entity,
             c.decision_entity,
             sources.solar_power,
+            sources.solar_forecast_power,
             sources.home_load,
             sources.off_peak,
             sources.dispatching,
@@ -784,7 +808,15 @@
             fTodayState ? (fTodayState.attributes.detailedForecast || []) : [],
             fTmrState ? (fTmrState.attributes.detailedForecast || fTmrState.attributes.forecasts || []) : []
           );
-          var forecastPts = forecastCurve(forecastAttr, win);
+          // Past half from EC's recorder-backed forecast-power sensor (W → kW), so
+          // yesterday survives the midnight Solcast-sensor rollover; future half
+          // from the live detailedForecast look-ahead.
+          var forecastHistKw = sources.solar_forecast_power
+            ? this._numSeries(sources.solar_forecast_power).map(function (p) {
+                return { t: p.t, kw: p.v / 1000 };
+              })
+            : [];
+          var forecastPts = mergeForecast(forecastHistKw, forecastAttr, win);
           var maxKw = 0.5;
           var toKw = function (p) {
             return { t: p.t, v: p.v / 1000 };
@@ -1122,6 +1154,7 @@
     parseDispatches: parseDispatches,
     bandsFromBinary: bandsFromBinary,
     forecastCurve: forecastCurve,
+    mergeForecast: mergeForecast,
     downsample: downsample,
     extendToNow: extendToNow,
     projectionPoints: projectionPoints,

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
@@ -68,8 +69,11 @@ from .const import (
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_RESERVE_PERCENT,
     DOMAIN,
+    FORECAST_SOURCE_SOLCAST,
+    SOLCAST_SLOT_HOURS,
 )
 from .coordinator import EnergyConductorCoordinator
+from .model import SolarForecast
 from .money import CumulativeSavings, DailyCost
 from .money_tracker import (
     ACC_COUNTERFACTUAL,
@@ -90,6 +94,9 @@ async def async_setup_entry(
 ) -> None:
     coordinator: EnergyConductorCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = [
+        # Registered before StatusSensor so its entity id is already in the
+        # registry when StatusSensor first resolves it into tape_sources.
+        PVForecastPowerSensor(coordinator, entry),
         StatusSensor(coordinator, entry),
         OvernightPlanSensor(coordinator, entry),
         DischargeDecisionSensor(coordinator, entry),
@@ -195,6 +202,23 @@ _TAPE_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
 _LEVEL_SOURCE_KEYS: tuple[tuple[str, str], ...] = (("battery_soc", CONF_BATTERY_SOC_SENSOR),)
 
 
+def _forecast_power_w(forecast: SolarForecast | None, now: datetime) -> float | None:
+    """Average PV power (W) for the forecast slot containing `now`.
+
+    `pv_estimate` — and so `ForecastSlot.energy_kwh / SOLCAST_SLOT_HOURS` — is the
+    *average power* over the 30-min slot, so the containing slot's value is the
+    correct instantaneous reading; no interpolation. None when no slot brackets
+    now (before sunrise, past the forecast horizon, or no forecast at all).
+    """
+    if forecast is None:
+        return None
+    slot_len = timedelta(hours=SOLCAST_SLOT_HOURS)
+    for slot in forecast.slots:
+        if slot.start <= now < slot.start + slot_len:
+            return slot.energy_kwh / SOLCAST_SLOT_HOURS * 1000.0
+    return None
+
+
 def _tape_sources(config: dict[str, Any]) -> dict[str, str] | None:
     sources = {name: config[key] for name, key in _TAPE_SOURCE_KEYS if config.get(key)}
     return sources or None
@@ -227,10 +251,25 @@ class StatusSensor(_BaseSensor):
     def native_value(self) -> str:
         return self.coordinator.status
 
+    def _forecast_power_entity_id(self) -> str | None:
+        """Entity id of EC's own PV-forecast-power sensor, for the tape's past
+        forecast line — only when a Solcast forecast can actually feed it."""
+        config = self.coordinator.config
+        if config.get(CONF_FORECAST_SOURCE) != FORECAST_SOURCE_SOLCAST:
+            return None
+        if not config.get(CONF_FORECAST_SOLCAST_TODAY_SENSOR):
+            return None
+        registry = er.async_get(self.coordinator.hass)
+        return registry.async_get_entity_id("sensor", DOMAIN, f"{self._entry_id}-pv-forecast-power")
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         state = self.coordinator.last_site_state
         grid = state.grid if state is not None else None
+        tape_sources = _tape_sources(self.coordinator.config)
+        forecast_power_id = self._forecast_power_entity_id()
+        if tape_sources is not None and forecast_power_id:
+            tape_sources["solar_forecast_power"] = forecast_power_id
         return {
             "last_error": self.coordinator.last_error,
             "degraded_since": self.coordinator.degraded_since,
@@ -250,7 +289,7 @@ class StatusSensor(_BaseSensor):
             "verification": self.coordinator.verification_status,
             "verification_detail": self.coordinator.last_verification_detail,
             "money_sources": _money_sources(self.coordinator.config),
-            "tape_sources": _tape_sources(self.coordinator.config),
+            "tape_sources": tape_sources,
             "level_sources": _level_sources(self.coordinator.config),
         }
 
@@ -586,6 +625,41 @@ class EVChargerPowerSensor(_BaseSensor):
         if state is not None and state.ev_charger is not None:
             attrs["active"] = state.ev_charger.power_w >= min_w
         return attrs
+
+
+class PVForecastPowerSensor(_BaseSensor):
+    """Solcast-forecast PV power for the current instant.
+
+    Recorded each tick so the mission tape can draw the *past* half of its dashed
+    forecast line from recorder history (like solar_power), instead of the live
+    Solcast `detailedForecast` attribute that loses yesterday at midnight.
+    """
+
+    _attr_translation_key = "pv_forecast_power"
+    _attr_name = "PV forecast power"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}-pv-forecast-power"
+
+    @property
+    def native_value(self) -> float | None:
+        state = self.coordinator.last_site_state
+        if state is None:
+            return None
+        # projection_forecast spans today + tomorrow; only it carries today's
+        # daylight slots (the planner forecast is tomorrow-only by design).
+        return _forecast_power_w(state.projection_forecast, state.now)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "source_entity": self.coordinator.config.get(CONF_FORECAST_SOLCAST_TODAY_SENSOR),
+        }
 
 
 class BaselineLoadSensor(_BaseSensor):
