@@ -12,7 +12,7 @@ from .decisions import Decision, DecisionKind
 _LOGGER = logging.getLogger(__name__)
 
 _KIND_LABEL = {
-    DecisionKind.SET_CHARGE_TARGET: "Overnight charge target",
+    DecisionKind.SET_CHARGE_TARGET: "Battery SoC setpoint",
     DecisionKind.SET_DISCHARGE_LIMIT: "Discharge cap",
     DecisionKind.RECOMMEND_HOT_WATER_BOOST: "Hot water boost recommended",
     DecisionKind.VERIFICATION_MISMATCH: "Actuation mismatch",

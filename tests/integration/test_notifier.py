@@ -84,12 +84,12 @@ def test_render_message_charge_target_formats_percent() -> None:
         kind=DecisionKind.SET_CHARGE_TARGET,
         target_entity="number.battery_charge_target",
         value=80,
-        reason="overnight plan",
+        reason="cheap energy — fill to 80%",
         dedupe_key="c-80",
     )
     msg = render_message(decision, WRITE_MODE_LIVE)
-    assert "Overnight charge target → 80%" in msg
-    assert "overnight plan" in msg
+    assert "Battery SoC setpoint → 80%" in msg
+    assert "cheap energy" in msg
 
 
 def test_render_message_hot_water_boost_formats_hours() -> None:

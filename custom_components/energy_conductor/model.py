@@ -37,8 +37,8 @@ class Battery:
 
     def __post_init__(self) -> None:
         # capacity_kwh comes straight from config with no clamp site; 0 would be a
-        # ZeroDivisionError deep in plan_overnight (swallowed → opaque silent stop), and
-        # nan/inf slip past `<= 0` (nan compares false) to produce a bogus 100% target.
+        # ZeroDivisionError deep in the SoC projection (swallowed → opaque silent stop), and
+        # nan/inf slip past `<= 0` (nan compares false) to produce a bogus projection.
         if not math.isfinite(self.capacity_kwh) or self.capacity_kwh <= 0:
             raise ValueError(
                 f"Battery.capacity_kwh must be finite and > 0 (got {self.capacity_kwh!r})"

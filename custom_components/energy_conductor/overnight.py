@@ -1,66 +1,10 @@
-"""Overnight charge target planning. Pure function, runs once per evening."""
+"""SoC projection for the mission tape. Pure functions, no HA dependencies."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from .const import MIN_OVERNIGHT_USABLE_KWH
-from .decisions import Decision, DecisionKind
 from .model import SiteState
-
-MEANINGFUL_SLOT_KWH = 0.25  # 500W average over a 30min slot
-MORNING_GAP_CAP_H = 6  # absolute cap on morning_gap_hours
-MISSING_FORECAST_GAP_H = 4  # default gap when no forecast slots are present
-
-
-def _first_meaningful_slot_at_or_after(forecast, boundary: datetime):
-    starts = [
-        slot.start
-        for slot in forecast.slots
-        if slot.energy_kwh >= MEANINGFUL_SLOT_KWH and slot.start >= boundary
-    ]
-    return min(starts, default=None)
-
-
-def _morning_gap_hours(state: SiteState) -> float:
-    """Hours between the overnight boundary and the first meaningful solar after it,
-    clamped to [0, cap].
-
-    The boundary prefers the CONFIGURED overnight end: the off-peak sensor's period
-    end can belong to a short Intelligent dispatch slot (e.g. ending 22:30), which
-    would inflate the gap to the cap and substantially over-provision the written
-    target. Falls back to the sensor-derived end when no configured boundary exists.
-
-    The first-slot search uses the projection forecast (today-remaining + tomorrow)
-    when available so the pre-dawn boundary sees TODAY's imminent sunrise. The
-    planner's solar_forecast is tomorrow-only; after midnight the boundary still
-    points at today's ~05:30 while that forecast's first slot is ~24h out, which
-    clamps the gap to the cap and inflates the target every night between midnight
-    and dawn. The search is anchored at/after the boundary so today's already-past
-    daytime slots (present in the projection) don't collapse the gap.
-
-    The "do we have a forecast at all?" guard stays anchored to the planner's
-    solar_forecast (tomorrow): a Tomorrow-sensor outage must still fall back to the
-    default gap even when the optional Today sensor is healthy — otherwise a
-    today-only projection's past slots fall through to the 6h cap and a transient
-    outage gets MORE aggressive (Codex review, #41).
-    """
-    if not state.solar_forecast.slots:
-        return float(MISSING_FORECAST_GAP_H)
-    boundary = state.tariff.overnight_window_end or state.tariff.off_peak_window_end
-    if boundary is None:
-        return float(MISSING_FORECAST_GAP_H)
-    forecast = (
-        state.projection_forecast
-        if state.projection_forecast and state.projection_forecast.slots
-        else state.solar_forecast
-    )
-    first = _first_meaningful_slot_at_or_after(forecast, boundary)
-    if first is None:
-        return float(MORNING_GAP_CAP_H)
-    delta = first - boundary
-    hours = max(0.0, delta.total_seconds() / 3600)
-    return min(hours, float(MORNING_GAP_CAP_H))
 
 
 def _is_off_peak_at(state: SiteState, t: datetime) -> bool:
@@ -100,7 +44,7 @@ def project_soc(
     """Project SoC forward for the mission tape. Honest but simple, by design.
 
     Mirrors what the two decision loops will actually do: inside an off-peak
-    window the discharge guard idles the battery and the overnight plan charges
+    window the discharge guard idles the battery and the charge setpoint fills
     it toward `target_percent` at the battery's max charge power; outside it the
     house draws the baseline load net of forecast PV (a PV surplus charges).
     Clamped to [reserve, 100]. This is a *projection* — the consumer renders it
@@ -124,90 +68,3 @@ def project_soc(
         t = t + timedelta(minutes=step_minutes)
         points.append((t, round(soc, 1)))
     return points
-
-
-def plan_overnight(
-    state: SiteState,
-    *,
-    target_entity: str,
-    daily_kwh_target: float,
-) -> Decision:
-    """Compute the overnight battery charge target.
-
-    The energy the battery must hold by morning is *usable* energy: it sits ABOVE
-    the reserve floor, because everything at or below the reserve is unavailable to
-    the load. So the SoC target is `reserve + usable/capacity`, not just
-    `usable/capacity` — a bare gap target would under-provision by the reserve band.
-
-    `usable` is the larger of what the morning actually needs (gap + forecast deficit)
-    and `MIN_OVERNIGHT_USABLE_KWH` — a baked-in safety margin that guards against
-    forecast/baseline error and against BMS SoC unreliability near empty (the inverter
-    can cut out above the nominal reserve, and the SoC reading is least trustworthy at
-    the bottom). The margin only binds on the sunniest, smallest-gap nights.
-    """
-    morning_gap_hours = _morning_gap_hours(state)
-    morning_gap_kwh = state.baseline_load_w * morning_gap_hours / 1000.0
-
-    forecast_kwh = state.solar_forecast.total_kwh_forecast
-    forecast_deficit = max(0.0, daily_kwh_target - forecast_kwh)
-
-    reserve_percent = float(state.battery.reserve_percent)
-    # Usable energy needed, floored at the baked-in safety margin, expressed as a
-    # percentage band ABOVE the reserve floor.
-    usable_kwh = max(morning_gap_kwh + forecast_deficit, MIN_OVERNIGHT_USABLE_KWH)
-    usable_percent = usable_kwh / state.battery.capacity_kwh * 100
-
-    target_percent = round(min(100.0, reserve_percent + usable_percent))
-
-    is_fallback = not state.solar_forecast.slots
-    fallback_note = (
-        f", fallback {state.solar_forecast.fallback_source or 'unknown'}" if is_fallback else ""
-    )
-
-    dawn_note = ""
-    dawn = state.tariff.overnight_window_end
-    if dawn is not None:
-        hours_until_dawn = max(0.0, (dawn - state.now).total_seconds() / 3600)
-        # Dawn is anchored to the CONFIGURED overnight end — never to the off-peak
-        # sensor's current/next period end, which can belong to a short Intelligent
-        # dispatch slot. The discharge guard idles the battery during any off-peak
-        # period, but a hold (no further drain) is only credited when the sensor's
-        # period provably reaches dawn (period end >= dawn). A dispatch slot's end
-        # falls hours short, dropping to the conservative full-drain projection —
-        # where unseen holds only raise the real dawn SoC above the claim. A stale
-        # next-start (in the past) is treated the same way.
-        period_end = state.tariff.off_peak_window_end
-        reaches_dawn = period_end is not None and period_end >= dawn
-        hours_discharging = hours_until_dawn
-        if state.tariff.off_peak_now:
-            if reaches_dawn:
-                hours_discharging = 0.0
-        elif (
-            reaches_dawn
-            and state.tariff.next_off_peak_window_start is not None
-            and state.tariff.next_off_peak_window_start >= state.now
-        ):
-            hours_discharging = min(
-                hours_until_dawn,
-                (state.tariff.next_off_peak_window_start - state.now).total_seconds() / 3600,
-            )
-        discharge_pct = state.baseline_load_w * hours_discharging / state.battery.capacity_kwh / 10
-        expected_soc = round(state.battery.soc_percent - discharge_pct)
-        if expected_soc > target_percent:
-            dawn_note = f"; battery on track for ~{expected_soc}% at dawn — no charge needed"
-
-    reason = (
-        f"Morning gap {morning_gap_hours:.1f}h x {state.baseline_load_w:.0f}W "
-        f"= {morning_gap_kwh:.1f} kWh; forecast {forecast_kwh:.1f} kWh; "
-        f"reserve {reserve_percent:.0f}% + usable {usable_percent:.0f}% "
-        f"-> target {target_percent}%{fallback_note}{dawn_note}"
-    )
-
-    plan_date = state.now.date().isoformat()
-    return Decision(
-        kind=DecisionKind.SET_CHARGE_TARGET,
-        target_entity=target_entity,
-        value=target_percent,
-        reason=reason,
-        dedupe_key=f"overnight-{plan_date}-{target_percent}",
-    )

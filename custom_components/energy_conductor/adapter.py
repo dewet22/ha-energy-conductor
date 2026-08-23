@@ -474,12 +474,11 @@ class Adapter:
             if sensor_id:
                 try:
                     kwh = _read_float(self.hass, sensor_id, max_age_seconds=STALE_FORECAST_SECONDS)
-                    # Use as fallback_kwh, not as a synthetic slot. A daily-total
-                    # sensor shows today's actual generation by planning time (~21:00).
-                    # Creating a synthetic slot with start=now made _morning_gap_hours()
-                    # return 0 (the slot predates tomorrow's window end), so the plan
-                    # never provisioned a morning gap. Treating it as fallback_kwh
-                    # preserves the MISSING_FORECAST_GAP_H default gap assumption.
+                    # Use as fallback_kwh, not as a synthetic slot. A daily-total sensor
+                    # shows generation that has ALREADY happened by evening; a synthetic
+                    # slot stamped `now` would put it on the timeline as generation still
+                    # to come. As fallback_kwh it feeds total_kwh_forecast without
+                    # inventing a slot.
                     return self._checked_forecast(
                         SolarForecast(slots=[], fallback_kwh=kwh, fallback_source="daily_sensor")
                     )

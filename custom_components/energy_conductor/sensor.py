@@ -306,22 +306,22 @@ class OvernightPlanSensor(_BaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        plan = self.coordinator.last_overnight_plan
+        plan = self.coordinator.last_setpoint_decision
         return None if plan is None else plan.value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        plan = self.coordinator.last_overnight_plan
+        plan = self.coordinator.last_setpoint_decision
         if plan is None:
             return {}
         attrs: dict[str, Any] = {
             "reason": plan.reason,
             "dedupe_key": plan.dedupe_key,
-            "outcome": self.coordinator.last_overnight_outcome,
+            "outcome": self.coordinator.last_setpoint_outcome,
             "write_mode": self.coordinator.write_mode,
         }
-        # SoC projection for the mission tape: served from EC's own plan model so
-        # the dashboard never re-derives it client-side. Unmistakably a projection.
+        # SoC projection for the mission tape: served from EC's own model so the
+        # dashboard never re-derives it client-side. Unmistakably a projection.
         state = self.coordinator.last_site_state
         if state is not None:
             attrs["soc_projection"] = [

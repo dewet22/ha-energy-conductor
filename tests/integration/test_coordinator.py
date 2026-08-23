@@ -180,146 +180,99 @@ async def test_degraded_since_set_and_cleared(coordinator) -> None:
     assert coordinator.degraded_since is None
 
 
-async def test_tick_retries_pending_overnight_charge_write(coordinator) -> None:
-    """Audit M-4 (Codex): a failed charge-target write must retry on the next coordinator
-    tick, not only at the hourly plan re-eval — `_async_update_data` re-emits the cached
-    overnight plan each tick so it isn't stale for up to an hour."""
-    from unittest.mock import AsyncMock
+# ---- per-tick SoC setpoint ---------------------------------------------------------------
 
-    from custom_components.energy_conductor.writer import WriteFailure
 
-    plan = Decision(
-        kind=DecisionKind.SET_CHARGE_TARGET,
-        target_entity="number.battery_charge_target",
-        value=80,
-        reason="overnight plan",
-        dedupe_key="overnight-2026-06-08-80",
-    )
-    # The overnight plan emitted earlier; its write failed → still pending.
-    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
-    await coordinator._emit(plan)
-    coordinator.last_overnight_plan = plan
-    # _site_state's now is 2026-06-08 21:00, so a plan stamped now is fresh.
-    coordinator.last_overnight_plan_at = datetime(2026, 6, 8, 21, 0, tzinfo=UTC)
-    assert coordinator.writer.write.await_count == 1
+def _written(coordinator, entity: str) -> list[float]:
+    """Values written to `entity` across every writer.write call so far."""
+    return [
+        call.args[0].value
+        for call in coordinator.writer.write.await_args_list
+        if call.args[0].target_entity == entity
+    ]
 
-    # Write recovers; a coordinator tick must retry the pending charge-target write.
-    coordinator.writer.write = AsyncMock(return_value=None)
+
+async def test_setpoint_written_every_regime(coordinator) -> None:
+    """The SoC setpoint is steered on every tick alongside the discharge cap: 100% while
+    energy is cheap, the charge control's own minimum through the peak."""
+    charge_entity = coordinator.config[CONF_BATTERY_CHARGE_CONTROL]
+    discharge_entity = coordinator.config[CONF_BATTERY_DISCHARGE_LIMIT]
+
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None, off_peak=True))
+    await coordinator._async_update_data()
+
+    assert coordinator.last_setpoint_decision is not None
+    assert coordinator.last_setpoint_decision.kind == DecisionKind.SET_CHARGE_TARGET
+    assert coordinator.last_setpoint_decision.value == 100
+    assert coordinator.last_setpoint_outcome == "dry_run"
+    assert _written(coordinator, charge_entity) == [100]
+    assert _written(coordinator, discharge_entity) == [0]
+
+    # Peak: the setpoint drops to the control minimum and the discharge cap is released.
     coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
     await coordinator._async_update_data()
 
-    # The tick wrote the discharge decision AND retried the pending overnight write.
-    written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
-    assert "number.battery_charge_target" in written
+    assert coordinator.last_setpoint_decision.value == _CHARGE_TARGET_MIN
+    assert _written(coordinator, charge_entity) == [100, _CHARGE_TARGET_MIN]
+    assert _written(coordinator, discharge_entity) == [0, 3000]
 
 
-async def test_first_healthy_tick_runs_missed_startup_plan(coordinator) -> None:
-    """A startup plan that lost the race against slower-loading integrations (e.g. the
-    GivEnergy entities register after EC on restart) must run on the first healthy tick
-    — not leave the plan empty until the next hourly slot (live find 2026-06-11)."""
-    from custom_components.energy_conductor.adapter import EntityProblem
+async def test_setpoint_transition_writes_once(coordinator) -> None:
+    """Two consecutive ticks in the same regime write the setpoint once — the dedupe key
+    is regime + value, so an unchanged setpoint isn't re-written every 30 s."""
+    charge_entity = coordinator.config[CONF_BATTERY_CHARGE_CONTROL]
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None, off_peak=True))
 
-    # Startup: dependencies not registered yet → the immediate plan run skips.
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+
+    assert _written(coordinator, charge_entity) == [100]
+    assert coordinator.last_setpoint_outcome == "unchanged"
+
+
+async def test_dispatch_only_tick_sets_setpoint_100(coordinator) -> None:
+    """A dispatch outside the off-peak window is cheap energy too — the regime tests it
+    explicitly rather than relying on the tariff sensor flipping in lock-step."""
     coordinator.adapter.build_site_state = AsyncMock(
-        side_effect=EntityProblem("sensor.soc: not found")
+        return_value=_site_state(None, off_peak=False, dispatching=True)
     )
-    await coordinator._run_overnight_plan()
-    assert coordinator.last_overnight_plan is None
-
-    # Dependencies appear → the next tick (~30s) fills the plan in, reusing the
-    # tick's own SiteState rather than rebuilding it (recorder queries are dear).
-    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
-    await coordinator._async_update_data()
-    assert coordinator.last_overnight_plan is not None
-    assert coordinator.last_overnight_plan.kind == DecisionKind.SET_CHARGE_TARGET
-    assert coordinator.adapter.build_site_state.await_count == 1
-
-    # Subsequent ticks leave refreshes to the scheduled evaluations.
-    coordinator._run_overnight_plan = AsyncMock()
-    await coordinator._async_update_data()
-    coordinator._run_overnight_plan.assert_not_awaited()
-
-
-async def test_tick_does_not_retry_stale_overnight_plan(coordinator) -> None:
-    """Audit M-4 (Codex): a pending charge-target write from a PAST planning cycle must not
-    be applied when the entity recovers. Once the cached plan is older than _PLAN_RETRY_MAX_AGE
-    (planning has been failing to refresh it), the every-tick retry is gated out — so a
-    recovered number entity never lands an obsolete command."""
-    from unittest.mock import AsyncMock
-
-    from custom_components.energy_conductor.writer import WriteFailure
-
-    plan = Decision(
-        kind=DecisionKind.SET_CHARGE_TARGET,
-        target_entity="number.battery_charge_target",
-        value=80,
-        reason="overnight plan",
-        dedupe_key="overnight-2026-06-07-80",
-    )
-    # Yesterday's plan, write failed → still pending. Planning has since failed to refresh it.
-    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
-    await coordinator._emit(plan)
-    coordinator.last_overnight_plan = plan
-    # 24h before _site_state.now (06-08 21:00) — well past the 12h retry window.
-    coordinator.last_overnight_plan_at = datetime(2026, 6, 7, 21, 0, tzinfo=UTC)
-
-    # Entity recovers; a tick must NOT re-apply the stale (past-cycle) target.
-    coordinator.writer.write = AsyncMock(return_value=None)
-    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
     await coordinator._async_update_data()
 
-    written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
-    assert "number.battery_charge_target" not in written
+    assert coordinator.last_setpoint_decision.value == 100
 
 
-async def test_tick_retries_pending_plan_across_midnight(coordinator) -> None:
-    """Audit M-4 (Codex): a plan emitted just before midnight must keep retrying straight
-    through the date rollover — age-based freshness has no calendar blackout. A plan stamped
-    23:55 is only 10 min old at 00:05, so its still-pending write is retried inside the
-    overnight charging window."""
-    from unittest.mock import AsyncMock
-
-    from custom_components.energy_conductor.writer import WriteFailure
-
-    plan = Decision(
-        kind=DecisionKind.SET_CHARGE_TARGET,
-        target_entity="number.battery_charge_target",
-        value=80,
-        reason="overnight plan",
-        dedupe_key="overnight-2026-06-08-80",
-    )
-    coordinator.writer.write = AsyncMock(side_effect=WriteFailure("boom"))
-    await coordinator._emit(plan)
-    coordinator.last_overnight_plan = plan
-    coordinator.last_overnight_plan_at = datetime(2026, 6, 8, 23, 55, tzinfo=UTC)
-
-    # Tick fires at 00:05 the next day — past the date boundary but only 10 min after the plan.
-    coordinator.writer.write = AsyncMock(return_value=None)
-    after_midnight = datetime(2026, 6, 9, 0, 5, tzinfo=UTC)
+async def test_hot_water_prompt_still_fires(coordinator) -> None:
+    """The boost prompt moved off the nightly plan run onto the tick path; its per-day
+    dedupe key still keeps it to one prompt."""
     coordinator.adapter.build_site_state = AsyncMock(
-        return_value=_site_state(None, now=after_midnight)
+        return_value=_site_state(_hw(boost=True, hours=2.0))
     )
     await coordinator._async_update_data()
+    await coordinator._async_update_data()
 
-    written = [c.args[0].target_entity for c in coordinator.writer.write.await_args_list]
-    assert "number.battery_charge_target" in written
+    kinds = [call.args[0].kind for call in coordinator.notifier.notify.await_args_list]
+    assert kinds.count(DecisionKind.RECOMMEND_HOT_WATER_BOOST) == 1
 
 
-async def test_async_start_survives_malformed_plan_time(coordinator, caplog) -> None:
-    """Audit L-1: a malformed stored overnight plan time must not abort setup. It falls back
-    to the default time with a warning, still registering the schedule + state listeners."""
-    import logging
+async def test_no_overnight_schedule_registered(coordinator) -> None:
+    """async_start registers the state-change listeners and nothing else: with the setpoint
+    emitted from every tick there is no planning schedule and no startup plan run."""
+    from unittest.mock import patch
 
-    from custom_components.energy_conductor.const import CONF_OVERNIGHT_PLAN_TIME
-
-    coordinator.config[CONF_OVERNIGHT_PLAN_TIME] = "not-a-time"
-    coordinator.last_overnight_plan = _decision()  # truthy → skip the immediate plan run
-
-    with caplog.at_level(logging.WARNING, logger="custom_components.energy_conductor.coordinator"):
+    coordinator.adapter.build_site_state = AsyncMock(return_value=_site_state(None))
+    with patch(
+        "custom_components.energy_conductor.coordinator.async_track_state_change_event",
+        return_value=lambda: None,
+    ) as track_state:
         await coordinator.async_start()
     try:
-        assert coordinator._unsubs  # listeners registered despite the bad time
-        assert "malformed overnight plan time" in caplog.text.lower()
+        track_state.assert_called_once()
+        watched = track_state.call_args.args[1]
+        assert coordinator.config[CONF_BATTERY_SOC_SENSOR] in watched
+        # The state listener is the ONLY registration — no time-change schedules remain.
+        assert len(coordinator._unsubs) == 1
+        # ...and nothing plans at startup: the first tick emits the setpoint.
+        coordinator.adapter.build_site_state.assert_not_awaited()
     finally:
         await coordinator.async_stop()
 
@@ -353,21 +306,34 @@ from custom_components.energy_conductor.model import (  # noqa: E402
     TariffState,
 )
 
+# The charge control's own minimum, distinct from the reserve so the self-consume
+# setpoint can't be confused with it.
+_CHARGE_TARGET_MIN = 5.0
+
 
 def _site_state(
     hot_water: HotWaterState | None,
     *,
     now: datetime | None = None,
     off_peak: bool = False,
+    dispatching: bool = False,
     battery_power: float | None = None,
     grid: GridState | None = None,
 ) -> SiteState:
     return SiteState(
         now=now or datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
-        battery=Battery(90.0, 11.0, 3000, 3000, 4.0, power_w=battery_power),
+        battery=Battery(
+            90.0,
+            11.0,
+            3000,
+            3000,
+            4.0,
+            power_w=battery_power,
+            charge_target_min_percent=_CHARGE_TARGET_MIN,
+        ),
         ev_charger=None,
         solar_forecast=SolarForecast(slots=(), fallback_kwh=6.0, fallback_source="t"),
-        tariff=TariffState(off_peak, False, None, None),
+        tariff=TariffState(off_peak, dispatching, None, None),
         baseline_load_w=700.0,
         hot_water=hot_water,
         grid=grid,
@@ -410,11 +376,9 @@ from datetime import timedelta  # noqa: E402
 
 from custom_components.energy_conductor.const import (  # noqa: E402
     CONF_BATTERY_CHARGE_CONTROL,
+    CONF_BATTERY_DISCHARGE_LIMIT,
+    CONF_BATTERY_SOC_SENSOR,
     WRITE_MODE_LIVE,
-)
-from custom_components.energy_conductor.coordinator import (  # noqa: E402
-    _PLAN_RETRY_MAX_AGE,
-    _CommandedWrite,
 )
 
 _T0 = datetime(2026, 6, 8, 23, 0, tzinfo=UTC)
@@ -536,34 +500,6 @@ async def test_write_readback_flip_back_retries_then_flags(coordinator, hass) ->
     assert coordinator.verification_status == "mismatch"
     assert "entity reads 50" in coordinator.last_verification_detail
     assert coordinator.notifications_sent == n_before + 1
-
-
-async def test_write_readback_drops_stale_charge_target(coordinator, hass) -> None:
-    """A charge-target command must stop being verified once the overnight plan goes stale
-    (>_PLAN_RETRY_MAX_AGE) — EC no longer re-enforces it, so a later divergence on the entity
-    must NOT raise a false mismatch (Gemini review)."""
-    coordinator.write_mode = WRITE_MODE_LIVE
-    charge_entity = coordinator.config[CONF_BATTERY_CHARGE_CONTROL]
-    charge_key = ("set_charge_target", charge_entity)
-    # EC commanded a charge target long ago; the entity has since diverged (window over).
-    coordinator._commanded[charge_key] = _CommandedWrite(
-        value=80.0, written_at=_T0 - timedelta(hours=2)
-    )
-    # The stale plan object itself is still cached (planning succeeded hours ago, then
-    # stopped refreshing) — without it the tick's startup catch-up would plan afresh.
-    coordinator.last_overnight_plan = Decision(
-        kind=DecisionKind.SET_CHARGE_TARGET,
-        target_entity=charge_entity,
-        value=80,
-        reason="overnight plan",
-        dedupe_key="overnight-stale-80",
-    )
-    coordinator.last_overnight_plan_at = _T0 - (_PLAN_RETRY_MAX_AGE + timedelta(hours=1))
-    hass.states.async_set(charge_entity, "20")  # changed since EC's stale command
-
-    await _tick(coordinator, secs=0, battery_power=None)
-    assert charge_key not in coordinator._commanded  # dropped, not verified
-    assert coordinator.verification_status == "n/a"
 
 
 async def test_verification_renotifies_after_recovery(coordinator) -> None:
