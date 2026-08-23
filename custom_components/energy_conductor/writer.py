@@ -14,7 +14,11 @@ _LOGGER = logging.getLogger(__name__)
 
 # Decisions surfaced via the Notifier only — they never write to hardware.
 _NOTIFY_ONLY_KINDS = frozenset(
-    {DecisionKind.RECOMMEND_HOT_WATER_BOOST, DecisionKind.VERIFICATION_MISMATCH}
+    {
+        DecisionKind.RECOMMEND_HOT_WATER_BOOST,
+        DecisionKind.VERIFICATION_MISMATCH,
+        DecisionKind.RATE_ECONOMICS_WARNING,
+    }
 )
 
 

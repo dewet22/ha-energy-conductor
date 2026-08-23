@@ -24,6 +24,12 @@ CONF_CHARGE_SLOT_1_END_ENTITY = "charge_slot_1_end_entity"
 CHARGE_SLOT_PIN_START = "00:00:00"
 CHARGE_SLOT_PIN_END = "23:59:00"
 
+# Rate-watch: the fill-mode premise is off_peak_import / eta < export. Warn-only — EC
+# never flips the regime on this. Round-trip efficiency is a constant, deliberately not
+# a knob; the re-arm band keeps a rate hovering on the boundary from flapping the warning.
+RATE_WATCH_EFFICIENCY = 0.9
+RATE_WATCH_REARM_GBP = 0.005
+
 # Config keys — grid meter + actuation verification (all optional; feature inert when unset)
 CONF_GRID_IMPORT_SENSOR = "grid_import_sensor"
 CONF_GRID_EXPORT_SENSOR = "grid_export_sensor"

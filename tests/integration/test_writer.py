@@ -27,6 +27,13 @@ async def test_writer_skips_notify_only_kind_in_live_mode(hass: MagicMock) -> No
     hass.services.async_call.assert_not_called()
 
 
+async def test_writer_skips_rate_warning_in_live_mode(hass: MagicMock) -> None:
+    """The rate-watch verdict is advisory: it must never reach an actuator."""
+    writer = Writer(hass, WRITE_MODE_LIVE)
+    await writer.write(_decision(DecisionKind.RATE_ECONOMICS_WARNING, -2.67))
+    hass.services.async_call.assert_not_called()
+
+
 async def test_writer_writes_number_kind_in_live_mode(hass: MagicMock) -> None:
     writer = Writer(hass, WRITE_MODE_LIVE)
     await writer.write(_decision(DecisionKind.SET_DISCHARGE_LIMIT, 0))

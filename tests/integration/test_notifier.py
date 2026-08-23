@@ -131,6 +131,19 @@ def test_render_message_slot_pin_formats_raw_time() -> None:
     assert "always-on" in msg
 
 
+def test_render_message_rate_warning_formats_signed_pence() -> None:
+    decision = Decision(
+        kind=DecisionKind.RATE_ECONOMICS_WARNING,
+        target_entity="rate_watch",
+        value=-1.67,
+        reason="Cheap-window fill margin is -1.67p/kWh",
+        dedupe_key="rate-watch-2026-06-08T23:00:00+00:00",
+    )
+    msg = render_message(decision, WRITE_MODE_LIVE)
+    assert "Tariff economics changed \u2192 -1.67p/kWh margin" in msg
+    assert "fill margin" in msg
+
+
 def test_every_decision_kind_has_a_label() -> None:
     """A kind without a label renders its raw enum value in the user's notification."""
     from custom_components.energy_conductor.notifier import _KIND_LABEL

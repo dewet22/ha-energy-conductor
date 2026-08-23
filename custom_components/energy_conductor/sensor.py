@@ -326,6 +326,10 @@ class OvernightPlanSensor(_BaseSensor):
             "dedupe_key": decision.dedupe_key,
             "outcome": self.coordinator.last_setpoint_outcome,
             "write_mode": self.coordinator.write_mode,
+            # Warn-only economics verdict on the regime's own premise — it rides here so
+            # the Tonight view reads regime + setpoint + whether it still pays as one row.
+            "rate_watch": self.coordinator.rate_watch_status,
+            "rate_watch_margin_gbp": self.coordinator.rate_watch_margin_gbp,
         }
         # SoC projection for the mission tape: served from EC's own model so the
         # dashboard never re-derives it client-side. Unmistakably a projection.

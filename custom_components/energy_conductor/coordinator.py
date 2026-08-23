@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -26,11 +27,15 @@ from .const import (
     CONF_CHARGE_SLOT_1_START_ENTITY,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
     CONF_WRITE_MODE,
     COORDINATOR_TICK_SECONDS,
     DOMAIN,
+    RATE_WATCH_EFFICIENCY,
+    RATE_WATCH_REARM_GBP,
     STATUS_DEGRADED,
     STATUS_ERROR,
     STATUS_OK,
@@ -42,9 +47,11 @@ from .decisions import Decision, DecisionKind
 from .discharge_guard import discharge_limit
 from .entity_ref import resolve_config
 from .model import SiteState
+from .money import normalise_rate
 from .money_tracker import MoneyTracker
 from .notifier import Notifier
-from .regimes import charge_setpoint
+from .rate_watch import fill_margin_gbp
+from .regimes import REGIME_CHEAP_CHARGE, charge_setpoint, current_regime
 from .verify import (
     VerificationResult,
     check_actuation,
@@ -172,6 +179,14 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_verification_detail: str | None = None
         self.last_verification_at: datetime | None = None
         self._mismatch_since: datetime | None = None
+        # Rate-watch (warn-only): does grid-filling during the cheap window still beat
+        # PV-filling? "n/a" until the rates are configured AND read in a cheap-charge tick.
+        self.rate_watch_status: str = "n/a"
+        self.rate_watch_margin_gbp: float | None = None
+        # Start of the current inversion episode, or None while the premise holds. Doubles
+        # as the warned-latch (not-None ⇒ already warned) and as the notification's dedupe
+        # key, so a recovered-then-recurring inversion gets a fresh key and re-notifies.
+        self._rate_watch_inverted_since: datetime | None = None
         # Write-readback: last successfully-commanded value per (kind, target), re-verified
         # against the entity every tick (catches flip-backs at any timescale).
         self._commanded: dict[tuple[str, str], _CommandedWrite] = {}
@@ -269,6 +284,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_setpoint_outcome = await self._emit(setpoint)
         self.last_setpoint_decision = setpoint
 
+        if current_regime(state) == REGIME_CHEAP_CHARGE:
+            await self._check_rate_economics(state)
+
         # Pin charge slot 1 always-on, so the charge target acts as a two-sided SoC setpoint
         # rather than a charge ceiling. Re-emitted every tick; the readback loop is what
         # re-writes an externally-edited slot (the dedupe key never changes).
@@ -296,6 +314,67 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
 
         # Actuation verification: did the meter reflect the discharge cap we just emitted?
         await self._verify_actuation(state)
+
+    async def _check_rate_economics(self, state: SiteState) -> None:
+        """Warn (once per inversion episode) when cheap-window economics stop favouring
+        fill-mode. Evaluated only in the cheap regime, when the import-rate sensor is by
+        definition reading the cheap rate. Warn-only: the regime never changes."""
+        import_rate = self._read_rate_state(CONF_IMPORT_RATE_SENSOR)
+        export_rate = self._read_rate_state(CONF_EXPORT_RATE_SENSOR)
+        if import_rate is None or export_rate is None:
+            self.rate_watch_status = "n/a"
+            self.rate_watch_margin_gbp = None
+            return
+        margin = fill_margin_gbp(import_rate, export_rate, efficiency=RATE_WATCH_EFFICIENCY)
+        self.rate_watch_margin_gbp = round(margin, 4)
+        if margin > 0:
+            self.rate_watch_status = "ok"
+            # Re-arm only once the margin is clear of the boundary, so a rate hovering
+            # around break-even can't flap a fresh warning every tick.
+            if margin > RATE_WATCH_REARM_GBP:
+                self._rate_watch_inverted_since = None
+            return
+
+        self.rate_watch_status = "inverted"
+        if self._rate_watch_inverted_since is None:
+            self._rate_watch_inverted_since = state.now
+        # Re-emitted every inverted tick with the episode-start dedupe key: _emit delivers
+        # it once per episode and retries a *failed* notification, which an outer latch
+        # would swallow (same reasoning as the actuation-mismatch path above).
+        await self._emit(
+            Decision(
+                kind=DecisionKind.RATE_ECONOMICS_WARNING,
+                target_entity="rate_watch",
+                value=round(margin * 100, 2),  # pence, for the notification
+                reason=(
+                    "Cheap-window fill margin is "
+                    f"{margin * 100:.2f}p/kWh — grid-filling no longer beats "
+                    "PV-filling; review the setpoint strategy"
+                ),
+                dedupe_key=f"rate-watch-{self._rate_watch_inverted_since.isoformat()}",
+            )
+        )
+
+    def _read_rate_state(self, conf_key: str) -> float | None:
+        """Read a configured rate sensor as GBP/kWh, or None when it can't be priced.
+
+        Unit-normalised via the same helper the money tracker uses: these sensors commonly
+        report GBp/kWh, and mixed denominations across the two would otherwise invert the
+        margin's sign and raise a false warning.
+        """
+        entity = self.config.get(conf_key)
+        if not entity:
+            return None
+        raw = self.hass.states.get(entity)
+        if raw is None or raw.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
+            return None
+        try:
+            value = float(raw.state)
+        except TypeError, ValueError:
+            return None
+        if not math.isfinite(value):
+            return None  # a NaN would compare false against zero and read as "inverted"
+        return normalise_rate(value, raw.attributes.get("unit_of_measurement"))
 
     def _check_writes_landed(self, now: datetime) -> VerificationResult | None:
         """Re-verify every commanded setpoint against its entity readback (write-landing).

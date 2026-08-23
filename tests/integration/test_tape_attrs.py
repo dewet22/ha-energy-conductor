@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from custom_components.energy_conductor.const import (
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
     CONF_FORECAST_SOLCAST_TODAY_SENSOR,
     CONF_GRID_EXPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_POWER_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
     DOMAIN,
 )
@@ -73,6 +76,39 @@ async def test_setpoint_sensor_reflects_self_consume_regime(hass: HomeAssistant)
     state = hass.states.get(_entity(hass, entry, "overnight-plan"))
     assert float(state.state) == 4.0  # charge control's default minimum
     assert state.attributes["regime"] == "self_consume"
+
+
+async def test_setpoint_sensor_exposes_rate_watch(hass: HomeAssistant) -> None:
+    """The rate-watch verdict rides on the setpoint sensor, so the Tonight view can show
+    the regime and whether its economic premise still holds from one entity."""
+    _arrange_entities(hass, soc="50")
+    hass.states.async_set(MOCK_CONFIG["off_peak_sensor"], "on", {})
+    hass.states.async_set("sensor.import_rate", "0.069", {"unit_of_measurement": "GBP/kWh"})
+    hass.states.async_set("sensor.export_rate", "0.12", {"unit_of_measurement": "GBP/kWh"})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **MOCK_CONFIG,
+            CONF_IMPORT_RATE_SENSOR: "sensor.import_rate",
+            CONF_EXPORT_RATE_SENSOR: "sensor.export_rate",
+        },
+        entry_id="tp6",
+    )
+    assert await _setup(hass, entry)
+
+    attrs = hass.states.get(_entity(hass, entry, "overnight-plan")).attributes
+    assert attrs["rate_watch"] == "ok"
+    assert attrs["rate_watch_margin_gbp"] == pytest.approx(0.0433, abs=1e-4)
+
+
+async def test_setpoint_sensor_rate_watch_na_without_rate_sensors(hass: HomeAssistant) -> None:
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="tp7")
+    assert await _setup(hass, entry)
+
+    attrs = hass.states.get(_entity(hass, entry, "overnight-plan")).attributes
+    assert attrs["rate_watch"] == "n/a"
+    assert attrs["rate_watch_margin_gbp"] is None
 
 
 async def test_soc_projection_targets_full(hass: HomeAssistant) -> None:

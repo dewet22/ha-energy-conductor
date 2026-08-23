@@ -642,3 +642,213 @@ async def test_slot_drift_heals_again_after_recovery(slot_coordinator, hass) -> 
     await drift_and_heal(at=120)
     # Three writes: the initial pin plus one re-issue per drift event.
     assert _written(slot_coordinator, _SLOT_START_ENTITY) == [CHARGE_SLOT_PIN_START] * 3
+
+
+# ---- rate-watch (warn-only fill-mode economics) ------------------------------------------
+
+from custom_components.energy_conductor.const import (  # noqa: E402
+    CONF_EXPORT_RATE_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
+)
+from homeassistant.const import STATE_UNAVAILABLE  # noqa: E402
+
+_IMPORT_RATE_ENTITY = "sensor.import_rate"
+_EXPORT_RATE_ENTITY = "sensor.export_rate"
+
+
+@pytest.fixture
+def rate_coordinator(hass, mock_config_entry) -> EnergyConductorCoordinator:
+    """Coordinator whose config also carries the import/export rate sensors."""
+    entry = MockConfigEntry(
+        domain=mock_config_entry.domain,
+        data={
+            **mock_config_entry.data,
+            CONF_IMPORT_RATE_SENSOR: _IMPORT_RATE_ENTITY,
+            CONF_EXPORT_RATE_SENSOR: _EXPORT_RATE_ENTITY,
+        },
+        entry_id="rate_entry",
+        title="Energy Conductor",
+    )
+    entry.add_to_hass(hass)
+    coord = EnergyConductorCoordinator(hass, entry)
+    coord.notifier.notify = AsyncMock(return_value=None)
+    coord.writer.write = AsyncMock(return_value=None)
+    return coord
+
+
+def _set_rates(hass, import_rate, export_rate, *, unit: str = "GBP/kWh") -> None:
+    for entity, value in ((_IMPORT_RATE_ENTITY, import_rate), (_EXPORT_RATE_ENTITY, export_rate)):
+        if value is None:
+            hass.states.async_set(entity, STATE_UNAVAILABLE)
+        else:
+            hass.states.async_set(entity, str(value), {"unit_of_measurement": unit})
+
+
+async def _cheap_tick(coordinator, *, secs: int) -> None:
+    coordinator.adapter.build_site_state = AsyncMock(
+        return_value=_site_state(None, now=_T0 + timedelta(seconds=secs), off_peak=True)
+    )
+    await coordinator._async_update_data()
+
+
+async def _peak_tick(coordinator, *, secs: int) -> None:
+    coordinator.adapter.build_site_state = AsyncMock(
+        return_value=_site_state(None, now=_T0 + timedelta(seconds=secs), off_peak=False)
+    )
+    await coordinator._async_update_data()
+
+
+def _warnings(coordinator) -> list[Decision]:
+    return [
+        call.args[0]
+        for call in coordinator.notifier.notify.await_args_list
+        if call.args[0].kind == DecisionKind.RATE_ECONOMICS_WARNING
+    ]
+
+
+async def test_rate_watch_ok_at_current_tariff(rate_coordinator, hass) -> None:
+    """6.9p import / 12p export at eta 0.9 still favours grid-filling: status ok, no warning."""
+    _set_rates(hass, 0.069, 0.12)
+    await _cheap_tick(rate_coordinator, secs=0)
+
+    assert rate_coordinator.rate_watch_status == "ok"
+    assert rate_coordinator.rate_watch_margin_gbp == pytest.approx(0.0433, abs=1e-4)
+    assert _warnings(rate_coordinator) == []
+
+
+async def test_rate_watch_inverted_warns_exactly_once_per_episode(rate_coordinator, hass) -> None:
+    """A collapsed export rate inverts the premise: warn once, then stay quiet while inverted."""
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=0)
+
+    assert rate_coordinator.rate_watch_status == "inverted"
+    assert rate_coordinator.rate_watch_margin_gbp < 0
+    warnings = _warnings(rate_coordinator)
+    assert len(warnings) == 1
+    # The reason interpolates only the margin — never an entity_id (redaction rule).
+    assert "p/kWh" in warnings[0].reason
+    assert "sensor." not in warnings[0].reason
+
+    # Repeat ticks in the same episode: still exactly one notification.
+    await _cheap_tick(rate_coordinator, secs=30)
+    await _cheap_tick(rate_coordinator, secs=60)
+    assert len(_warnings(rate_coordinator)) == 1
+    # ...and the regime is untouched throughout: the check only ever warns.
+    assert rate_coordinator.last_setpoint_decision.value == 100
+
+
+async def test_rate_watch_rearms_above_threshold_and_warns_again(rate_coordinator, hass) -> None:
+    """Recovery clear of the hysteresis band re-arms the latch, so a fresh inversion warns."""
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=0)
+    assert len(_warnings(rate_coordinator)) == 1
+
+    # Export recovers well clear of RATE_WATCH_REARM_GBP → ok and re-armed.
+    _set_rates(hass, 0.069, 0.12)
+    await _cheap_tick(rate_coordinator, secs=30)
+    assert rate_coordinator.rate_watch_status == "ok"
+
+    # A second inversion episode is a second warning.
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=60)
+    assert rate_coordinator.rate_watch_status == "inverted"
+    assert len(_warnings(rate_coordinator)) == 2
+
+
+async def test_rate_watch_hysteresis_band_does_not_rearm(rate_coordinator, hass) -> None:
+    """A margin barely positive reads ok but must NOT re-arm — that band is where a
+    hovering rate would otherwise flap the notification once per tick."""
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=0)
+    assert len(_warnings(rate_coordinator)) == 1
+
+    # +0.004 GBP/kWh: positive, but inside the 0.005 re-arm band.
+    _set_rates(hass, 0.09, 0.104)
+    await _cheap_tick(rate_coordinator, secs=30)
+    assert rate_coordinator.rate_watch_status == "ok"
+    assert rate_coordinator.rate_watch_margin_gbp == pytest.approx(0.004, abs=1e-4)
+
+    # Dipping back under zero is the same episode — no second warning.
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=60)
+    assert rate_coordinator.rate_watch_status == "inverted"
+    assert len(_warnings(rate_coordinator)) == 1
+
+
+async def test_rate_watch_na_when_rates_unconfigured(coordinator) -> None:
+    """No rate sensors configured → nothing to judge; the check must not guess."""
+    await _cheap_tick(coordinator, secs=0)
+
+    assert coordinator.rate_watch_status == "n/a"
+    assert coordinator.rate_watch_margin_gbp is None
+    assert _warnings(coordinator) == []
+
+
+async def test_rate_watch_na_when_rates_unreadable(rate_coordinator, hass) -> None:
+    """An unavailable rate sensor resets to n/a rather than leaving a stale verdict up."""
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=0)
+    assert rate_coordinator.rate_watch_status == "inverted"
+
+    _set_rates(hass, 0.069, None)
+    await _cheap_tick(rate_coordinator, secs=30)
+    assert rate_coordinator.rate_watch_status == "n/a"
+    assert rate_coordinator.rate_watch_margin_gbp is None
+
+
+async def test_rate_watch_na_when_rate_is_not_finite(rate_coordinator, hass) -> None:
+    """A NaN parses as a float but compares false against zero — it must not read as
+    an inversion and fire a "nanp/kWh" warning."""
+    _set_rates(hass, "nan", 0.12)
+    await _cheap_tick(rate_coordinator, secs=0)
+
+    assert rate_coordinator.rate_watch_status == "n/a"
+    assert rate_coordinator.rate_watch_margin_gbp is None
+    assert _warnings(rate_coordinator) == []
+
+
+async def test_rate_watch_na_when_rate_unit_is_foreign(rate_coordinator, hass) -> None:
+    """An unpriceable unit (foreign currency) is n/a, never silently treated as sterling."""
+    _set_rates(hass, 0.069, 0.05, unit="EUR/kWh")
+    await _cheap_tick(rate_coordinator, secs=0)
+
+    assert rate_coordinator.rate_watch_status == "n/a"
+    assert _warnings(rate_coordinator) == []
+
+
+async def test_rate_watch_not_evaluated_in_self_consume(rate_coordinator, hass) -> None:
+    """Outside the cheap window the import sensor is reading the PEAK rate, so the
+    inequality is meaningless — the last cheap-window verdict is left untouched."""
+    _set_rates(hass, 0.069, 0.12)
+    await _cheap_tick(rate_coordinator, secs=0)
+    assert rate_coordinator.rate_watch_status == "ok"
+
+    # Peak rates would invert the margin if it were (wrongly) evaluated here.
+    _set_rates(hass, 0.30, 0.12)
+    await _peak_tick(rate_coordinator, secs=30)
+    assert rate_coordinator.rate_watch_status == "ok"
+    assert rate_coordinator.rate_watch_margin_gbp == pytest.approx(0.0433, abs=1e-4)
+    assert _warnings(rate_coordinator) == []
+
+
+async def test_rate_watch_latch_survives_a_self_consume_gap(rate_coordinator, hass) -> None:
+    """The episode latch is not reset by leaving the cheap regime: an inversion that is
+    still live on the next cheap window must not re-notify."""
+    _set_rates(hass, 0.069, 0.05)
+    await _cheap_tick(rate_coordinator, secs=0)
+    assert len(_warnings(rate_coordinator)) == 1
+
+    await _peak_tick(rate_coordinator, secs=30)
+    await _cheap_tick(rate_coordinator, secs=60)
+
+    assert rate_coordinator.rate_watch_status == "inverted"
+    assert len(_warnings(rate_coordinator)) == 1
+
+
+async def test_rate_watch_normalises_pence_denominated_sensors(rate_coordinator, hass) -> None:
+    """Rate sensors commonly report GBp/kWh; the margin attribute is named _gbp and must be."""
+    _set_rates(hass, 6.9, 12.0, unit="GBp/kWh")
+    await _cheap_tick(rate_coordinator, secs=0)
+
+    assert rate_coordinator.rate_watch_status == "ok"
+    assert rate_coordinator.rate_watch_margin_gbp == pytest.approx(0.0433, abs=1e-4)
