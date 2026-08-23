@@ -66,6 +66,7 @@ from .const import (
     DAILY_TARGET_PERCENTILE,
     DEFAULT_BASELINE_LOAD_W,
     DEFAULT_BATTERY_MAX_POWER_W,
+    DEFAULT_CHARGE_TARGET_MIN_PERCENT,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_HOTWATER_CAPACITY_KWH,
@@ -277,7 +278,9 @@ class Adapter:
             reserve_percent=self._reserve_percent(),
             power_w=self._battery_power_w(),
             charge_target_min_percent=_min_attr(
-                self.hass, self.config[CONF_BATTERY_CHARGE_CONTROL], default=4.0
+                self.hass,
+                self.config[CONF_BATTERY_CHARGE_CONTROL],
+                default=DEFAULT_CHARGE_TARGET_MIN_PERCENT,
             ),
         )
 

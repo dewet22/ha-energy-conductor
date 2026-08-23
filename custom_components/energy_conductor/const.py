@@ -133,6 +133,11 @@ WRITE_MODE_LIVE = "live"
 DEFAULT_RESERVE_PERCENT = 10
 DEFAULT_EV_MIN_ACTIVATION_W = 1400
 DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribute
+# Fallback self-consume setpoint when the charge control lacks a readable 'min' attribute.
+# Shared by the Battery model default and the adapter's _min_attr fallback — the two are
+# semantically coupled (the adapter feeds the field; non-adapter constructions use the
+# dataclass default), so they must never drift apart.
+DEFAULT_CHARGE_TARGET_MIN_PERCENT = 4.0
 DEFAULT_WINTER_MIN_KWH = 0.0
 DEFAULT_SUMMER_MAX_KWH = 8.0
 DEFAULT_DAILY_KWH_TARGET = 10.0

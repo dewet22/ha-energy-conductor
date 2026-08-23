@@ -10,6 +10,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from .const import DEFAULT_CHARGE_TARGET_MIN_PERCENT
+
 
 def _require_aware(name: str, value: datetime | None) -> None:
     if value is None:
@@ -33,7 +35,7 @@ class Battery:
     # setpoint the inverter accepts. The self-consume regime writes this value: "get out
     # of the way" expressed as the control's own floor. The hardware reserve governs the
     # actual discharge stop, so a setpoint at/below reserve is always safe. (Spec 2026-08-23.)
-    charge_target_min_percent: float = 4.0
+    charge_target_min_percent: float = DEFAULT_CHARGE_TARGET_MIN_PERCENT
 
     def __post_init__(self) -> None:
         # capacity_kwh comes straight from config with no clamp site; 0 would be a
