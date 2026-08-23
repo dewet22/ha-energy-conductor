@@ -491,7 +491,9 @@ git add custom_components/energy_conductor tests
 git commit -m "feat: setpoint sensor + regime-model tape projection"
 ```
 
----### Task 5: Slot-1 pinning (config, decision kind, writer, readback)
+---
+
+### Task 5: Slot-1 pinning (config, decision kind, writer, readback)
 
 **Files:**
 - Modify: `custom_components/energy_conductor/const.py` (2 conf keys + 2 pin constants)
