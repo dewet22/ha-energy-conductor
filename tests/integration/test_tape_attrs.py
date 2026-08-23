@@ -84,9 +84,6 @@ async def test_soc_projection_targets_full(hass: HomeAssistant) -> None:
     """
     now = dt_util.utcnow()
     _arrange_entities(hass, soc="50")
-    # The adapter reads max charge POWER off the charge control's `max` attribute;
-    # give it a realistic 3 kW so the off-peak leg can actually fill within the window.
-    hass.states.async_set(MOCK_CONFIG["battery_charge_control"], "40", {"max": 3000})
     hass.states.async_set(
         MOCK_CONFIG["off_peak_sensor"],
         "off",

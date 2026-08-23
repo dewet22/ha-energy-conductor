@@ -65,6 +65,7 @@ from .const import (
     DAILY_TARGET_MIN_SAMPLES,
     DAILY_TARGET_PERCENTILE,
     DEFAULT_BASELINE_LOAD_W,
+    DEFAULT_BATTERY_MAX_POWER_W,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_HOTWATER_CAPACITY_KWH,
@@ -183,6 +184,7 @@ def parse_hh_mm(raw: object) -> tuple[int, int] | None:
 
 
 _MAX_POWER_W = 20_000  # no residential inverter exceeds ~20 kW; reject absurd/negative
+_MIN_PLAUSIBLE_CHARGE_POWER_W = 500  # below this the control is a %-scale target, not watts
 
 
 def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
@@ -246,9 +248,26 @@ class Adapter:
         soc = _read_float(
             self.hass, self.config[CONF_BATTERY_SOC_SENSOR], max_age_seconds=STALE_FORECAST_SECONDS
         )
-        max_charge = _max_attr(self.hass, self.config[CONF_BATTERY_CHARGE_CONTROL], default=3000)
+        # Charge side: the same entity doubles as the SoC *setpoint* target under the
+        # regime model, and a %-scale control's `max` is 100 percent — not 100 watts.
+        # Anything under 500 W is therefore a percent scale, not a power scale (no real
+        # hybrid inverter charges slower than that), so fall back to the default estimate;
+        # otherwise the tape's projection would fill the battery at 100 W (~1 %/h).
+        max_charge = _max_attr(
+            self.hass,
+            self.config[CONF_BATTERY_CHARGE_CONTROL],
+            default=DEFAULT_BATTERY_MAX_POWER_W,
+        )
+        if max_charge < _MIN_PLAUSIBLE_CHARGE_POWER_W:
+            max_charge = DEFAULT_BATTERY_MAX_POWER_W
+        # Discharge side is deliberately NOT gated the same way: the discharge guard
+        # writes this value verbatim to the limit entity, and on a %-based limit control
+        # (0-50) writing its own max IS the correct "release the battery" write. Gating
+        # it to 3000 would push 3000 into a 0-50 control and break actuation.
         max_discharge = _max_attr(
-            self.hass, self.config[CONF_BATTERY_DISCHARGE_LIMIT], default=3000
+            self.hass,
+            self.config[CONF_BATTERY_DISCHARGE_LIMIT],
+            default=DEFAULT_BATTERY_MAX_POWER_W,
         )
         battery = Battery(
             soc_percent=soc,
