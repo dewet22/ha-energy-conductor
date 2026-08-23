@@ -37,18 +37,18 @@ def _forecast_kw_at(state: SiteState, t: datetime) -> float:
 def project_soc(
     state: SiteState,
     *,
-    target_percent: float,
+    target_percent: float = 100.0,
     hours: int = 12,
     step_minutes: int = 30,
 ) -> list[tuple[datetime, float]]:
     """Project SoC forward for the mission tape. Honest but simple, by design.
 
-    Mirrors what the two decision loops will actually do: inside an off-peak
-    window the discharge guard idles the battery and the charge setpoint fills
-    it toward `target_percent` at the battery's max charge power; outside it the
-    house draws the baseline load net of forecast PV (a PV surplus charges).
-    Clamped to [reserve, 100]. This is a *projection* — the consumer renders it
-    unmistakably as one.
+    Mirrors what the regime model will actually do: inside a cheap window the
+    setpoint engine charges toward 100% at the battery's max charge power and the
+    discharge guard holds; outside it the house draws the baseline load net of
+    forecast PV (a PV surplus charges) down to the reserve. Clamped to
+    [reserve, 100]. This is a *projection* — the consumer renders it unmistakably
+    as one.
     """
     battery = state.battery
     soc = battery.soc_percent

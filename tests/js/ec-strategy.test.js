@@ -84,7 +84,7 @@ describe("dashboard structure", () => {
     const names = cardByType(dash, "entities").entities.map((r) => r.name);
     expect(names).toContain("Status");
     expect(names).toContain("Battery");
-    expect(names).toContain("Charge target tonight");
+    expect(names).toContain("SoC setpoint");
     expect(names).toContain("Hot water reserve");
     expect(names).toContain("Hot water boost needed");
   });

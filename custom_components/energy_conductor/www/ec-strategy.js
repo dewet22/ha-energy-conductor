@@ -167,7 +167,7 @@
       row(acc("status"), "Status"),
       row(acc("battery-soc"), "Battery"),
       row(acc("battery-usable-energy"), "Usable energy"),
-      row(acc("overnight-plan"), "Charge target tonight"),
+      row(acc("overnight-plan"), "SoC setpoint"),
       row(acc("solar-forecast-today"), "Solar forecast tomorrow"),
       row(acc("off-peak-window-start"), "Off-peak starts"),
       row(acc("cheap-window-end"), "Off-peak ends"),
@@ -178,7 +178,7 @@
     }
     cards.push({ type: "entities", title: "Tonight", entities: cleanRows(tonightRows) });
 
-    // 2. Plan reasoning - the overnight plan's reason string (a sensor
+    // 2. Plan reasoning - the setpoint decision's reason string (a sensor
     //    attribute that is otherwise invisible). The entity_id is interpolated
     //    into a Jinja2 template; it is safe to embed because buildAccessors only
     //    resolves IDs matching VALID_ENTITY_ID (template injection chokepoint).
@@ -190,7 +190,7 @@
         content:
           "{% set r = state_attr('" +
           planId +
-          "', 'reason') %}\n{{ r if r else '*No overnight plan computed yet.*' }}",
+          "', 'reason') %}\n{{ r if r else '*No setpoint decision yet.*' }}",
       });
     }
 
