@@ -209,6 +209,21 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     return clamped
 
 
+def _min_attr(hass: HomeAssistant, entity_id: str, default: float) -> float:
+    """The entity's `min` attribute as a percent, clamped to [0, 100]; `default` if absent."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return default
+    raw = state.attributes.get("min")
+    try:
+        value = float(raw)
+    except TypeError, ValueError:
+        return default
+    if not math.isfinite(value):
+        return default
+    return max(0.0, min(100.0, value))
+
+
 class EntityProblem(RuntimeError):
     """Raised when an entity we depend on is missing, unavailable, stale, or unparseable."""
 
@@ -242,6 +257,9 @@ class Adapter:
             max_discharge_power_w=max_discharge,
             reserve_percent=self._reserve_percent(),
             power_w=self._battery_power_w(),
+            charge_target_min_percent=_min_attr(
+                self.hass, self.config[CONF_BATTERY_CHARGE_CONTROL], default=4.0
+            ),
         )
 
         # Tariff
