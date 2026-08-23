@@ -502,6 +502,35 @@ async def test_write_readback_flip_back_retries_then_flags(coordinator, hass) ->
     assert coordinator.notifications_sent == n_before + 1
 
 
+async def test_readback_loop_processes_every_commanded_entry(coordinator, hass) -> None:
+    """One stuck entity must not blind the readback loop to the streams behind it.
+
+    With four commanded streams (discharge, setpoint, two slot pins) an early
+    exhausted-budget mismatch used to return straight out of the loop, so every later
+    entry lost its mismatch check, its self-heal and its budget re-arm.
+    """
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=None)
+    charge_key = ("set_charge_target", "number.battery_charge_target")
+    assert list(coordinator._commanded) == [_DISCHARGE_KEY, charge_key]
+
+    # First stream: mismatched with its self-heal budget already spent → flags.
+    hass.states.async_set("number.battery_discharge_limit", "50")
+    coordinator._commanded[_DISCHARGE_KEY].written_at = _T0 - timedelta(seconds=120)
+    coordinator._commanded[_DISCHARGE_KEY].retries = 1
+    # Second stream: a fresh drift that still has its self-heal available.
+    hass.states.async_set("number.battery_charge_target", "4")
+    coordinator._commanded[charge_key].written_at = _T0 - timedelta(seconds=120)
+
+    result = coordinator._check_writes_landed(_T0 + timedelta(seconds=30))
+
+    assert result is not None and result.ok is False
+    assert "set_discharge_limit" in result.detail  # the first stream's verdict still wins
+    # ...and the second stream was still processed: self-heal armed, re-issue unblocked.
+    assert coordinator._commanded[charge_key].retries == 1
+    assert coordinator._emit_state[charge_key].written is None
+
+
 async def test_verification_renotifies_after_recovery(coordinator) -> None:
     """A second mismatch the same day, after recovery, is a fresh episode → notifies again
     (the per-episode dedupe key, not per-day; Codex review)."""
@@ -580,6 +609,31 @@ async def test_slot_pin_skipped_when_unconfigured(coordinator) -> None:
 
     kinds = [call.args[0].kind for call in coordinator.writer.write.await_args_list]
     assert DecisionKind.SET_SLOT_TIME not in kinds
+
+
+async def test_slot_pin_unconfigured_warns_once_in_live_mode(coordinator, caplog) -> None:
+    """A live install without the pickers gets the setpoint writes but not the two-sided
+    mechanics they assume — say so once, rather than skipping in silence."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    caplog.clear()
+    await _tick(coordinator, secs=0, battery_power=None)
+    await _tick(coordinator, secs=30, battery_power=None)
+
+    warnings = [r for r in caplog.records if "charge slot 1" in r.message.lower()]
+    assert len(warnings) == 1
+    assert coordinator.slot_pin_status == "unconfigured"
+
+
+async def test_slot_pin_unconfigured_silent_in_dry_run(coordinator, caplog) -> None:
+    """Dry-run drives nothing, so the missing pickers aren't yet a problem to warn about."""
+    caplog.clear()
+    await _tick(coordinator, secs=0, battery_power=None)
+
+    assert not [r for r in caplog.records if "charge slot 1" in r.message.lower()]
+
+
+async def test_slot_pin_status_pinned_when_configured(slot_coordinator) -> None:
+    assert slot_coordinator.slot_pin_status == "pinned"
 
 
 async def test_slot_drift_heals_via_readback(slot_coordinator, hass) -> None:

@@ -145,6 +145,18 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         )
         self.writer = Writer(hass, self.config.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN))
 
+        # Charge slot 1 pinning is what turns the charge target into a two-sided SoC setpoint.
+        # Without both pickers EC still steers the setpoint, but only as a charge ceiling —
+        # a materially different control, so the shortfall is published rather than skipped
+        # in silence (an existing install upgrading via HACS lands here by default).
+        self.slot_pin_status: str = (
+            "pinned"
+            if self.config.get(CONF_CHARGE_SLOT_1_START_ENTITY)
+            and self.config.get(CONF_CHARGE_SLOT_1_END_ENTITY)
+            else "unconfigured"
+        )
+        self._warned_slot_pin_unconfigured = False
+
         self._emit_state: dict[tuple[str, str], _EmitState] = defaultdict(_EmitState)
         self.status: str = STATUS_OK
         self.last_error: str | None = None
@@ -290,12 +302,10 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         # Pin charge slot 1 always-on, so the charge target acts as a two-sided SoC setpoint
         # rather than a charge ceiling. Re-emitted every tick; the readback loop is what
         # re-writes an externally-edited slot (the dedupe key never changes).
-        slot_start = self.config.get(CONF_CHARGE_SLOT_1_START_ENTITY)
-        slot_end = self.config.get(CONF_CHARGE_SLOT_1_END_ENTITY)
-        if slot_start and slot_end:
+        if self.slot_pin_status == "pinned":
             for entity, value in (
-                (slot_start, CHARGE_SLOT_PIN_START),
-                (slot_end, CHARGE_SLOT_PIN_END),
+                (self.config[CONF_CHARGE_SLOT_1_START_ENTITY], CHARGE_SLOT_PIN_START),
+                (self.config[CONF_CHARGE_SLOT_1_END_ENTITY], CHARGE_SLOT_PIN_END),
             ):
                 await self._emit(
                     Decision(
@@ -306,6 +316,14 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                         dedupe_key=f"slot-pin-{value}",
                     )
                 )
+        elif self.write_mode == WRITE_MODE_LIVE and not self._warned_slot_pin_unconfigured:
+            # Once per coordinator lifetime — the condition can't change without a reload.
+            self._warned_slot_pin_unconfigured = True
+            _LOGGER.warning(
+                "Charge slot 1 start/end are not configured: the SoC setpoint acts as a "
+                "charge ceiling only, so the battery will not be held up to the setpoint. "
+                "Reconfigure Energy Conductor and select both slot time entities."
+            )
 
         # Hot-water boost prompt — notify-only; per-day dedupe keeps it to one prompt.
         hot_water_decision = _hot_water_decision(state)
@@ -383,11 +401,18 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         window (which absorbs the transient flip-back signature) a non-matching readback means
         the write was silently rejected or didn't persist. Self-heals once by clearing the
         emit bookkeeping so the M-4 every-tick retry re-issues the command; a second
-        *consecutive* failure returns a mismatch verdict, and a healthy readback re-arms the
-        budget. Returns ok when all judgeable writes match, None when
-        nothing is judgeable (settling / unreadable entities / no commands yet).
+        *consecutive* failure yields a mismatch verdict, and a healthy readback re-arms the
+        budget. Returns the first mismatch when any judgeable write has failed, ok when all
+        judgeable writes match, None when nothing is judgeable (settling / unreadable
+        entities / no commands yet).
+
+        Every commanded stream is evaluated on every call — the loop never short-circuits on
+        the first mismatch. With four streams (discharge, setpoint, two slot pins) an early
+        return would leave the ones behind it unchecked, unhealed and with their retry budget
+        never re-armed: one stuck entity would blind the rest (review finding).
         """
         verdict: VerificationResult | None = None
+        bad: VerificationResult | None = None
         for key, cmd in self._commanded.items():
             if (now - cmd.written_at).total_seconds() < VERIFY_MISMATCH_SECONDS:
                 continue  # write-echo still settling — no verdict for this command yet
@@ -420,14 +445,15 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                     self._emit_state[key].written = None
                     _LOGGER.warning("Write readback failed (%s); re-issuing once", result.detail)
                     continue
-                return result
+                bad = bad or result
+                continue
             # A healthy readback means the last re-issue stuck, so re-arm the budget: the next
             # drift gets its own self-heal. Without this the budget is spent for the
             # coordinator's lifetime whenever the commanded value never changes — as the slot
             # pins never do — and a later drift would only ever be flagged (review finding).
             cmd.retries = 0
             verdict = verdict or result
-        return verdict
+        return bad or verdict
 
     async def _verify_actuation(self, state: SiteState) -> None:
         """Verify EC's commands took effect; flag a persistent mismatch.
