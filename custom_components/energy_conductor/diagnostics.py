@@ -85,8 +85,7 @@ async def async_get_config_entry_diagnostics(
             "discharge": _decision_dict(
                 coord.last_discharge_decision, coord.last_discharge_outcome
             ),
-            "overnight": _decision_dict(coord.last_overnight_plan, coord.last_overnight_outcome),
-            "overnight_plan_at": _iso(coord.last_overnight_plan_at),
+            "setpoint": _decision_dict(coord.last_setpoint_decision, coord.last_setpoint_outcome),
         },
         "last_site_state": (
             _json_safe(dataclasses.asdict(coord.last_site_state))

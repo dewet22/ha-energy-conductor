@@ -67,8 +67,9 @@ class TariffCheapNowBinarySensor(_BaseBinarySensor):
     # No device_class — HA's binary-sensor classes (POWER, RUNNING, PLUG, …)
     # all describe physical states and would be misleading for a tariff signal.
     # Note: this mirrors the off-peak rate sensor broadly (overnight tariff AND any
-    # OI dispatch slots). See "Overnight off-peak tariff end" for the overnight planning
-    # boundary, which is independent of why this sensor is currently active.
+    # OI dispatch slots). See "Overnight off-peak tariff end" for the fixed overnight
+    # window boundary used by the SoC projection, which is independent of why this
+    # sensor is currently active.
 
     def __init__(self, coordinator: EnergyConductorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)

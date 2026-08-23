@@ -167,7 +167,7 @@
       row(acc("status"), "Status"),
       row(acc("battery-soc"), "Battery"),
       row(acc("battery-usable-energy"), "Usable energy"),
-      row(acc("overnight-plan"), "Charge target tonight"),
+      row(acc("overnight-plan"), "SoC setpoint"),
       row(acc("solar-forecast-today"), "Solar forecast tomorrow"),
       row(acc("off-peak-window-start"), "Off-peak starts"),
       row(acc("cheap-window-end"), "Off-peak ends"),
@@ -178,7 +178,7 @@
     }
     cards.push({ type: "entities", title: "Tonight", entities: cleanRows(tonightRows) });
 
-    // 2. Plan reasoning - the overnight plan's reason string (a sensor
+    // 2. Plan reasoning - the setpoint decision's reason string (a sensor
     //    attribute that is otherwise invisible). The entity_id is interpolated
     //    into a Jinja2 template; it is safe to embed because buildAccessors only
     //    resolves IDs matching VALID_ENTITY_ID (template injection chokepoint).
@@ -186,11 +186,11 @@
     if (planId) {
       cards.push({
         type: "markdown",
-        title: "Plan reasoning",
+        title: "Setpoint reasoning",
         content:
           "{% set r = state_attr('" +
           planId +
-          "', 'reason') %}\n{{ r if r else '*No overnight plan computed yet.*' }}",
+          "', 'reason') %}\n{{ r if r else '*No setpoint decision yet.*' }}",
       });
     }
 
@@ -219,7 +219,7 @@
       }
       if (planId) {
         lines.push(
-          "**Charge target:** {{ states('" +
+          "**SoC setpoint:** {{ states('" +
             planId +
             "') }}% - {{ state_attr('" +
             planId +
@@ -270,15 +270,15 @@
       });
     }
 
-    // 4. Overnight charge targets over a month (relies on the sensor's LTS
-    //    state_class). Sparse until statistics accumulate.
+    // 4. The SoC setpoint over a month (relies on the sensor's LTS state_class).
+    //    Sparse until statistics accumulate.
     if (planId) {
       cards.push({
         type: "statistics-graph",
-        title: "Overnight charge targets - 30 days",
+        title: "Battery SoC setpoint - 30 days",
         days_to_show: 30,
         stat_types: ["mean"],
-        entities: [{ entity: planId, name: "Target %" }],
+        entities: [{ entity: planId, name: "Setpoint %" }],
       });
     }
 

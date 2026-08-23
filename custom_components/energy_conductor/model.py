@@ -10,6 +10,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from .const import DEFAULT_CHARGE_TARGET_MIN_PERCENT
+
 
 def _require_aware(name: str, value: datetime | None) -> None:
     if value is None:
@@ -29,11 +31,16 @@ class Battery:
     reserve_percent: float
     # Live battery power, EC convention +ve = discharging. None when no sensor is configured.
     power_w: float | None = None
+    # The charge-target control entity's own minimum (its `min` attribute) — the lowest
+    # setpoint the inverter accepts. The self-consume regime writes this value: "get out
+    # of the way" expressed as the control's own floor. The hardware reserve governs the
+    # actual discharge stop, so a setpoint at/below reserve is always safe. (Spec 2026-08-23.)
+    charge_target_min_percent: float = DEFAULT_CHARGE_TARGET_MIN_PERCENT
 
     def __post_init__(self) -> None:
         # capacity_kwh comes straight from config with no clamp site; 0 would be a
-        # ZeroDivisionError deep in plan_overnight (swallowed → opaque silent stop), and
-        # nan/inf slip past `<= 0` (nan compares false) to produce a bogus 100% target.
+        # ZeroDivisionError deep in the SoC projection (swallowed → opaque silent stop), and
+        # nan/inf slip past `<= 0` (nan compares false) to produce a bogus projection.
         if not math.isfinite(self.capacity_kwh) or self.capacity_kwh <= 0:
             raise ValueError(
                 f"Battery.capacity_kwh must be finite and > 0 (got {self.capacity_kwh!r})"
@@ -43,6 +50,11 @@ class Battery:
         if not 0 <= self.reserve_percent <= 100:
             raise ValueError(
                 f"Battery.reserve_percent must be in [0, 100] (got {self.reserve_percent!r})"
+            )
+        if not 0 <= self.charge_target_min_percent <= 100:
+            raise ValueError(
+                "Battery.charge_target_min_percent must be in [0, 100] "
+                f"(got {self.charge_target_min_percent!r})"
             )
 
 
@@ -147,14 +159,14 @@ class SiteState:
     baseline_load_w: float
     baseline_source: str | None = None  # "stats" | "default"
     baseline_qualifying_buckets: int | None = None  # idle-floor buckets that fed the percentile
-    daily_kwh_target: float = 0.0  # learned or static; consumed by overnight planner
+    daily_kwh_target: float = 0.0  # learned or static; informational diagnostic sensor only
     daily_kwh_target_source: str | None = None  # "stats" | "default"
     daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
     hot_water: HotWaterState | None = None  # None when the diverter isn't configured
     grid: GridState | None = None  # None when the grid meter sensors aren't configured
     # Forecast for the mission-tape SoC projection: spans the projection window
-    # (today-remaining + tomorrow), unlike `solar_forecast` which is tomorrow-only
-    # for the overnight planner. None falls back to `solar_forecast`. See
+    # (today-remaining + tomorrow), unlike `solar_forecast` which is tomorrow-only.
+    # None falls back to `solar_forecast`. See
     # overnight.project_soc / adapter._build_projection_forecast.
     projection_forecast: SolarForecast | None = None
 

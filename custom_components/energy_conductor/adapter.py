@@ -65,6 +65,8 @@ from .const import (
     DAILY_TARGET_MIN_SAMPLES,
     DAILY_TARGET_PERCENTILE,
     DEFAULT_BASELINE_LOAD_W,
+    DEFAULT_BATTERY_MAX_POWER_W,
+    DEFAULT_CHARGE_TARGET_MIN_PERCENT,
     DEFAULT_DAILY_KWH_TARGET,
     DEFAULT_EV_MIN_ACTIVATION_W,
     DEFAULT_HOTWATER_CAPACITY_KWH,
@@ -183,6 +185,7 @@ def parse_hh_mm(raw: object) -> tuple[int, int] | None:
 
 
 _MAX_POWER_W = 20_000  # no residential inverter exceeds ~20 kW; reject absurd/negative
+_MIN_PLAUSIBLE_CHARGE_POWER_W = 500  # below this the control is a %-scale target, not watts
 
 
 def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
@@ -209,6 +212,21 @@ def _max_attr(hass: HomeAssistant, entity_id: str, default: int) -> int:
     return clamped
 
 
+def _min_attr(hass: HomeAssistant, entity_id: str, default: float) -> float:
+    """The entity's `min` attribute as a percent, clamped to [0, 100]; `default` if absent."""
+    state = hass.states.get(entity_id)
+    if state is None:
+        return default
+    raw = state.attributes.get("min")
+    try:
+        value = float(raw)
+    except TypeError, ValueError:
+        return default
+    if not math.isfinite(value):
+        return default
+    return max(0.0, min(100.0, value))
+
+
 class EntityProblem(RuntimeError):
     """Raised when an entity we depend on is missing, unavailable, stale, or unparseable."""
 
@@ -231,9 +249,26 @@ class Adapter:
         soc = _read_float(
             self.hass, self.config[CONF_BATTERY_SOC_SENSOR], max_age_seconds=STALE_FORECAST_SECONDS
         )
-        max_charge = _max_attr(self.hass, self.config[CONF_BATTERY_CHARGE_CONTROL], default=3000)
+        # Charge side: the same entity doubles as the SoC *setpoint* target under the
+        # regime model, and a %-scale control's `max` is 100 percent — not 100 watts.
+        # Anything under 500 W is therefore a percent scale, not a power scale (no real
+        # hybrid inverter charges slower than that), so fall back to the default estimate;
+        # otherwise the tape's projection would fill the battery at 100 W (~1 %/h).
+        max_charge = _max_attr(
+            self.hass,
+            self.config[CONF_BATTERY_CHARGE_CONTROL],
+            default=DEFAULT_BATTERY_MAX_POWER_W,
+        )
+        if max_charge < _MIN_PLAUSIBLE_CHARGE_POWER_W:
+            max_charge = DEFAULT_BATTERY_MAX_POWER_W
+        # Discharge side is deliberately NOT gated the same way: the discharge guard
+        # writes this value verbatim to the limit entity, and on a %-based limit control
+        # (0-50) writing its own max IS the correct "release the battery" write. Gating
+        # it to 3000 would push 3000 into a 0-50 control and break actuation.
         max_discharge = _max_attr(
-            self.hass, self.config[CONF_BATTERY_DISCHARGE_LIMIT], default=3000
+            self.hass,
+            self.config[CONF_BATTERY_DISCHARGE_LIMIT],
+            default=DEFAULT_BATTERY_MAX_POWER_W,
         )
         battery = Battery(
             soc_percent=soc,
@@ -242,6 +277,11 @@ class Adapter:
             max_discharge_power_w=max_discharge,
             reserve_percent=self._reserve_percent(),
             power_w=self._battery_power_w(),
+            charge_target_min_percent=_min_attr(
+                self.hass,
+                self.config[CONF_BATTERY_CHARGE_CONTROL],
+                default=DEFAULT_CHARGE_TARGET_MIN_PERCENT,
+            ),
         )
 
         # Tariff
@@ -289,7 +329,7 @@ class Adapter:
 
         # Solar forecast
         solar_forecast = await self._build_forecast(now)
-        # Forecast for the SoC projection — today-remaining + tomorrow (the planner
+        # Forecast for the SoC projection — today-remaining + tomorrow (the
         # forecast above is tomorrow-only). None falls back to solar_forecast.
         projection_forecast = self._build_projection_forecast(now, solar_forecast)
 
@@ -456,12 +496,11 @@ class Adapter:
             if sensor_id:
                 try:
                     kwh = _read_float(self.hass, sensor_id, max_age_seconds=STALE_FORECAST_SECONDS)
-                    # Use as fallback_kwh, not as a synthetic slot. A daily-total
-                    # sensor shows today's actual generation by planning time (~21:00).
-                    # Creating a synthetic slot with start=now made _morning_gap_hours()
-                    # return 0 (the slot predates tomorrow's window end), so the plan
-                    # never provisioned a morning gap. Treating it as fallback_kwh
-                    # preserves the MISSING_FORECAST_GAP_H default gap assumption.
+                    # Use as fallback_kwh, not as a synthetic slot. A daily-total sensor
+                    # shows generation that has ALREADY happened by evening; a synthetic
+                    # slot stamped `now` would put it on the timeline as generation still
+                    # to come. As fallback_kwh it feeds total_kwh_forecast without
+                    # inventing a slot.
                     return self._checked_forecast(
                         SolarForecast(slots=[], fallback_kwh=kwh, fallback_source="daily_sensor")
                     )
@@ -481,13 +520,13 @@ class Adapter:
     ) -> SolarForecast | None:
         """A forecast spanning the SoC-projection window (today-remaining + tomorrow).
 
-        The planner forecast is tomorrow-only by design, but the mission-tape SoC
+        `planner_forecast` is tomorrow-only by design, but the mission-tape SoC
         projection runs forward over today's daylight — so without today's slots the
         midday sun is invisible and a full battery is shown bleeding down at baseline.
         Builds today's slots from the optional "Forecast Today" Solcast sensor and
-        concatenates the planner's tomorrow slots. Returns None (the projection then
-        falls back to the planner forecast) when no today sensor is configured or it
-        yields nothing — preserving the prior behaviour.
+        concatenates the tomorrow-only slots. Returns None (the projection then
+        falls back to the tomorrow-only forecast) when no today sensor is configured or
+        it yields nothing — preserving the prior behaviour.
         """
         if self.config.get(CONF_FORECAST_SOURCE) != FORECAST_SOURCE_SOLCAST:
             return None
@@ -533,8 +572,9 @@ class Adapter:
         # [{'period_start': datetime(2026-06-01, tzinfo=Europe/London), 'pv_estimate': 0.5}, ...]
         # period_start is a timezone-aware datetime in the HA instance's local timezone.
         raw = state.attributes.get("detailedForecast") or []
-        # Keep only the requested local date's slots (defaults to tomorrow, for the
-        # overnight planner; the SoC projection passes today to see today's sun).
+        # Keep only the requested local date's slots (defaults to tomorrow, the
+        # forecast used for hot-water diversion; the SoC projection passes today
+        # to see today's sun).
         # Take the local date first, then add a day — adding a UTC timedelta before
         # converting can land on the wrong local date across a DST transition.
         keep_date = target_date or dt_util.as_local(now).date() + timedelta(days=1)
@@ -687,7 +727,7 @@ class Adapter:
         return value, len(samples)
 
     def _compute_daily_target(self, now: datetime) -> tuple[float, str, int | None]:
-        """Return (daily_kwh_target, source, qualifying_days) for the overnight planner.
+        """Return (daily_kwh_target, source, qualifying_days) for the diagnostic sensor.
 
         Learns from a cumulative house-energy sensor's daily totals when configured;
         otherwise (or on insufficient data / recorder failure) returns the static

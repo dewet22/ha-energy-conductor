@@ -14,7 +14,11 @@ _LOGGER = logging.getLogger(__name__)
 
 # Decisions surfaced via the Notifier only — they never write to hardware.
 _NOTIFY_ONLY_KINDS = frozenset(
-    {DecisionKind.RECOMMEND_HOT_WATER_BOOST, DecisionKind.VERIFICATION_MISMATCH}
+    {
+        DecisionKind.RECOMMEND_HOT_WATER_BOOST,
+        DecisionKind.VERIFICATION_MISMATCH,
+        DecisionKind.RATE_ECONOMICS_WARNING,
+    }
 )
 
 
@@ -33,7 +37,15 @@ class Writer:
             return  # notify-only decision: surfaced via the Notifier, never written
         if self.write_mode != WRITE_MODE_LIVE:
             return
-        if decision.kind in (DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT):
+        if decision.kind is DecisionKind.SET_SLOT_TIME:
+            # Same failure boundary as the numeric kinds: Decision.value is Any, so a value
+            # that isn't a usable time string must surface as WriteFailure.
+            if not isinstance(decision.value, str) or not decision.value:
+                raise WriteFailure(
+                    f"non-string slot time for {decision.target_entity}: {decision.value!r}"
+                )
+            await self._set_time(decision.target_entity, decision.value)
+        elif decision.kind in (DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT):
             # Convert inside the failure boundary: Decision.value is Any, and a
             # non-numeric value must surface as WriteFailure (handled upstream),
             # not as an unhandled TypeError/ValueError escaping the coordinator.
@@ -64,3 +76,14 @@ class Writer:
             )
         except Exception as exc:
             raise WriteFailure(f"set_value failed for {entity_id}: {exc}") from exc
+
+    async def _set_time(self, entity_id: str, value: str) -> None:
+        try:
+            await self.hass.services.async_call(
+                "time",
+                "set_value",
+                {"entity_id": entity_id, "time": value},
+                blocking=True,
+            )
+        except Exception as exc:
+            raise WriteFailure(f"time.set_value failed for {entity_id}: {exc}") from exc

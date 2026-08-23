@@ -104,7 +104,7 @@ async def test_diagnostics_without_coordinator(hass: HomeAssistant) -> None:
 
 
 def test_decision_dict_none() -> None:
-    """A missing decision serialises to None (e.g. before the first overnight plan)."""
+    """A missing decision serialises to None (e.g. before the coordinator's first tick)."""
     from custom_components.energy_conductor.diagnostics import _decision_dict
 
     assert _decision_dict(None, None) is None

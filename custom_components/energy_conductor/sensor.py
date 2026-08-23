@@ -85,6 +85,7 @@ from .money_tracker import (
     MoneyTracker,
 )
 from .overnight import project_soc
+from .regimes import current_regime
 
 
 async def async_setup_entry(
@@ -295,8 +296,14 @@ class StatusSensor(_BaseSensor):
 
 
 class OvernightPlanSensor(_BaseSensor):
+    """Battery SoC setpoint — the repurposed overnight-plan entity.
+
+    The unique_id and translation_key are kept verbatim so recorder history,
+    dashboards and the tape wiring survive the switch to the regime model.
+    """
+
     _attr_translation_key = "overnight_plan"
-    _attr_name = "Overnight plan target"
+    _attr_name = "Battery SoC setpoint"
     _attr_native_unit_of_measurement = "%"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -305,28 +312,36 @@ class OvernightPlanSensor(_BaseSensor):
         self._attr_unique_id = f"{entry.entry_id}-overnight-plan"
 
     @property
-    def native_value(self) -> int | None:
-        plan = self.coordinator.last_overnight_plan
-        return None if plan is None else plan.value
+    def native_value(self) -> float | None:
+        decision = self.coordinator.last_setpoint_decision
+        return None if decision is None else decision.value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        plan = self.coordinator.last_overnight_plan
-        if plan is None:
+        decision = self.coordinator.last_setpoint_decision
+        if decision is None:
             return {}
         attrs: dict[str, Any] = {
-            "reason": plan.reason,
-            "dedupe_key": plan.dedupe_key,
-            "outcome": self.coordinator.last_overnight_outcome,
+            "reason": decision.reason,
+            "dedupe_key": decision.dedupe_key,
+            "outcome": self.coordinator.last_setpoint_outcome,
             "write_mode": self.coordinator.write_mode,
+            # Warn-only economics verdict on the regime's own premise — it rides here so
+            # the Tonight view reads regime + setpoint + whether it still pays as one row.
+            "rate_watch": self.coordinator.rate_watch_status,
+            "rate_watch_margin_gbp": self.coordinator.rate_watch_margin_gbp,
+            # "pinned" | "unconfigured" — whether charge slot 1 is held always-on. Without
+            # it the setpoint is only a charge ceiling, never a floor, so the regime's
+            # two-sided claim doesn't hold and the dashboard must be able to say so.
+            "slot_pin": self.coordinator.slot_pin_status,
         }
-        # SoC projection for the mission tape: served from EC's own plan model so
-        # the dashboard never re-derives it client-side. Unmistakably a projection.
+        # SoC projection for the mission tape: served from EC's own model so the
+        # dashboard never re-derives it client-side. Unmistakably a projection.
         state = self.coordinator.last_site_state
         if state is not None:
+            attrs["regime"] = current_regime(state)
             attrs["soc_projection"] = [
-                {"t": t.isoformat(), "soc": soc}
-                for t, soc in project_soc(state, target_percent=float(plan.value))
+                {"t": t.isoformat(), "soc": soc} for t, soc in project_soc(state)
             ]
         return attrs
 

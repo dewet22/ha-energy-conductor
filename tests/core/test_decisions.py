@@ -7,7 +7,7 @@ class TestDecisionDedupe:
             kind=DecisionKind.SET_DISCHARGE_LIMIT,
             target_entity="number.inverter_discharge_power_limit",
             value=0,
-            reason="cheap",
+            reason="off-peak",
             dedupe_key="discharge-0",
         )
         b = Decision(

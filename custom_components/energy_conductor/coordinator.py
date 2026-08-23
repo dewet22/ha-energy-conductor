@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import random
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,27 +12,30 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import (
-    async_track_state_change_event,
-    async_track_time_change,
-)
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .adapter import Adapter, EntityProblem, parse_hh_mm
+from .adapter import Adapter, EntityProblem
 from .const import (
+    CHARGE_SLOT_PIN_END,
+    CHARGE_SLOT_PIN_START,
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_CHARGE_SLOT_1_END_ENTITY,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
+    CONF_EXPORT_RATE_SENSOR,
+    CONF_IMPORT_RATE_SENSOR,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
-    CONF_OVERNIGHT_PLAN_TIME,
     CONF_WRITE_MODE,
     COORDINATOR_TICK_SECONDS,
-    DEFAULT_OVERNIGHT_PLAN_TIME,
     DOMAIN,
+    RATE_WATCH_EFFICIENCY,
+    RATE_WATCH_REARM_GBP,
     STATUS_DEGRADED,
     STATUS_ERROR,
     STATUS_OK,
@@ -43,26 +46,30 @@ from .const import (
 from .decisions import Decision, DecisionKind
 from .discharge_guard import discharge_limit
 from .entity_ref import resolve_config
-from .jitter import hourly_jitter_offset
 from .model import SiteState
+from .money import normalise_rate
 from .money_tracker import MoneyTracker
 from .notifier import Notifier
-from .overnight import plan_overnight
-from .verify import VerificationResult, check_actuation, check_write_landed
+from .rate_watch import fill_margin_gbp
+from .regimes import REGIME_OFF_PEAK_CHARGE, charge_setpoint, current_regime
+from .verify import (
+    VerificationResult,
+    check_actuation,
+    check_time_write_landed,
+    check_write_landed,
+)
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
 
-# A pending charge-target write retries every tick until it lands, but only while the cached
-# plan is still fresh. Planning runs hourly, so a healthy plan is never more than ~1h old;
-# this cap bounds how long a write keeps retrying once planning itself has stalled, so a
-# recovered entity can't apply a target from a past night's cycle. 12h comfortably covers any
-# overnight charging window yet stays well short of the ~24h gap to the next cycle. Age-based
-# (not calendar-date) freshness avoids a retry blackout for a plan emitted near midnight.
-_PLAN_RETRY_MAX_AGE = timedelta(hours=12)
-
 # Decision kinds that drive a hardware write (vs notify-only). Mirrors writer.py's routing.
-_WRITE_KINDS = frozenset({DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT})
+_WRITE_KINDS = frozenset(
+    {
+        DecisionKind.SET_CHARGE_TARGET,
+        DecisionKind.SET_DISCHARGE_LIMIT,
+        DecisionKind.SET_SLOT_TIME,
+    }
+)
 
 
 @dataclass
@@ -70,7 +77,7 @@ class _CommandedWrite:
     """Bookkeeping for write-readback verification, per (kind, target) — the entity must come
     to reflect this value (the inverter's write-echo) and KEEP reflecting it on every tick."""
 
-    value: float
+    value: float | str  # str for the "HH:MM:SS" slot pins
     written_at: datetime
     retries: int = 0  # re-issue budget consumed (retry once, then flag)
 
@@ -138,6 +145,18 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         )
         self.writer = Writer(hass, self.config.get(CONF_WRITE_MODE, WRITE_MODE_DRY_RUN))
 
+        # Charge slot 1 pinning is what turns the charge target into a two-sided SoC setpoint.
+        # Without both pickers EC still steers the setpoint, but only as a charge ceiling —
+        # a materially different control, so the shortfall is published rather than skipped
+        # in silence (an existing install upgrading via HACS lands here by default).
+        self.slot_pin_status: str = (
+            "pinned"
+            if self.config.get(CONF_CHARGE_SLOT_1_START_ENTITY)
+            and self.config.get(CONF_CHARGE_SLOT_1_END_ENTITY)
+            else "unconfigured"
+        )
+        self._warned_slot_pin_unconfigured = False
+
         self._emit_state: dict[tuple[str, str], _EmitState] = defaultdict(_EmitState)
         self.status: str = STATUS_OK
         self.last_error: str | None = None
@@ -159,15 +178,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_write_error: str | None = None
         self.last_write_outcome: str | None = None
         self.last_discharge_outcome: str | None = None
-        self.last_overnight_outcome: str | None = None
+        self.last_setpoint_outcome: str | None = None
         # When the coordinator first went non-OK (degraded/error), cleared on a healthy tick —
         # so a post-restart or upstream-entity gap explains its own duration.
         self.degraded_since: datetime | None = None
-        self.last_overnight_plan: Decision | None = None
-        # When last_overnight_plan was computed (state.now at plan time). Gates the every-tick
-        # retry by elapsed age so a pending write from a past cycle is never applied once the
-        # plan has gone stale — without a calendar-date blackout for plans made near midnight.
-        self.last_overnight_plan_at: datetime | None = None
+        self.last_setpoint_decision: Decision | None = None
         self.last_discharge_decision: Decision | None = None
         self.last_site_state: SiteState | None = None
         # Actuation verification (live-mode only): does the meter reflect what EC commanded?
@@ -176,6 +191,14 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_verification_detail: str | None = None
         self.last_verification_at: datetime | None = None
         self._mismatch_since: datetime | None = None
+        # Rate-watch (warn-only): does grid-filling during the off-peak window still beat
+        # PV-filling? "n/a" until the rates are configured AND read in an off-peak-charge tick.
+        self.rate_watch_status: str = "n/a"
+        self.rate_watch_margin_gbp: float | None = None
+        # Start of the current inversion episode, or None while the premise holds. Doubles
+        # as the warned-latch (not-None ⇒ already warned) and as the notification's dedupe
+        # key, so a recovered-then-recurring inversion gets a fresh key and re-notifies.
+        self._rate_watch_inverted_since: datetime | None = None
         # Write-readback: last successfully-commanded value per (kind, target), re-verified
         # against the entity every tick (catches flip-backs at any timescale).
         self._commanded: dict[tuple[str, str], _CommandedWrite] = {}
@@ -200,46 +223,6 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self._unsubs.append(
             async_track_state_change_event(self.hass, watched, self._on_state_change)
         )
-
-        # Scheduled overnight plan
-        plan_time_raw = self.config.get(
-            CONF_OVERNIGHT_PLAN_TIME, DEFAULT_OVERNIGHT_PLAN_TIME.isoformat()
-        )
-        parsed = parse_hh_mm(plan_time_raw)
-        if parsed is None:
-            _LOGGER.warning(
-                "Malformed overnight plan time %r; falling back to %s",
-                plan_time_raw,
-                DEFAULT_OVERNIGHT_PLAN_TIME.isoformat(),
-            )
-            parsed = (DEFAULT_OVERNIGHT_PLAN_TIME.hour, DEFAULT_OVERNIGHT_PLAN_TIME.minute)
-        hh, mm = parsed
-        self._unsubs.append(
-            async_track_time_change(
-                self.hass, self._run_overnight_plan, hour=hh, minute=mm, second=0
-            )
-        )
-
-        # Hourly re-evaluation with startup-chosen jitter (HH:54..HH:56).
-        # Spread across instances to avoid stampeding herd.
-        jitter_minute, jitter_second = hourly_jitter_offset(random.randint(-60, 60))
-        self._unsubs.append(
-            async_track_time_change(
-                self.hass,
-                self._run_overnight_plan,
-                minute=jitter_minute,
-                second=jitter_second,
-            )
-        )
-        _LOGGER.info(
-            "Hourly plan re-evaluation scheduled for HH:%02d:%02d",
-            jitter_minute,
-            jitter_second,
-        )
-
-        # If we have no cached plan, run one immediately so the sensor isn't empty
-        if self.last_overnight_plan is None:
-            await self._run_overnight_plan()
 
     async def async_stop(self) -> None:
         for unsub in self._unsubs:
@@ -280,14 +263,6 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.degraded_since = None
         self.last_site_state = state
 
-        # Startup catch-up: the immediate plan run in async_start can lose the race
-        # against slower-loading integrations (EntityProblem → skipped, observed live
-        # on restart when the inverter entities register after EC). Rather than sit
-        # planless for up to an hour until the next scheduled evaluation, run it from
-        # the first healthy tick that finds no cached plan, reusing this tick's state.
-        if self.last_overnight_plan is None:
-            await self._run_overnight_plan(state=state)
-
         try:
             decision = discharge_limit(
                 state, target_entity=self.config[CONF_BATTERY_DISCHARGE_LIMIT]
@@ -303,26 +278,121 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_discharge_outcome = await self._emit(decision)
         self.last_discharge_decision = decision
 
-        # Retry a pending (failed) charge-target write on every tick too. The overnight
-        # plan otherwise only re-emits at its scheduled time + hourly, so a transient
-        # write failure would leave the target stale for up to an hour. _emit is a no-op
-        # once the write has landed, so re-emitting the cached plan each tick is cheap.
-        #
-        # Only retry while the cached plan is still fresh (see _PLAN_RETRY_MAX_AGE). Planning
-        # runs hourly, so a healthy plan is always recent; the age only grows when planning
-        # itself has been failing — and in that degraded state a recovered entity must NOT
-        # have a past cycle's target applied to it (audit M-4, Codex). The retry only acts on
-        # a still-pending write anyway, so gating it out once the plan is stale costs nothing
-        # in the healthy case.
-        if (
-            self.last_overnight_plan is not None
-            and self.last_overnight_plan_at is not None
-            and state.now - self.last_overnight_plan_at <= _PLAN_RETRY_MAX_AGE
-        ):
-            self.last_overnight_outcome = await self._emit(self.last_overnight_plan)
+        # The SoC setpoint is steered every tick, exactly like the discharge cap: the
+        # regime is recomputed from the current state and re-asserted, so a failed write
+        # retries on the next tick and drift on the entity is corrected within one.
+        try:
+            setpoint = charge_setpoint(
+                state, target_entity=self.config[CONF_BATTERY_CHARGE_CONTROL]
+            )
+        except Exception as exc:
+            self.status = STATUS_ERROR
+            self.last_error = repr(exc)
+            if self.degraded_since is None:
+                self.degraded_since = dt_util.utcnow()
+            _LOGGER.exception("Setpoint engine crashed")
+            return
+
+        self.last_setpoint_outcome = await self._emit(setpoint)
+        self.last_setpoint_decision = setpoint
+
+        if current_regime(state) == REGIME_OFF_PEAK_CHARGE:
+            await self._check_rate_economics(state)
+
+        # Pin charge slot 1 always-on, so the charge target acts as a two-sided SoC setpoint
+        # rather than a charge ceiling. Re-emitted every tick; the readback loop is what
+        # re-writes an externally-edited slot (the dedupe key never changes).
+        if self.slot_pin_status == "pinned":
+            for entity, value in (
+                (self.config[CONF_CHARGE_SLOT_1_START_ENTITY], CHARGE_SLOT_PIN_START),
+                (self.config[CONF_CHARGE_SLOT_1_END_ENTITY], CHARGE_SLOT_PIN_END),
+            ):
+                await self._emit(
+                    Decision(
+                        kind=DecisionKind.SET_SLOT_TIME,
+                        target_entity=entity,
+                        value=value,
+                        reason="Pin charge slot 1 always-on (setpoint regime)",
+                        dedupe_key=f"slot-pin-{value}",
+                    )
+                )
+        elif self.write_mode == WRITE_MODE_LIVE and not self._warned_slot_pin_unconfigured:
+            # Once per coordinator lifetime — the condition can't change without a reload.
+            self._warned_slot_pin_unconfigured = True
+            _LOGGER.warning(
+                "Charge slot 1 start/end are not configured: the SoC setpoint acts as a "
+                "charge ceiling only, so the battery will not be held up to the setpoint. "
+                "Reconfigure Energy Conductor and select both slot time entities."
+            )
+
+        # Hot-water boost prompt — notify-only; per-day dedupe keeps it to one prompt.
+        hot_water_decision = _hot_water_decision(state)
+        if hot_water_decision is not None:
+            await self._emit(hot_water_decision)
 
         # Actuation verification: did the meter reflect the discharge cap we just emitted?
         await self._verify_actuation(state)
+
+    async def _check_rate_economics(self, state: SiteState) -> None:
+        """Warn (once per inversion episode) when off-peak economics stop favouring
+        fill-mode. Evaluated only in the off-peak-charge regime, when the import-rate sensor is
+        by definition reading the off-peak rate. Warn-only: the regime never changes."""
+        import_rate = self._read_rate_state(CONF_IMPORT_RATE_SENSOR)
+        export_rate = self._read_rate_state(CONF_EXPORT_RATE_SENSOR)
+        if import_rate is None or export_rate is None:
+            self.rate_watch_status = "n/a"
+            self.rate_watch_margin_gbp = None
+            return
+        margin = fill_margin_gbp(import_rate, export_rate, efficiency=RATE_WATCH_EFFICIENCY)
+        self.rate_watch_margin_gbp = round(margin, 4)
+        if margin > 0:
+            self.rate_watch_status = "ok"
+            # Re-arm only once the margin is clear of the boundary, so a rate hovering
+            # around break-even can't flap a fresh warning every tick.
+            if margin > RATE_WATCH_REARM_GBP:
+                self._rate_watch_inverted_since = None
+            return
+
+        self.rate_watch_status = "inverted"
+        if self._rate_watch_inverted_since is None:
+            self._rate_watch_inverted_since = state.now
+        # Re-emitted every inverted tick with the episode-start dedupe key: _emit delivers
+        # it once per episode and retries a *failed* notification, which an outer latch
+        # would swallow (same reasoning as the actuation-mismatch path above).
+        await self._emit(
+            Decision(
+                kind=DecisionKind.RATE_ECONOMICS_WARNING,
+                target_entity="rate_watch",
+                value=round(margin * 100, 2),  # pence, for the notification
+                reason=(
+                    "Off-peak fill margin is "
+                    f"{margin * 100:.2f}p/kWh — grid-filling no longer beats "
+                    "PV-filling; review the setpoint strategy"
+                ),
+                dedupe_key=f"rate-watch-{self._rate_watch_inverted_since.isoformat()}",
+            )
+        )
+
+    def _read_rate_state(self, conf_key: str) -> float | None:
+        """Read a configured rate sensor as GBP/kWh, or None when it can't be priced.
+
+        Unit-normalised via the same helper the money tracker uses: these sensors commonly
+        report GBp/kWh, and mixed denominations across the two would otherwise invert the
+        margin's sign and raise a false warning.
+        """
+        entity = self.config.get(conf_key)
+        if not entity:
+            return None
+        raw = self.hass.states.get(entity)
+        if raw is None or raw.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
+            return None
+        try:
+            value = float(raw.state)
+        except TypeError, ValueError:
+            return None
+        if not math.isfinite(value):
+            return None  # a NaN would compare false against zero and read as "inverted"
+        return normalise_rate(value, raw.attributes.get("unit_of_measurement"))
 
     def _check_writes_landed(self, now: datetime) -> VerificationResult | None:
         """Re-verify every commanded setpoint against its entity readback (write-landing).
@@ -330,39 +400,41 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         The entity reflects the inverter's write-echo within a tick, so after a short settle
         window (which absorbs the transient flip-back signature) a non-matching readback means
         the write was silently rejected or didn't persist. Self-heals once by clearing the
-        emit bookkeeping so the M-4 every-tick retry re-issues the command; a second failure
-        returns a mismatch verdict. Returns ok when all judgeable writes match, None when
-        nothing is judgeable (settling / unreadable entities / no commands yet).
-        """
-        # Stop verifying the charge target once the overnight plan is no longer fresh: EC has
-        # stopped re-enforcing it (the M-4 retry is freshness-gated), so the entity may
-        # legitimately diverge (a later change once the window is over) and verifying the stale
-        # value would false-flag — and the self-heal couldn't re-write it anyway (Gemini review).
-        # The discharge command needs no such cleanup: it's recomputed and re-asserted each tick.
-        if (
-            self.last_overnight_plan_at is not None
-            and now - self.last_overnight_plan_at > _PLAN_RETRY_MAX_AGE
-        ):
-            charge_entity = self.config.get(CONF_BATTERY_CHARGE_CONTROL)
-            if charge_entity is not None:
-                self._commanded.pop((DecisionKind.SET_CHARGE_TARGET.value, charge_entity), None)
+        emit bookkeeping so the M-4 every-tick retry re-issues the command; a second
+        *consecutive* failure yields a mismatch verdict, and a healthy readback re-arms the
+        budget. Returns the first mismatch when any judgeable write has failed, ok when all
+        judgeable writes match, None when nothing is judgeable (settling / unreadable
+        entities / no commands yet).
 
+        Every commanded stream is evaluated on every call — the loop never short-circuits on
+        the first mismatch. With four streams (discharge, setpoint, two slot pins) an early
+        return would leave the ones behind it unchecked, unhealed and with their retry budget
+        never re-armed: one stuck entity would blind the rest (review finding).
+        """
         verdict: VerificationResult | None = None
+        bad: VerificationResult | None = None
         for key, cmd in self._commanded.items():
             if (now - cmd.written_at).total_seconds() < VERIFY_MISMATCH_SECONDS:
                 continue  # write-echo still settling — no verdict for this command yet
             kind, target = key  # kind is a non-identifying label; target is the entity_id
             raw = self.hass.states.get(target)
-            readback: float | None = None
+            state_str: str | None = None
             if raw is not None and raw.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
-                try:
-                    readback = float(raw.state)
-                except TypeError, ValueError:
-                    readback = None
+                state_str = raw.state
             # Pass the decision kind, NOT the entity_id, into the detail — it flows into
             # diagnostics + notifications, where the entity_id would re-leak room/device
             # names that the redaction strips (Codex review).
-            result = check_write_landed(kind, cmd.value, readback)
+            if kind == DecisionKind.SET_SLOT_TIME.value:
+                # Time entities read back an exact "HH:MM:SS" string — compare as strings.
+                result = check_time_write_landed(kind, str(cmd.value), state_str)
+            else:
+                readback: float | None = None
+                if state_str is not None:
+                    try:
+                        readback = float(state_str)
+                    except TypeError, ValueError:
+                        readback = None
+                result = check_write_landed(kind, float(cmd.value), readback)
             if result is None:
                 continue  # entity unreadable — no verdict either way
             if not result.ok:
@@ -373,9 +445,15 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                     self._emit_state[key].written = None
                     _LOGGER.warning("Write readback failed (%s); re-issuing once", result.detail)
                     continue
-                return result
+                bad = bad or result
+                continue
+            # A healthy readback means the last re-issue stuck, so re-arm the budget: the next
+            # drift gets its own self-heal. Without this the budget is spent for the
+            # coordinator's lifetime whenever the commanded value never changes — as the slot
+            # pins never do — and a later drift would only ever be flagged (review finding).
+            cmd.retries = 0
             verdict = verdict or result
-        return verdict
+        return bad or verdict
 
     async def _verify_actuation(self, state: SiteState) -> None:
         """Verify EC's commands took effect; flag a persistent mismatch.
@@ -439,42 +517,6 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         )
         await self._emit(mismatch)
 
-    async def _run_overnight_plan(self, _now=None, *, state: SiteState | None = None) -> None:
-        # The tick-loop catch-up passes its already-built state so build_site_state
-        # (several recorder queries) isn't run twice in that tick; the scheduled runs
-        # build their own.
-        if state is None:
-            try:
-                state = await self.adapter.build_site_state()
-            except EntityProblem as exc:
-                _LOGGER.warning("Skipping overnight plan: %s", exc)
-                return
-            except Exception:
-                self.status = STATUS_ERROR
-                self.last_error = "Overnight plan failed (see logs)"
-                _LOGGER.exception("Unexpected error building SiteState for overnight plan")
-                return
-        self.last_site_state = state
-        try:
-            decision = plan_overnight(
-                state,
-                target_entity=self.config[CONF_BATTERY_CHARGE_CONTROL],
-                daily_kwh_target=state.daily_kwh_target,
-            )
-        except Exception:
-            self.status = STATUS_ERROR
-            self.last_error = "plan_overnight crashed (see logs)"
-            _LOGGER.exception("plan_overnight crashed")
-            return
-        self.last_overnight_outcome = await self._emit(decision)
-        self.last_overnight_plan = decision
-        self.last_overnight_plan_at = state.now
-
-        # Hot-water boost prompt — notify-only, evaluated alongside the overnight plan.
-        hot_water_decision = _hot_water_decision(state)
-        if hot_water_decision is not None:
-            await self._emit(hot_water_decision)
-
     async def _emit(self, decision: Decision) -> str:
         """Notify + write a decision, returning the write outcome for observability:
 
@@ -497,8 +539,8 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
             st.notified = dk
 
         # Write — retried on each re-emission until it succeeds (number.set_value is
-        # idempotent). Both writing decisions are re-emitted every coordinator tick: the
-        # discharge limit directly, and the cached overnight plan via _async_update_data.
+        # idempotent). Both writing decisions — the discharge limit and the SoC setpoint —
+        # are recomputed and re-emitted on every coordinator tick.
         # M-4: a failed write must NOT suppress the retry, or the actuator stays stale.
         # Only the failure notification is deduped.
         if st.written != dk:
@@ -535,7 +577,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 # Record for write-readback verification. A re-issue of the same command
                 # keeps its retry budget; a new value resets it.
                 prev = self._commanded.get(key)
-                value = float(decision.value)
+                value: float | str = (
+                    str(decision.value)
+                    if decision.kind is DecisionKind.SET_SLOT_TIME
+                    else float(decision.value)
+                )
                 self._commanded[key] = _CommandedWrite(
                     value=value,
                     written_at=self.last_write_at,

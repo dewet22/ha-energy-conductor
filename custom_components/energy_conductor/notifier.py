@@ -12,10 +12,12 @@ from .decisions import Decision, DecisionKind
 _LOGGER = logging.getLogger(__name__)
 
 _KIND_LABEL = {
-    DecisionKind.SET_CHARGE_TARGET: "Overnight charge target",
+    DecisionKind.SET_CHARGE_TARGET: "Battery SoC setpoint",
     DecisionKind.SET_DISCHARGE_LIMIT: "Discharge cap",
+    DecisionKind.SET_SLOT_TIME: "Charge slot pinned",
     DecisionKind.RECOMMEND_HOT_WATER_BOOST: "Hot water boost recommended",
     DecisionKind.VERIFICATION_MISMATCH: "Actuation mismatch",
+    DecisionKind.RATE_ECONOMICS_WARNING: "Tariff economics changed",
 }
 
 
@@ -28,6 +30,10 @@ def _format_value(decision: Decision) -> str:
         return f"~{decision.value}h"
     if decision.kind == DecisionKind.VERIFICATION_MISMATCH:
         return f"{decision.value:.0f}W"
+    if decision.kind == DecisionKind.RATE_ECONOMICS_WARNING:
+        return f"{decision.value:+.2f}p/kWh margin"
+    if decision.kind == DecisionKind.SET_SLOT_TIME:
+        return str(decision.value)  # already an "HH:MM:SS" string
     return str(decision.value)  # pragma: no cover - defensive; all kinds handled above
 
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.verify import check_actuation, check_write_landed
+from energy_conductor.verify import (
+    check_actuation,
+    check_time_write_landed,
+    check_write_landed,
+)
 
 from .builders import a_battery, a_grid_state, a_site_state, a_tariff
 
@@ -21,9 +25,11 @@ def _cap(value: int = 0) -> Decision:
     )
 
 
-def _state(*, off_peak: bool = True, battery_power: float | None, grid=None):
+def _state(
+    *, off_peak: bool = True, dispatching: bool = False, battery_power: float | None, grid=None
+):
     return a_site_state(
-        tariff=a_tariff(off_peak_now=off_peak),
+        tariff=a_tariff(off_peak_now=off_peak, ev_dispatching_now=dispatching),
         battery=a_battery(power_w=battery_power),
         grid=grid,
     )
@@ -78,8 +84,25 @@ def test_not_applicable_when_not_capped():
 
 
 def test_not_applicable_when_not_off_peak():
+    # Neither off-peak flag: the guard wouldn't be capping, so there is nothing to assert.
     state = _state(off_peak=False, battery_power=2000.0)
     assert check_actuation(state, _cap(0), "applied") is None
+
+
+def test_dispatch_only_cap_is_judged():
+    """The guard caps on off-peak OR dispatch, so verification must cover both.
+
+    A dispatch outside the off-peak window is precisely the EV-drain scenario this check
+    exists for — declining to judge it would blind the check where it matters most.
+    """
+    drained = _state(off_peak=False, dispatching=True, battery_power=2000.0)
+    result = check_actuation(drained, _cap(0), "applied")
+    assert result is not None
+    assert result.ok is False
+    assert "discharging" in result.detail
+
+    idle = _state(off_peak=False, dispatching=True, battery_power=10.0)
+    assert check_actuation(idle, _cap(0), "applied").ok is True
 
 
 def test_not_applicable_without_battery_power():
@@ -131,3 +154,24 @@ def test_write_landed_detail_uses_label_not_entity_id():
 
 def test_write_landed_unreadable_entity_no_verdict():
     assert check_write_landed("set_discharge_limit", 0.0, None) is None
+
+
+# --- time-entity readback (check_time_write_landed) --------------------------
+
+
+def test_time_write_landed_match():
+    result = check_time_write_landed("set_slot_time", "00:00:00", "00:00:00")
+    assert result is not None and result.ok
+    assert "as commanded" in result.detail
+
+
+def test_time_write_landed_mismatch():
+    result = check_time_write_landed("set_slot_time", "00:00:00", "23:30:00")
+    assert result is not None and not result.ok
+    assert "00:00:00" in result.detail and "23:30:00" in result.detail
+    # Same privacy contract as the numeric readback: label, never entity_id.
+    assert "time." not in result.detail
+
+
+def test_time_write_landed_unreadable():
+    assert check_time_write_landed("set_slot_time", "00:00:00", None) is None

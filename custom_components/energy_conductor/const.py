@@ -17,6 +17,18 @@ CONF_BATTERY_RESERVE_PERCENT = "battery_reserve_percent"
 # battery_soc_reserve) instead of the static reserve percent above. May be a
 # `number` or `sensor` entity. Falls back to CONF_BATTERY_RESERVE_PERCENT when unset.
 CONF_RESERVE_SOC_SENSOR = "reserve_soc_sensor"
+# Charge slot 1 time entities (optional). When both are set, EC pins the slot always-on
+# so the charge-target control behaves as a two-sided SoC setpoint (spec 2026-08-23).
+CONF_CHARGE_SLOT_1_START_ENTITY = "charge_slot_1_start_entity"
+CONF_CHARGE_SLOT_1_END_ENTITY = "charge_slot_1_end_entity"
+CHARGE_SLOT_PIN_START = "00:00:00"
+CHARGE_SLOT_PIN_END = "23:59:00"
+
+# Rate-watch: the fill-mode premise is off_peak_import / eta < export. Warn-only — EC
+# never flips the regime on this. Round-trip efficiency is a constant, deliberately not
+# a knob; the re-arm band keeps a rate hovering on the boundary from flapping the warning.
+RATE_WATCH_EFFICIENCY = 0.9
+RATE_WATCH_REARM_GBP = 0.005
 
 # Config keys — grid meter + actuation verification (all optional; feature inert when unset)
 CONF_GRID_IMPORT_SENSOR = "grid_import_sensor"
@@ -106,19 +118,8 @@ CONF_ENTITY_REFS = "entity_refs"
 # Config keys — behaviour
 CONF_WRITE_MODE = "write_mode"
 CONF_NOTIFY_TARGET = "notify_target"
-CONF_OVERNIGHT_PLAN_TIME = "overnight_plan_time"
 CONF_DAILY_KWH_TARGET = "daily_kwh_target"
 CONF_DEVICE_NAME = "device_name"
-# Baked-in safety margin for the overnight charge target: the battery is always
-# provisioned to hold at least this much USABLE energy above the reserve floor for
-# the morning, even when the solar forecast suggests less is needed. Guards against
-# forecast/baseline error and BMS SoC unreliability near empty. Replaces the old
-# user-facing min_target_soc_percent knob (whose absolute-SoC meaning was unclear) —
-# see overnight.py.
-# NOTE: a fixed kWh margin saturates the target to 100% on a very small battery
-# (< ~2 kWh) — immaterial for real installs (≥ ~5 kWh) and moot once this margin
-# becomes learned/data-driven (the planned next step), so kept fixed for now.
-MIN_OVERNIGHT_USABLE_KWH = 1.5
 
 # Enum values
 FORECAST_SOURCE_SOLCAST = "solcast"
@@ -132,10 +133,14 @@ WRITE_MODE_LIVE = "live"
 DEFAULT_RESERVE_PERCENT = 10
 DEFAULT_EV_MIN_ACTIVATION_W = 1400
 DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribute
+# Fallback self-consume setpoint when the charge control lacks a readable 'min' attribute.
+# Shared by the Battery model default and the adapter's _min_attr fallback — the two are
+# semantically coupled (the adapter feeds the field; non-adapter constructions use the
+# dataclass default), so they must never drift apart.
+DEFAULT_CHARGE_TARGET_MIN_PERCENT = 4.0
 DEFAULT_WINTER_MIN_KWH = 0.0
 DEFAULT_SUMMER_MAX_KWH = 8.0
 DEFAULT_DAILY_KWH_TARGET = 10.0
-DEFAULT_OVERNIGHT_PLAN_TIME = time(21, 0)
 DEFAULT_OVERNIGHT_WINDOW_END_TIME = time(5, 30)
 
 # Hot water (Eddi) defaults

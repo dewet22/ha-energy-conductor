@@ -1,10 +1,10 @@
 """Actuation verification — did EC's commands take effect? (pure core).
 
 Two checks, both live-mode only:
-- **anti-drain** (`check_actuation`): when EC caps discharge at 0 during off-peak (the
-  protection that stops the battery feeding the house/EV on cheap grid), the battery must be
-  idle. A battery that keeps discharging means the cap never took effect — the failure mode
-  behind the EV-drain incident. Battery power is the direct signal; grid is context.
+- **anti-drain** (`check_actuation`): when EC caps discharge at 0 on off-peak energy — the window
+  or an EV dispatch, the same pair the discharge guard caps on — the battery must be idle.
+  A battery that keeps discharging means the cap never took effect — the failure mode behind
+  the EV-drain incident. Battery power is the direct signal; grid is context.
 - **write-readback** (`check_write_landed`): for a write that *returned success*, did the
   commanded value actually land on the setpoint entity? The givenergy integration commits the
   inverter's write-echo straight to its cache (no optimistic echo), so the entity reflecting
@@ -32,9 +32,13 @@ def check_actuation(
 ) -> VerificationResult | None:
     """Verify the last discharge actuation against the meter, or None when not applicable.
 
-    Applicable only when EC has a *live* discharge cap of 0 during off-peak and battery power is
-    known. A different decision, a dry-run/failed write, on-peak, or no battery-power signal all
-    return None (nothing to assert).
+    Applicable only when EC has a *live* discharge cap of 0 on off-peak energy and battery power is
+    known. A different decision, a dry-run/failed write, neither off-peak flag, or no
+    battery-power signal all return None (nothing to assert).
+
+    "Off-peak energy" mirrors `discharge_guard.discharge_limit` exactly — the window OR an EV
+    dispatch. Gating on off-peak alone would decline to judge a dispatch-only window, which
+    is the EV-drain scenario this check exists for.
     """
     if decision is None or decision.kind is not DecisionKind.SET_DISCHARGE_LIMIT:
         return None
@@ -42,8 +46,8 @@ def check_actuation(
         return None  # not a cap-to-0 decision
     if outcome not in ("applied", "unchanged"):
         return None  # the cap isn't live on hardware (dry-run / failed / not yet emitted)
-    if not state.tariff.off_peak_now:
-        return None  # the cap only applies during off-peak
+    if not (state.tariff.off_peak_now or state.tariff.ev_dispatching_now):
+        return None  # the cap only applies on off-peak energy (window or dispatch)
     power_w = state.battery.power_w
     if power_w is None:
         return None  # no battery-power signal configured
@@ -83,4 +87,22 @@ def check_write_landed(
     return VerificationResult(
         ok=False,
         detail=f"commanded {label}={commanded:g} but entity reads {readback:g}",
+    )
+
+
+def check_time_write_landed(
+    label: str, commanded: str, readback: str | None
+) -> VerificationResult | None:
+    """String-equality readback for time-entity writes (slot pinning).
+
+    Same contract as ``check_write_landed`` — non-identifying ``label``, ``None`` when the
+    entity can't be read — but time entity states are exact ``'HH:MM:SS'`` strings, so there
+    is no tolerance to apply.
+    """
+    if readback is None:
+        return None
+    if readback == commanded:
+        return VerificationResult(ok=True, detail=f"{label} reads {readback} as commanded")
+    return VerificationResult(
+        ok=False, detail=f"commanded {label}={commanded} but entity reads {readback}"
     )
