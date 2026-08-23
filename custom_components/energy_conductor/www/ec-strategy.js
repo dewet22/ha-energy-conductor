@@ -186,7 +186,7 @@
     if (planId) {
       cards.push({
         type: "markdown",
-        title: "Plan reasoning",
+        title: "Setpoint reasoning",
         content:
           "{% set r = state_attr('" +
           planId +
@@ -219,7 +219,7 @@
       }
       if (planId) {
         lines.push(
-          "**Charge target:** {{ states('" +
+          "**SoC setpoint:** {{ states('" +
             planId +
             "') }}% - {{ state_attr('" +
             planId +
@@ -270,15 +270,15 @@
       });
     }
 
-    // 4. Overnight charge targets over a month (relies on the sensor's LTS
-    //    state_class). Sparse until statistics accumulate.
+    // 4. The SoC setpoint over a month (relies on the sensor's LTS state_class).
+    //    Sparse until statistics accumulate.
     if (planId) {
       cards.push({
         type: "statistics-graph",
-        title: "Overnight charge targets - 30 days",
+        title: "Battery SoC setpoint - 30 days",
         days_to_show: 30,
         stat_types: ["mean"],
-        entities: [{ entity: planId, name: "Target %" }],
+        entities: [{ entity: planId, name: "Setpoint %" }],
       });
     }
 

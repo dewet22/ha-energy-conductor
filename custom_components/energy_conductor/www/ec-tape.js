@@ -977,7 +977,7 @@
             events.push({ t: e.t, label: e.to === 0 ? "hold battery" : "battery released", color: C_EVENT });
           });
           valueChanges(this._numSeries(c.plan_entity)).forEach(function (e) {
-            events.push({ t: e.t, label: "plan " + Math.round(e.to) + "%", color: C_EVENT });
+            events.push({ t: e.t, label: "setpoint " + Math.round(e.to) + "%", color: C_EVENT });
           });
           events.sort(function (a, b) {
             return a.t - b.t;
