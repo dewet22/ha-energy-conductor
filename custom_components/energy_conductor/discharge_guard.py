@@ -1,14 +1,18 @@
 """Two-regime discharge limit decision (spec §4.2).
 
 Priority order:
-  1. off-peak rate active → 0W
-  2. default              → max_discharge_power_w
+  1. off-peak rate active OR dispatch → 0W
+  2. default                          → max_discharge_power_w
+
+Regime 1's dispatch leg is explicit rather than inherited from Octopus's lock-step
+off-peak flag: the guard must idle the battery during a dispatch even if the off-peak
+sensor lags or the coupling changes.
 
 Two regimes were removed once their premises didn't hold up:
 - An "EV smart-dispatch → cap at baseline" regime: on a whole-house meter the
   off-peak rate blankets the entire supply during a dispatch, so regime 1 already
-  idles the battery while the EV grid-charges. The cap was unreachable (dispatch
-  always coincides with off_peak) and would have over-discharged.
+  idles the battery while the EV grid-charges. The cap was pointless (the battery
+  is idle anyway) and would have over-discharged.
 - A "pre-off-peak hold" that idled the battery for 30 min before off-peak "to
   enter the cheap period with more charge". But those minutes are still peak,
   where discharging to cover load saves the most (30p), and the held-back charge
@@ -28,9 +32,9 @@ from .model import SiteState
 
 
 def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:
-    if state.tariff.off_peak_now:
+    if state.tariff.off_peak_now or state.tariff.ev_dispatching_now:
         limit_w = 0
-        reason = "Off-peak rate active — battery idle"
+        reason = "Cheap energy (off-peak/dispatch) — battery idle"
     else:
         limit_w = state.battery.max_discharge_power_w
         reason = "Unconstrained"

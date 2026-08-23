@@ -29,6 +29,11 @@ class Battery:
     reserve_percent: float
     # Live battery power, EC convention +ve = discharging. None when no sensor is configured.
     power_w: float | None = None
+    # The charge-target control entity's own minimum (its `min` attribute) — the lowest
+    # setpoint the inverter accepts. The self-consume regime writes this value: "get out
+    # of the way" expressed as the control's own floor. The hardware reserve governs the
+    # actual discharge stop, so a setpoint at/below reserve is always safe. (Spec 2026-08-23.)
+    charge_target_min_percent: float = 4.0
 
     def __post_init__(self) -> None:
         # capacity_kwh comes straight from config with no clamp site; 0 would be a
@@ -43,6 +48,11 @@ class Battery:
         if not 0 <= self.reserve_percent <= 100:
             raise ValueError(
                 f"Battery.reserve_percent must be in [0, 100] (got {self.reserve_percent!r})"
+            )
+        if not 0 <= self.charge_target_min_percent <= 100:
+            raise ValueError(
+                "Battery.charge_target_min_percent must be in [0, 100] "
+                f"(got {self.charge_target_min_percent!r})"
             )
 
 

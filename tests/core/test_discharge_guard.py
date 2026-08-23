@@ -1,13 +1,13 @@
 """Tests for the two-regime discharge guard (spec §4.2).
 
 Regime table:
-  1. off_peak_now → limit 0W
-  2. default      → limit max_discharge_power_w
+  1. off_peak_now OR ev_dispatching_now → limit 0W
+  2. default                            → limit max_discharge_power_w
 
 Two regimes were removed:
-- "EV dispatch → cap at baseline": on a whole-house meter dispatch always
-  coincides with off_peak, so regime 1 already idles the battery. EV state no
-  longer affects the discharge limit.
+- "EV dispatch → cap at baseline": a dispatch is cheap energy, so the battery
+  idles outright rather than being capped at an EV-derived level. The EV's own
+  power draw no longer affects the discharge limit.
 - "pre-off-peak hold" (idle for 30 min before off-peak): those minutes are still
   peak, where discharging saves the most, and the held-back charge had no payoff.
   The battery now discharges right up to off-peak (see the counter-test below).
@@ -48,17 +48,21 @@ class TestDischargeRegimes:
         )
         assert decision.value == 0
 
-    def test_ev_dispatch_no_longer_caps_discharge(self):
-        # Regime 3 removed: a dispatching, hard-drawing EV outside off-peak no longer
-        # caps the battery — the limit is unconstrained. (In practice a real dispatch
-        # always coincides with off_peak, which idles the battery via regime 1.)
+    def test_dispatch_alone_idles_battery(self):
+        # A dispatch with off_peak somehow false must still idle the battery — the
+        # regime no longer relies on Octopus's lock-step off-peak flag.
+        decision = _decide(tariff=a_tariff(off_peak_now=False, ev_dispatching_now=True))
+        assert decision.value == 0
+
+    def test_ev_dispatch_never_caps_at_baseline(self):
+        # Regime 3 (cap at baseline) stays gone: a dispatching, hard-drawing EV idles
+        # the battery outright rather than being capped at some EV-derived level.
         decision = _decide(
             tariff=a_tariff(ev_dispatching_now=True, off_peak_now=False),
             ev_charger=an_ev_charger(power_w=7000.0, min_activation_power_w=1400),
             battery=a_battery(max_discharge_power_w=3000),
         )
-        assert decision.value == 3000
-        assert "unconstrained" in decision.reason.lower()
+        assert decision.value == 0
 
 
 class TestDedupeKey:
@@ -108,4 +112,4 @@ class TestNoPreOffPeakHold:
             ),
         )
         assert decision.value == 0
-        assert "off-peak rate" in decision.reason.lower()
+        assert "off-peak" in decision.reason.lower()
