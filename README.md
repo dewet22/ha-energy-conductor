@@ -21,21 +21,21 @@ At a tariff where `off-peak import ÷ round-trip efficiency < export rate` (true
 
 | Regime | Condition (priority order) | Setpoint | Discharge limit |
 |---|---|---|---|
-| **Cheap charge** | Off-peak sensor on, or dispatch sensor on | 100 % | 0 W |
+| **Off-peak charge** | Off-peak sensor on, or dispatch sensor on | 100 % | 0 W |
 | **Self-consume** | Otherwise | The charge control's own minimum (typically ~4 %) | Full rated discharge power |
 
-- During a cheap window the inverter grid-charges to 100% and the discharge limit holds the battery at zero — no wasteful drain while the target converges. This also covers EV protection: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls cheap grid rather than the battery.
-- Outside a cheap window it's plain Eco: the battery discharges to serve load, all the way down to the inverter's hardware reserve. There's deliberately no floor above that reserve — a floor there would idle a charged battery during the peak rate for no benefit, since the next cheap window refills the battery regardless.
+- During an off-peak window (or dispatch) the inverter grid-charges to 100% and the discharge limit holds the battery at zero — no wasteful drain while the target converges. This also covers EV protection: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls off-peak grid rather than the battery.
+- Outside an off-peak window it's plain Eco: the battery discharges to serve load, all the way down to the inverter's hardware reserve. There's deliberately no floor above that reserve — a floor there would idle a charged battery during the peak rate for no benefit, since the next off-peak window refills the battery regardless.
 - The self-consume setpoint is read from the charge-target control's own minimum value, not from any reserve configuration, so a misdescribed reserve can never be written back as a floor.
 - A stale or unavailable off-peak/dispatch sensor falls through to self-consume — the failure mode is plain Eco, never a stuck charge.
 
 **Always-on charge-slot pinning**
 
-The two-sided setpoint depends on charge slot 1 being active around the clock — GivEnergy inverters otherwise only grid-charge inside a scheduled window. Map your inverter's slot-1 start and end time entities under **Battery** and EC pins the slot open once, healing it if something external changes it. Slot 2 and the reserve-SoC number entity are never written.
+The two-sided setpoint depends on charge slot 1 being active around the clock — GivEnergy inverters otherwise only grid-charge inside a scheduled window. Map your inverter's slot-1 start and end time entities under **Battery** and EC pins the slot open once, healing it if something external changes it. The two pickers are optional in the schema: without both mapped, EC still steers the charge target, but the inverter only honours it inside whatever charge slots already exist (a charge ceiling, not a two-sided setpoint) — the integration logs a warning in live mode and the setpoint sensor's `slot_pin` attribute reads `unconfigured`. Slot 2 and the reserve-SoC number entity are never written.
 
 **Rate-watch (warn-only)**
 
-This strategy only pays while `off-peak import ÷ 0.9 < export rate`. EC checks that inequality live — only while in the cheap-charge regime, where the import-rate sensor reads the off-peak rate by definition — and sends a "Tariff economics changed" notification if it breaks. It never changes strategy on its own; a hysteresis band around the boundary stops a hovering rate from flapping the notification.
+This strategy only pays while `off-peak import ÷ 0.9 < export rate`. EC checks that inequality live — only while in the off-peak-charge regime, where the import-rate sensor reads the off-peak rate by definition — and sends a "Tariff economics changed" notification if it breaks. It never changes strategy on its own; a hysteresis band around the boundary stops a hovering rate from flapping the notification.
 
 **Hot-water reserve safety net** (optional; evaluated alongside the battery regime)
 
@@ -142,7 +142,7 @@ strategy:
 
 A modern home energy system has several independently smart components that aren't coordinated with each other:
 
-- A GivEnergy (or other) hybrid inverter happily discharges the battery into an EV charger drawing cheap overnight grid power — wasteful.
+- A GivEnergy (or other) hybrid inverter happily discharges the battery into an EV charger drawing off-peak overnight grid power — wasteful.
 - A solar diverter (Eddi, iBoost) and an EV charger (Zappi, Wallbox) compete for the same solar surplus without knowing each other's thresholds — the EV starves below its 1.4 kW minimum while the diverter absorbs everything.
 - Overnight battery charging is set to a fixed SOC target that's too high on sunny days and too low on cloudy ones.
 - A saving session fires at 5 pm and the battery is already half-depleted because no one turned off the dishwasher.
@@ -166,7 +166,7 @@ This means conductor works with any inverter, any EV charger, any forecast servi
 
 Conductor operates at the level of sophistication your entity mapping supports:
 
-- Map only an off-peak binary sensor → basic cheap-window SoC-setpoint control
+- Map only an off-peak binary sensor → basic off-peak-window SoC-setpoint control
 - Also map import/export rate sensors → the rate-watch validates the strategy's economics live
 - Also map hourly forecast slots → hot-water diversion estimate and a slot-based mission-tape SoC projection
 - Also map deferrable and advisory loads → full coordination across all devices

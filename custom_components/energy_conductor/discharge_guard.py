@@ -34,7 +34,7 @@ from .model import SiteState
 def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:
     if state.tariff.off_peak_now or state.tariff.ev_dispatching_now:
         limit_w = 0
-        reason = "Cheap energy (off-peak/dispatch) — battery idle"
+        reason = "Off-peak energy (window or dispatch) — battery idle"
     else:
         limit_w = state.battery.max_discharge_power_w
         reason = "Unconstrained"

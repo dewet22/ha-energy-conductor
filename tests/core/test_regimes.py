@@ -1,4 +1,4 @@
-"""Regime engine: cheap windows fill to 100, otherwise get out of the way."""
+"""Regime engine: off-peak windows fill to 100, otherwise get out of the way."""
 
 from energy_conductor.decisions import DecisionKind
 from energy_conductor.regimes import charge_setpoint, current_regime
@@ -13,15 +13,15 @@ def _decide(**state_overrides):
 
 
 class TestCurrentRegime:
-    def test_off_peak_is_cheap_charge(self):
+    def test_off_peak_is_off_peak_charge(self):
         state = a_site_state(tariff=a_tariff(off_peak_now=True, ev_dispatching_now=False))
-        assert current_regime(state) == "cheap_charge"
+        assert current_regime(state) == "off_peak_charge"
 
-    def test_dispatch_alone_is_cheap_charge(self):
+    def test_dispatch_alone_is_off_peak_charge(self):
         # Dispatch outside the fixed window: off_peak usually flips lock-step, but the
         # regime must not depend on that coupling.
         state = a_site_state(tariff=a_tariff(off_peak_now=False, ev_dispatching_now=True))
-        assert current_regime(state) == "cheap_charge"
+        assert current_regime(state) == "off_peak_charge"
 
     def test_neither_is_self_consume(self):
         state = a_site_state(tariff=a_tariff(off_peak_now=False, ev_dispatching_now=False))
@@ -29,12 +29,12 @@ class TestCurrentRegime:
 
 
 class TestChargeSetpoint:
-    def test_cheap_charge_setpoint_is_100(self):
+    def test_off_peak_charge_setpoint_is_100(self):
         decision = _decide(tariff=a_tariff(off_peak_now=True))
         assert decision.kind is DecisionKind.SET_CHARGE_TARGET
         assert decision.target_entity == TARGET
         assert decision.value == 100
-        assert decision.dedupe_key == "setpoint-cheap_charge-100"
+        assert decision.dedupe_key == "setpoint-off_peak_charge-100"
 
     def test_self_consume_setpoint_is_control_minimum(self):
         # Deliberately not the model's 4.0 default, and not integral: a setpoint that
@@ -45,9 +45,9 @@ class TestChargeSetpoint:
         assert decision.dedupe_key == "setpoint-self_consume-7.5"
 
     def test_setpoint_reason_mentions_regime(self):
-        assert "cheap" in _decide(tariff=a_tariff(off_peak_now=True)).reason.lower()
+        assert "off-peak" in _decide(tariff=a_tariff(off_peak_now=True)).reason.lower()
 
     def test_regime_change_changes_dedupe_key(self):
-        cheap = _decide(tariff=a_tariff(off_peak_now=True))
+        off_peak = _decide(tariff=a_tariff(off_peak_now=True))
         self_consume = _decide()
-        assert cheap.dedupe_key != self_consume.dedupe_key
+        assert off_peak.dedupe_key != self_consume.dedupe_key

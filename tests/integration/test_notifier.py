@@ -84,12 +84,12 @@ def test_render_message_charge_target_formats_percent() -> None:
         kind=DecisionKind.SET_CHARGE_TARGET,
         target_entity="number.battery_charge_target",
         value=80,
-        reason="cheap energy — fill to 80%",
+        reason="off-peak energy — fill to 80%",
         dedupe_key="c-80",
     )
     msg = render_message(decision, WRITE_MODE_LIVE)
     assert "Battery SoC setpoint → 80%" in msg
-    assert "cheap energy" in msg
+    assert "off-peak energy" in msg
 
 
 def test_render_message_hot_water_boost_formats_hours() -> None:
@@ -136,7 +136,7 @@ def test_render_message_rate_warning_formats_signed_pence() -> None:
         kind=DecisionKind.RATE_ECONOMICS_WARNING,
         target_entity="rate_watch",
         value=-1.67,
-        reason="Cheap-window fill margin is -1.67p/kWh",
+        reason="Off-peak fill margin is -1.67p/kWh",
         dedupe_key="rate-watch-2026-06-08T23:00:00+00:00",
     )
     msg = render_message(decision, WRITE_MODE_LIVE)

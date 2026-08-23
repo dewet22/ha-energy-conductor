@@ -37,7 +37,7 @@ Run all of these before tagging a release.
 
 - [ ] Within 30s of setup, `sensor.energy_conductor_status` reads `ok`
 - [ ] `sensor.energy_conductor_overnight_plan` (now "Battery SoC setpoint") populates with a numeric % within 60s, with `regime` and `rate_watch` attributes set
-- [ ] Toggling the off-peak or dispatch sensor on transitions the regime to cheap-charge (setpoint 100%, discharge limit 0) and a notification arrives on the mobile target; toggling off returns to self-consume
+- [ ] Toggling the off-peak or dispatch sensor on transitions the regime to off-peak-charge (setpoint 100%, discharge limit 0) and a notification arrives on the mobile target; toggling off returns to self-consume
 - [ ] Discharge guard: temporarily set the off-peak binary sensor to `on` (e.g. via Developer Tools → States). Within seconds, a `Discharge cap → 0W` notification arrives. (This is the EV-protection path: EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls grid.)
 - [ ] Discharge guard dedupe: across an off-peak → peak → off-peak cycle, only one notification per regime transition (not 120/hour).
 

@@ -48,7 +48,7 @@ class TestProjectSoc:
         assert socs == [50.0, 80.0, 80.0, 80.0, 80.0]
 
     def test_defaults_to_charging_toward_full(self):
-        # The regime model always fills to 100% in the cheap window, so that is the
+        # The regime model always fills to 100% in the off-peak window, so that is the
         # projection's default target — not whatever the current setpoint reads.
         tariff = a_tariff(off_peak_now=True, off_peak_window_end=NOW + timedelta(hours=12))
         points = project_soc(_state(tariff=tariff), hours=4, step_minutes=60)

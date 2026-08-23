@@ -1,6 +1,6 @@
 """Property-based test for a spec invariant (§8).
 
-1. discharge_limit() returns only 0 (cheap energy: off-peak or dispatch) or
+1. discharge_limit() returns only 0 (off-peak energy: window or dispatch) or
    max_discharge_power_w (default) — EV power and the activation threshold never
    influence it, and the removed baseline-cap regime must never reappear.
 """
@@ -27,7 +27,7 @@ load_w = st.floats(min_value=50, max_value=5000, allow_nan=False, allow_infinity
 def test_discharge_no_intermediate_regime(
     power_w, min_activation, baseline, off_peak_now, dispatching_now
 ):
-    """The limit is fully determined by the tariff flags: 0 when either cheap-energy
+    """The limit is fully determined by the tariff flags: 0 when either off-peak
     flag is set, max_discharge_power_w otherwise — regardless of EV power, activation
     threshold, or baseline load. In particular round(baseline) (the removed dispatch
     baseline-cap regime) must never be returned."""

@@ -43,7 +43,7 @@ def project_soc(
 ) -> list[tuple[datetime, float]]:
     """Project SoC forward for the mission tape. Honest but simple, by design.
 
-    Mirrors what the regime model will actually do: inside a cheap window the
+    Mirrors what the regime model will actually do: inside an off-peak window the
     setpoint engine charges toward 100% at the battery's max charge power and the
     discharge guard holds; outside it the house draws the baseline load net of
     forecast PV (a PV surplus charges) down to the reserve. Clamped to

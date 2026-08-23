@@ -1,7 +1,7 @@
 """Actuation verification — did EC's commands take effect? (pure core).
 
 Two checks, both live-mode only:
-- **anti-drain** (`check_actuation`): when EC caps discharge at 0 on cheap energy — off-peak
+- **anti-drain** (`check_actuation`): when EC caps discharge at 0 on off-peak energy — the window
   or an EV dispatch, the same pair the discharge guard caps on — the battery must be idle.
   A battery that keeps discharging means the cap never took effect — the failure mode behind
   the EV-drain incident. Battery power is the direct signal; grid is context.
@@ -32,11 +32,11 @@ def check_actuation(
 ) -> VerificationResult | None:
     """Verify the last discharge actuation against the meter, or None when not applicable.
 
-    Applicable only when EC has a *live* discharge cap of 0 on cheap energy and battery power is
-    known. A different decision, a dry-run/failed write, neither cheap-energy flag, or no
+    Applicable only when EC has a *live* discharge cap of 0 on off-peak energy and battery power is
+    known. A different decision, a dry-run/failed write, neither off-peak flag, or no
     battery-power signal all return None (nothing to assert).
 
-    "Cheap energy" mirrors `discharge_guard.discharge_limit` exactly — off-peak OR an EV
+    "Off-peak energy" mirrors `discharge_guard.discharge_limit` exactly — the window OR an EV
     dispatch. Gating on off-peak alone would decline to judge a dispatch-only window, which
     is the EV-drain scenario this check exists for.
     """
@@ -47,7 +47,7 @@ def check_actuation(
     if outcome not in ("applied", "unchanged"):
         return None  # the cap isn't live on hardware (dry-run / failed / not yet emitted)
     if not (state.tariff.off_peak_now or state.tariff.ev_dispatching_now):
-        return None  # the cap only applies on cheap energy (off-peak or dispatch)
+        return None  # the cap only applies on off-peak energy (window or dispatch)
     power_w = state.battery.power_w
     if power_w is None:
         return None  # no battery-power signal configured

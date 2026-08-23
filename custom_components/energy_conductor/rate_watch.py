@@ -1,6 +1,6 @@
 """Fill-mode unit-economics check (spec 2026-08-23). Warn-only — never changes regime.
 
-The setpoint regime's premise: grid-filling during cheap windows beats PV-filling while
+The setpoint regime's premise: grid-filling during off-peak windows beats PV-filling while
 off_peak_import / eta < export. This module computes the margin; the coordinator owns
 the episode latch and notification.
 """

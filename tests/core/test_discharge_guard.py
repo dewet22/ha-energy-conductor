@@ -5,7 +5,7 @@ Regime table:
   2. default                            → limit max_discharge_power_w
 
 Two regimes were removed:
-- "EV dispatch → cap at baseline": a dispatch is cheap energy, so the battery
+- "EV dispatch → cap at baseline": a dispatch is off-peak energy, so the battery
   idles outright rather than being capped at an EV-derived level. The EV's own
   power draw no longer affects the discharge limit.
 - "pre-off-peak hold" (idle for 30 min before off-peak): those minutes are still

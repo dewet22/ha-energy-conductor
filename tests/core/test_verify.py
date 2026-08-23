@@ -84,7 +84,7 @@ def test_not_applicable_when_not_capped():
 
 
 def test_not_applicable_when_not_off_peak():
-    # Neither cheap-energy flag: the guard wouldn't be capping, so there is nothing to assert.
+    # Neither off-peak flag: the guard wouldn't be capping, so there is nothing to assert.
     state = _state(off_peak=False, battery_power=2000.0)
     assert check_actuation(state, _cap(0), "applied") is None
 

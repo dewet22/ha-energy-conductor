@@ -51,7 +51,7 @@ from .money import normalise_rate
 from .money_tracker import MoneyTracker
 from .notifier import Notifier
 from .rate_watch import fill_margin_gbp
-from .regimes import REGIME_CHEAP_CHARGE, charge_setpoint, current_regime
+from .regimes import REGIME_OFF_PEAK_CHARGE, charge_setpoint, current_regime
 from .verify import (
     VerificationResult,
     check_actuation,
@@ -191,8 +191,8 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_verification_detail: str | None = None
         self.last_verification_at: datetime | None = None
         self._mismatch_since: datetime | None = None
-        # Rate-watch (warn-only): does grid-filling during the cheap window still beat
-        # PV-filling? "n/a" until the rates are configured AND read in a cheap-charge tick.
+        # Rate-watch (warn-only): does grid-filling during the off-peak window still beat
+        # PV-filling? "n/a" until the rates are configured AND read in an off-peak-charge tick.
         self.rate_watch_status: str = "n/a"
         self.rate_watch_margin_gbp: float | None = None
         # Start of the current inversion episode, or None while the premise holds. Doubles
@@ -296,7 +296,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_setpoint_outcome = await self._emit(setpoint)
         self.last_setpoint_decision = setpoint
 
-        if current_regime(state) == REGIME_CHEAP_CHARGE:
+        if current_regime(state) == REGIME_OFF_PEAK_CHARGE:
             await self._check_rate_economics(state)
 
         # Pin charge slot 1 always-on, so the charge target acts as a two-sided SoC setpoint
@@ -334,9 +334,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         await self._verify_actuation(state)
 
     async def _check_rate_economics(self, state: SiteState) -> None:
-        """Warn (once per inversion episode) when cheap-window economics stop favouring
-        fill-mode. Evaluated only in the cheap regime, when the import-rate sensor is by
-        definition reading the cheap rate. Warn-only: the regime never changes."""
+        """Warn (once per inversion episode) when off-peak economics stop favouring
+        fill-mode. Evaluated only in the off-peak-charge regime, when the import-rate sensor is
+        by definition reading the off-peak rate. Warn-only: the regime never changes."""
         import_rate = self._read_rate_state(CONF_IMPORT_RATE_SENSOR)
         export_rate = self._read_rate_state(CONF_EXPORT_RATE_SENSOR)
         if import_rate is None or export_rate is None:
@@ -365,7 +365,7 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 target_entity="rate_watch",
                 value=round(margin * 100, 2),  # pence, for the notification
                 reason=(
-                    "Cheap-window fill margin is "
+                    "Off-peak fill margin is "
                     f"{margin * 100:.2f}p/kWh — grid-filling no longer beats "
                     "PV-filling; review the setpoint strategy"
                 ),

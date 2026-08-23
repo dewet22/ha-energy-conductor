@@ -66,11 +66,11 @@ async def test_setpoint_sensor_reflects_regime(hass: HomeAssistant) -> None:
 
     state = hass.states.get(_entity(hass, entry, "overnight-plan"))
     assert float(state.state) == 100.0
-    assert state.attributes["regime"] == "cheap_charge"
+    assert state.attributes["regime"] == "off_peak_charge"
 
 
 async def test_setpoint_sensor_reflects_self_consume_regime(hass: HomeAssistant) -> None:
-    """Out of the cheap window the setpoint sits at the control's own minimum."""
+    """Out of the off-peak window the setpoint sits at the control's own minimum."""
     _arrange_entities(hass, soc="50")
     entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="tp5")
     assert await _setup(hass, entry)
