@@ -10,7 +10,7 @@ conventional commits, git workflow) are in `~/.claude-personal/CLAUDE.md`.
 The most important structural rule in this codebase.
 
 **Core modules** (`model.py`, `decisions.py`, `discharge_guard.py`, `regimes.py`,
-`rate_watch.py`, `overnight.py`, `baseline.py`, `fallback.py`, `jitter.py`) must
+`rate_watch.py`, `overnight.py`, `baseline.py`, `fallback.py`) must
 **not import from `homeassistant`**.
 This is enforced by a ruff `TID251` banned-api rule in `pyproject.toml`:
 
