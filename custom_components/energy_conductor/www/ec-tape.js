@@ -779,25 +779,12 @@
               '" stroke="currentColor" stroke-width="1" opacity="0.15"/>';
           });
 
-          // --- EC plan block ------------------------------------------------
-          if (plan && ws && we) {
-            var pStart = new Date(Date.parse(ws.state));
-            var pEnd = new Date(Date.parse(we.state));
-            if (!isNaN(pStart.getTime()) && !isNaN(pEnd.getTime()) && pEnd > win.now) {
-              var px0 = timeToX(pStart < win.now ? win.now : pStart, win, W);
-              var px1 = timeToX(pEnd, win, W);
-              var target = parseFloat(plan.state);
-              if (!isNaN(target)) {
-                svg +=
-                  '<rect x="' + px0.toFixed(1) + '" y="' + (socY(target) - 4).toFixed(1) +
-                  '" width="' + (px1 - px0).toFixed(1) + '" height="8" fill="none" ' +
-                  'stroke="' + C_BATTERY + '" stroke-width="1.5" stroke-dasharray="5 3" rx="3"/>';
-                svg +=
-                  '<text x="' + (px0 + 4).toFixed(1) + '" y="' + (socY(target) - 8).toFixed(1) +
-                  '" font-size="11" fill="' + C_BATTERY + '">maintain at least ' + Math.round(target) + "%</text>";
-              }
-            }
-          }
+          // The dashed "maintain at least N%" target band that used to sit here was a
+          // plan-era artifact: it painted the LIVE setpoint across the *future* off-peak
+          // window, and under the regime model that value is the control minimum (~4%)
+          // every evening — contradicting the projection line rising to 100% right beside
+          // it. The projection already carries the forward claim, so the band is gone
+          // rather than re-pinned to a second, static copy of the same number.
 
           // --- energy curves -----------------------------------------------
           var loadPts = downsample(this._numSeries(sources.home_load), 300);
