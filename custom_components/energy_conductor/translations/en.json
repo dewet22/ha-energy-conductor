@@ -6,11 +6,13 @@
         "description": "Map the entities representing your hybrid inverter's battery.",
         "data": {
           "battery_soc_sensor": "Battery SoC sensor",
-          "battery_charge_control": "Charge power control (number entity)",
+          "battery_charge_control": "Charge target / SoC setpoint control (number entity)",
           "battery_discharge_limit": "Discharge power limit (number entity)",
           "battery_capacity_kwh": "Battery capacity (kWh)",
           "battery_reserve_percent": "Reserve SoC floor (%)",
-          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; reads the live minimum-SoC entity, e.g. GivEnergy battery_soc_reserve)"
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; reads the live minimum-SoC entity, e.g. GivEnergy battery_soc_reserve)",
+          "charge_slot_1_start_entity": "Charge slot 1 start (time entity)",
+          "charge_slot_1_end_entity": "Charge slot 1 end (time entity; EC pins the slot always-on so the charge target acts as a SoC setpoint — see docs)"
         }
       },
       "tariff": {
@@ -149,11 +151,13 @@
         "title": "Battery",
         "data": {
           "battery_soc_sensor": "Battery SoC sensor",
-          "battery_charge_control": "Charge power control (number entity)",
+          "battery_charge_control": "Charge target / SoC setpoint control (number entity)",
           "battery_discharge_limit": "Discharge power limit (number entity)",
           "battery_capacity_kwh": "Battery capacity (kWh)",
           "battery_reserve_percent": "Reserve SoC floor (%)",
-          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)"
+          "reserve_soc_sensor": "Reserve SoC floor sensor (optional; live minimum-SoC entity)",
+          "charge_slot_1_start_entity": "Charge slot 1 start (time entity)",
+          "charge_slot_1_end_entity": "Charge slot 1 end (time entity; pinned always-on so the charge target acts as a SoC setpoint)"
         }
       },
       "tariff": {

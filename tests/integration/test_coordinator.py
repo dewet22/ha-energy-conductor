@@ -522,3 +522,123 @@ async def test_verification_renotifies_after_recovery(coordinator) -> None:
     await _tick(coordinator, secs=300, battery_power=2000.0)
     assert coordinator.verification_status == "mismatch"
     assert coordinator.notifications_sent == n1 + 1
+
+
+# ---- charge-slot-1 pinning ---------------------------------------------------------------
+
+from custom_components.energy_conductor.const import (  # noqa: E402
+    CHARGE_SLOT_PIN_END,
+    CHARGE_SLOT_PIN_START,
+    CONF_CHARGE_SLOT_1_END_ENTITY,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
+)
+from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
+
+_SLOT_START_ENTITY = "time.charge_slot_1_start"
+_SLOT_END_ENTITY = "time.charge_slot_1_end"
+_SLOT_START_KEY = ("set_slot_time", _SLOT_START_ENTITY)
+
+
+@pytest.fixture
+def slot_coordinator(hass, mock_config_entry) -> EnergyConductorCoordinator:
+    """Coordinator whose config also carries both charge-slot-1 time entities."""
+    entry = MockConfigEntry(
+        domain=mock_config_entry.domain,
+        data={
+            **mock_config_entry.data,
+            CONF_CHARGE_SLOT_1_START_ENTITY: _SLOT_START_ENTITY,
+            CONF_CHARGE_SLOT_1_END_ENTITY: _SLOT_END_ENTITY,
+        },
+        entry_id="slot_entry",
+        title="Energy Conductor",
+    )
+    entry.add_to_hass(hass)
+    coord = EnergyConductorCoordinator(hass, entry)
+    coord.notifier.notify = AsyncMock(return_value=None)
+    coord.writer.write = AsyncMock(return_value=None)
+    return coord
+
+
+async def test_slot_pin_emitted_when_configured(slot_coordinator) -> None:
+    """Both slot bounds are pinned on the first tick and left alone thereafter — the
+    dedupe key is the pinned value, so a stable slot isn't re-written every 30 s."""
+    await _tick(slot_coordinator, secs=0, battery_power=None)
+
+    kinds = [call.args[0].kind for call in slot_coordinator.writer.write.await_args_list]
+    assert kinds.count(DecisionKind.SET_SLOT_TIME) == 2
+    assert _written(slot_coordinator, _SLOT_START_ENTITY) == [CHARGE_SLOT_PIN_START]
+    assert _written(slot_coordinator, _SLOT_END_ENTITY) == [CHARGE_SLOT_PIN_END]
+
+    await _tick(slot_coordinator, secs=30, battery_power=None)
+    assert _written(slot_coordinator, _SLOT_START_ENTITY) == [CHARGE_SLOT_PIN_START]
+    assert _written(slot_coordinator, _SLOT_END_ENTITY) == [CHARGE_SLOT_PIN_END]
+
+
+async def test_slot_pin_skipped_when_unconfigured(coordinator) -> None:
+    """Without both slot entities EC must not guess at a write target."""
+    await _tick(coordinator, secs=0, battery_power=None)
+
+    kinds = [call.args[0].kind for call in coordinator.writer.write.await_args_list]
+    assert DecisionKind.SET_SLOT_TIME not in kinds
+
+
+async def test_slot_drift_heals_via_readback(slot_coordinator, hass) -> None:
+    """An externally-edited slot is re-pinned by the readback loop, not the dedupe key:
+    the string mismatch clears the emit bookkeeping and the per-tick re-emission rewrites."""
+    slot_coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(slot_coordinator, secs=0, battery_power=None)  # pin written (applied)
+    assert slot_coordinator._commanded[_SLOT_START_KEY].value == CHARGE_SLOT_PIN_START
+
+    # Someone edits the slot on the inverter app; make the write judgeable.
+    hass.states.async_set(_SLOT_START_ENTITY, "23:30:00")
+    slot_coordinator._commanded[_SLOT_START_KEY].written_at = _T0 - timedelta(seconds=120)
+
+    # Readback mismatch → self-heal scheduled (emit bookkeeping cleared), not yet flagged.
+    await _tick(slot_coordinator, secs=30, battery_power=None)
+    assert slot_coordinator._commanded[_SLOT_START_KEY].retries == 1
+    assert slot_coordinator.verification_status != "mismatch"
+
+    # Next tick re-writes the same pin — the drift is healed.
+    await _tick(slot_coordinator, secs=60, battery_power=None)
+    assert _written(slot_coordinator, _SLOT_START_ENTITY) == [
+        CHARGE_SLOT_PIN_START,
+        CHARGE_SLOT_PIN_START,
+    ]
+
+    # The entity now echoes the pin → the verdict clears.
+    hass.states.async_set(_SLOT_START_ENTITY, CHARGE_SLOT_PIN_START)
+    slot_coordinator._commanded[_SLOT_START_KEY].written_at = _T0 - timedelta(seconds=120)
+    await _tick(slot_coordinator, secs=90, battery_power=None)
+    assert slot_coordinator.verification_status == "ok"
+
+
+async def test_slot_drift_heals_again_after_recovery(slot_coordinator, hass) -> None:
+    """The self-heal budget re-arms on a healthy readback, so the SECOND drift event heals too.
+
+    The pin's value never changes, so the "same value keeps its retry budget" rule in _emit
+    can't re-arm it the way a changing numeric setpoint does. Without a reset on the ok path
+    the budget is spent for the coordinator's lifetime and a later drift is only flagged —
+    leaving the slot on the user's value until HA restarts.
+    """
+    slot_coordinator.write_mode = WRITE_MODE_LIVE
+
+    async def drift_and_heal(*, at: int) -> None:
+        """One full drift → self-heal → healthy-readback cycle, starting at tick `at`."""
+        hass.states.async_set(_SLOT_START_ENTITY, "23:30:00")
+        slot_coordinator._commanded[_SLOT_START_KEY].written_at = _T0 - timedelta(seconds=120)
+        await _tick(slot_coordinator, secs=at, battery_power=None)  # mismatch → re-issue armed
+        assert slot_coordinator.verification_status != "mismatch"
+        await _tick(slot_coordinator, secs=at + 30, battery_power=None)  # re-write lands
+        hass.states.async_set(_SLOT_START_ENTITY, CHARGE_SLOT_PIN_START)
+        slot_coordinator._commanded[_SLOT_START_KEY].written_at = _T0 - timedelta(seconds=120)
+        await _tick(slot_coordinator, secs=at + 60, battery_power=None)
+        assert slot_coordinator.verification_status == "ok"
+
+    await _tick(slot_coordinator, secs=0, battery_power=None)  # initial pin
+    await drift_and_heal(at=30)
+    # A healthy readback means the heal stuck — the budget must be back to full.
+    assert slot_coordinator._commanded[_SLOT_START_KEY].retries == 0
+
+    await drift_and_heal(at=120)
+    # Three writes: the initial pin plus one re-issue per drift event.
+    assert _written(slot_coordinator, _SLOT_START_ENTITY) == [CHARGE_SLOT_PIN_START] * 3

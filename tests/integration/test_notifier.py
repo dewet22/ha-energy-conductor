@@ -116,3 +116,23 @@ def test_render_message_verification_mismatch_formats_watts() -> None:
     msg = render_message(decision, WRITE_MODE_LIVE)
     assert "Actuation mismatch → 2000W" in msg
     assert "battery discharging" in msg
+
+
+def test_render_message_slot_pin_formats_raw_time() -> None:
+    decision = Decision(
+        kind=DecisionKind.SET_SLOT_TIME,
+        target_entity="time.charge_slot_1_start",
+        value="00:00:00",
+        reason="Pin charge slot 1 always-on (setpoint regime)",
+        dedupe_key="slot-pin-00:00:00",
+    )
+    msg = render_message(decision, WRITE_MODE_LIVE)
+    assert "Charge slot pinned → 00:00:00" in msg
+    assert "always-on" in msg
+
+
+def test_every_decision_kind_has_a_label() -> None:
+    """A kind without a label renders its raw enum value in the user's notification."""
+    from custom_components.energy_conductor.notifier import _KIND_LABEL
+
+    assert set(_KIND_LABEL) == set(DecisionKind)

@@ -17,6 +17,12 @@ CONF_BATTERY_RESERVE_PERCENT = "battery_reserve_percent"
 # battery_soc_reserve) instead of the static reserve percent above. May be a
 # `number` or `sensor` entity. Falls back to CONF_BATTERY_RESERVE_PERCENT when unset.
 CONF_RESERVE_SOC_SENSOR = "reserve_soc_sensor"
+# Charge slot 1 time entities (optional). When both are set, EC pins the slot always-on
+# so the charge-target control behaves as a two-sided SoC setpoint (spec 2026-08-23).
+CONF_CHARGE_SLOT_1_START_ENTITY = "charge_slot_1_start_entity"
+CONF_CHARGE_SLOT_1_END_ENTITY = "charge_slot_1_end_entity"
+CHARGE_SLOT_PIN_START = "00:00:00"
+CHARGE_SLOT_PIN_END = "23:59:00"
 
 # Config keys — grid meter + actuation verification (all optional; feature inert when unset)
 CONF_GRID_IMPORT_SENSOR = "grid_import_sensor"

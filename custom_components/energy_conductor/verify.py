@@ -84,3 +84,21 @@ def check_write_landed(
         ok=False,
         detail=f"commanded {label}={commanded:g} but entity reads {readback:g}",
     )
+
+
+def check_time_write_landed(
+    label: str, commanded: str, readback: str | None
+) -> VerificationResult | None:
+    """String-equality readback for time-entity writes (slot pinning).
+
+    Same contract as ``check_write_landed`` — non-identifying ``label``, ``None`` when the
+    entity can't be read — but time entity states are exact ``'HH:MM:SS'`` strings, so there
+    is no tolerance to apply.
+    """
+    if readback is None:
+        return None
+    if readback == commanded:
+        return VerificationResult(ok=True, detail=f"{label} reads {readback} as commanded")
+    return VerificationResult(
+        ok=False, detail=f"commanded {label}={commanded} but entity reads {readback}"
+    )

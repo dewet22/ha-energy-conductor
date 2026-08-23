@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from energy_conductor.decisions import Decision, DecisionKind
-from energy_conductor.verify import check_actuation, check_write_landed
+from energy_conductor.verify import (
+    check_actuation,
+    check_time_write_landed,
+    check_write_landed,
+)
 
 from .builders import a_battery, a_grid_state, a_site_state, a_tariff
 
@@ -131,3 +135,24 @@ def test_write_landed_detail_uses_label_not_entity_id():
 
 def test_write_landed_unreadable_entity_no_verdict():
     assert check_write_landed("set_discharge_limit", 0.0, None) is None
+
+
+# --- time-entity readback (check_time_write_landed) --------------------------
+
+
+def test_time_write_landed_match():
+    result = check_time_write_landed("set_slot_time", "00:00:00", "00:00:00")
+    assert result is not None and result.ok
+    assert "as commanded" in result.detail
+
+
+def test_time_write_landed_mismatch():
+    result = check_time_write_landed("set_slot_time", "00:00:00", "23:30:00")
+    assert result is not None and not result.ok
+    assert "00:00:00" in result.detail and "23:30:00" in result.detail
+    # Same privacy contract as the numeric readback: label, never entity_id.
+    assert "time." not in result.detail
+
+
+def test_time_write_landed_unreadable():
+    assert check_time_write_landed("set_slot_time", "00:00:00", None) is None

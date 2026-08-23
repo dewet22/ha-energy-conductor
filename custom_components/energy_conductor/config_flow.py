@@ -38,6 +38,8 @@ from .const import (
     CONF_BATTERY_POWER_SENSOR,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_CHARGE_SLOT_1_END_ENTITY,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
     CONF_DAILY_ENERGY_SENSOR,
     CONF_DAILY_KWH_TARGET,
     CONF_DEVICE_NAME,
@@ -128,6 +130,8 @@ BATTERY_KEYS = (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_RESERVE_PERCENT,
     CONF_RESERVE_SOC_SENSOR,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
+    CONF_CHARGE_SLOT_1_END_ENTITY,
 )
 TARIFF_KEYS = (CONF_OFF_PEAK_SENSOR, CONF_DISPATCHING_SENSOR, CONF_OVERNIGHT_WINDOW_END_TIME)
 SOLAR_KEYS = (
@@ -215,6 +219,10 @@ def _soc_floor_selector() -> EntitySelector:
     # The minimum-SoC floor may be exposed as a `number` (GivEnergy battery_soc_reserve)
     # or a `sensor`, depending on the integration. Accept either.
     return EntitySelector(EntitySelectorConfig(domain=["sensor", "number"]))
+
+
+def _time_entity_selector() -> EntitySelector:
+    return EntitySelector(EntitySelectorConfig(domain="time"))
 
 
 def _binary_sensor_selector() -> EntitySelector:
@@ -340,6 +348,12 @@ def battery_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
             ): _percent_selector(),
             _marker(CONF_RESERVE_SOC_SENSOR, options=options, defaults=defaults): (
                 _soc_floor_selector()
+            ),
+            _marker(CONF_CHARGE_SLOT_1_START_ENTITY, options=options, defaults=defaults): (
+                _time_entity_selector()
+            ),
+            _marker(CONF_CHARGE_SLOT_1_END_ENTITY, options=options, defaults=defaults): (
+                _time_entity_selector()
             ),
         }
     )

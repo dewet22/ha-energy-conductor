@@ -17,9 +17,13 @@ from homeassistant.util import dt as dt_util
 
 from .adapter import Adapter, EntityProblem
 from .const import (
+    CHARGE_SLOT_PIN_END,
+    CHARGE_SLOT_PIN_START,
     CONF_BATTERY_CHARGE_CONTROL,
     CONF_BATTERY_DISCHARGE_LIMIT,
     CONF_BATTERY_SOC_SENSOR,
+    CONF_CHARGE_SLOT_1_END_ENTITY,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
     CONF_NOTIFY_TARGET,
@@ -41,13 +45,24 @@ from .model import SiteState
 from .money_tracker import MoneyTracker
 from .notifier import Notifier
 from .regimes import charge_setpoint
-from .verify import VerificationResult, check_actuation, check_write_landed
+from .verify import (
+    VerificationResult,
+    check_actuation,
+    check_time_write_landed,
+    check_write_landed,
+)
 from .writer import WriteFailure, Writer
 
 _LOGGER = logging.getLogger(__name__)
 
 # Decision kinds that drive a hardware write (vs notify-only). Mirrors writer.py's routing.
-_WRITE_KINDS = frozenset({DecisionKind.SET_CHARGE_TARGET, DecisionKind.SET_DISCHARGE_LIMIT})
+_WRITE_KINDS = frozenset(
+    {
+        DecisionKind.SET_CHARGE_TARGET,
+        DecisionKind.SET_DISCHARGE_LIMIT,
+        DecisionKind.SET_SLOT_TIME,
+    }
+)
 
 
 @dataclass
@@ -55,7 +70,7 @@ class _CommandedWrite:
     """Bookkeeping for write-readback verification, per (kind, target) — the entity must come
     to reflect this value (the inverter's write-echo) and KEEP reflecting it on every tick."""
 
-    value: float
+    value: float | str  # str for the "HH:MM:SS" slot pins
     written_at: datetime
     retries: int = 0  # re-issue budget consumed (retry once, then flag)
 
@@ -254,6 +269,26 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         self.last_setpoint_outcome = await self._emit(setpoint)
         self.last_setpoint_decision = setpoint
 
+        # Pin charge slot 1 always-on, so the charge target acts as a two-sided SoC setpoint
+        # rather than a charge ceiling. Re-emitted every tick; the readback loop is what
+        # re-writes an externally-edited slot (the dedupe key never changes).
+        slot_start = self.config.get(CONF_CHARGE_SLOT_1_START_ENTITY)
+        slot_end = self.config.get(CONF_CHARGE_SLOT_1_END_ENTITY)
+        if slot_start and slot_end:
+            for entity, value in (
+                (slot_start, CHARGE_SLOT_PIN_START),
+                (slot_end, CHARGE_SLOT_PIN_END),
+            ):
+                await self._emit(
+                    Decision(
+                        kind=DecisionKind.SET_SLOT_TIME,
+                        target_entity=entity,
+                        value=value,
+                        reason="Pin charge slot 1 always-on (setpoint regime)",
+                        dedupe_key=f"slot-pin-{value}",
+                    )
+                )
+
         # Hot-water boost prompt — notify-only; per-day dedupe keeps it to one prompt.
         hot_water_decision = _hot_water_decision(state)
         if hot_water_decision is not None:
@@ -268,8 +303,9 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         The entity reflects the inverter's write-echo within a tick, so after a short settle
         window (which absorbs the transient flip-back signature) a non-matching readback means
         the write was silently rejected or didn't persist. Self-heals once by clearing the
-        emit bookkeeping so the M-4 every-tick retry re-issues the command; a second failure
-        returns a mismatch verdict. Returns ok when all judgeable writes match, None when
+        emit bookkeeping so the M-4 every-tick retry re-issues the command; a second
+        *consecutive* failure returns a mismatch verdict, and a healthy readback re-arms the
+        budget. Returns ok when all judgeable writes match, None when
         nothing is judgeable (settling / unreadable entities / no commands yet).
         """
         verdict: VerificationResult | None = None
@@ -278,16 +314,23 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 continue  # write-echo still settling — no verdict for this command yet
             kind, target = key  # kind is a non-identifying label; target is the entity_id
             raw = self.hass.states.get(target)
-            readback: float | None = None
+            state_str: str | None = None
             if raw is not None and raw.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None, ""):
-                try:
-                    readback = float(raw.state)
-                except TypeError, ValueError:
-                    readback = None
+                state_str = raw.state
             # Pass the decision kind, NOT the entity_id, into the detail — it flows into
             # diagnostics + notifications, where the entity_id would re-leak room/device
             # names that the redaction strips (Codex review).
-            result = check_write_landed(kind, cmd.value, readback)
+            if kind == DecisionKind.SET_SLOT_TIME.value:
+                # Time entities read back an exact "HH:MM:SS" string — compare as strings.
+                result = check_time_write_landed(kind, str(cmd.value), state_str)
+            else:
+                readback: float | None = None
+                if state_str is not None:
+                    try:
+                        readback = float(state_str)
+                    except TypeError, ValueError:
+                        readback = None
+                result = check_write_landed(kind, float(cmd.value), readback)
             if result is None:
                 continue  # entity unreadable — no verdict either way
             if not result.ok:
@@ -299,6 +342,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                     _LOGGER.warning("Write readback failed (%s); re-issuing once", result.detail)
                     continue
                 return result
+            # A healthy readback means the last re-issue stuck, so re-arm the budget: the next
+            # drift gets its own self-heal. Without this the budget is spent for the
+            # coordinator's lifetime whenever the commanded value never changes — as the slot
+            # pins never do — and a later drift would only ever be flagged (review finding).
+            cmd.retries = 0
             verdict = verdict or result
         return verdict
 
@@ -424,7 +472,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
                 # Record for write-readback verification. A re-issue of the same command
                 # keeps its retry budget; a new value resets it.
                 prev = self._commanded.get(key)
-                value = float(decision.value)
+                value: float | str = (
+                    str(decision.value)
+                    if decision.kind is DecisionKind.SET_SLOT_TIME
+                    else float(decision.value)
+                )
                 self._commanded[key] = _CommandedWrite(
                     value=value,
                     written_at=self.last_write_at,

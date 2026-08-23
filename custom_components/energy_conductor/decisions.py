@@ -10,6 +10,7 @@ from typing import Any
 class DecisionKind(StrEnum):
     SET_CHARGE_TARGET = "set_charge_target"
     SET_DISCHARGE_LIMIT = "set_discharge_limit"
+    SET_SLOT_TIME = "set_slot_time"  # value is an "HH:MM:SS" string, written via time.set_value
     RECOMMEND_HOT_WATER_BOOST = "recommend_hot_water_boost"  # notify-only; no write
     VERIFICATION_MISMATCH = "verification_mismatch"  # notify-only; actuation didn't take effect
 
