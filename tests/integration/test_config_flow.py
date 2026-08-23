@@ -18,7 +18,6 @@ from custom_components.energy_conductor.const import (
     CONF_IMPORT_RATE_SENSOR,
     CONF_NOTIFY_TARGET,
     CONF_OFF_PEAK_SENSOR,
-    CONF_OVERNIGHT_PLAN_TIME,
     CONF_OVERNIGHT_WINDOW_END_TIME,
     CONF_SOLAR_POWER_SENSOR,
     CONF_SOUTHERN_HEMISPHERE,
@@ -110,7 +109,6 @@ async def test_wizard_creates_v3_entry_with_anchors(hass):
         {
             CONF_WRITE_MODE: WRITE_MODE_DRY_RUN,
             CONF_NOTIFY_TARGET: "notify.test",
-            CONF_OVERNIGHT_PLAN_TIME: "21:00:00",
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY

@@ -118,7 +118,6 @@ CONF_ENTITY_REFS = "entity_refs"
 # Config keys — behaviour
 CONF_WRITE_MODE = "write_mode"
 CONF_NOTIFY_TARGET = "notify_target"
-CONF_OVERNIGHT_PLAN_TIME = "overnight_plan_time"
 CONF_DAILY_KWH_TARGET = "daily_kwh_target"
 CONF_DEVICE_NAME = "device_name"
 
@@ -137,7 +136,6 @@ DEFAULT_BATTERY_MAX_POWER_W = 3000  # fallback when entity lacks a 'max' attribu
 DEFAULT_WINTER_MIN_KWH = 0.0
 DEFAULT_SUMMER_MAX_KWH = 8.0
 DEFAULT_DAILY_KWH_TARGET = 10.0
-DEFAULT_OVERNIGHT_PLAN_TIME = time(21, 0)
 DEFAULT_OVERNIGHT_WINDOW_END_TIME = time(5, 30)
 
 # Hot water (Eddi) defaults
