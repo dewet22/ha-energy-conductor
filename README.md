@@ -13,32 +13,31 @@
 
 ## What v1 delivers
 
-Two always-on coordination loops that run against entities you already have:
+A single always-on SoC-setpoint regime governing the battery, plus a hot-water safety net that rides alongside it.
 
-**Discharge guard** (runs on every state change, ~30 s tick)
+**Battery SoC-setpoint regime** (runs on every state change, ~30 s tick)
 
-Applies a simple limit to battery discharge:
+At a tariff where `off-peak import ÷ round-trip efficiency < export rate` (true of most current UK off-peak/export combinations, at roughly 90% efficiency), every marginal kWh grid-charged overnight is worth more than it costs — even surplus PV that would otherwise have charged the battery exports at the higher rate instead. So the battery's charge-target control is driven as a two-sided SoC setpoint, evaluated every tick from already-configured sensors:
 
-| Condition | Discharge limit |
-|---|---|
-| Off-peak window active (incl. smart-dispatch slots), or about to open | 0 W — battery idles, grid fills demand |
-| Otherwise | Full rated discharge power |
+| Regime | Condition (priority order) | Setpoint | Discharge limit |
+|---|---|---|---|
+| **Cheap charge** | Off-peak sensor on, or dispatch sensor on | 100 % | 0 W |
+| **Self-consume** | Otherwise | The charge control's own minimum (typically ~4 %) | Full rated discharge power |
 
-This is what stops a hybrid inverter from draining the battery into an EV charger: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls cheap grid rather than the battery. (An earlier per-EV "cap discharge at house baseline" regime was removed once it was clear the off-peak signal already covers every case — see `discharge_guard.py` for the reasoning.)
+- During a cheap window the inverter grid-charges to 100% and the discharge limit holds the battery at zero — no wasteful drain while the target converges. This also covers EV protection: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls cheap grid rather than the battery.
+- Outside a cheap window it's plain Eco: the battery discharges to serve load, all the way down to the inverter's hardware reserve. There's deliberately no floor above that reserve — a floor there would idle a charged battery during the peak rate for no benefit, since the next cheap window refills the battery regardless.
+- The self-consume setpoint is read from the charge-target control's own minimum value, not from any reserve configuration, so a misdescribed reserve can never be written back as a floor.
+- A stale or unavailable off-peak/dispatch sensor falls through to self-consume — the failure mode is plain Eco, never a stuck charge.
 
-**Overnight charge planning** (runs once per evening at a configured time)
+**Always-on charge-slot pinning**
 
-Calculates a battery charge target based on tomorrow's conditions:
+The two-sided setpoint depends on charge slot 1 being active around the clock — GivEnergy inverters otherwise only grid-charge inside a scheduled window. Map your inverter's slot-1 start and end time entities under **Battery** and EC pins the slot open once, healing it if something external changes it. Slot 2 and the reserve-SoC number entity are never written.
 
-1. Reads tomorrow's solar forecast (Solcast, a daily-total sensor, or an automatic fallback)
-2. Calculates the *morning gap*: hours from the end of the off-peak window until solar meaningfully contributes
-3. Estimates the gap's energy cost: `gap_hours × baseline_load`
-4. Adds any forecast deficit against your configured daily kWh target
-5. Sets the battery charge target, clamped between your reserve level and 100 %
+**Rate-watch (warn-only)**
 
-If no forecast source is configured, it falls back to historical recorder statistics (same ±14-day calendar window in prior years) and then to a seasonal cosine curve.
+This strategy only pays while `off-peak import ÷ 0.9 < export rate`. EC checks that inequality live — only while in the cheap-charge regime, where the import-rate sensor reads the off-peak rate by definition — and sends a "Tariff economics changed" notification if it breaks. It never changes strategy on its own; a hysteresis band around the boundary stops a hovering rate from flapping the notification.
 
-**Hot-water reserve safety net** (optional; evaluated alongside the evening plan)
+**Hot-water reserve safety net** (optional; evaluated alongside the battery regime)
 
 For a solar diverter such as the myenergi Eddi running on solar surplus alone, it estimates the tank's stored reserve from an open-loop energy balance — anchored by the diverter's "tank full" status event — and sends a notify-only prompt to add a short manual boost when a run of cloudy days is projected to leave the tank inadequate. It never controls the diverter; it only advises, so you can drop a scheduled overnight boost and rely on solar with a safety net.
 
@@ -68,22 +67,32 @@ The config flow walks through these steps:
 
 | Step | Required | What you configure |
 |---|---|---|
-| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve %, optional reserve-SoC sensor |
+| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve % (display-only, see below), optional reserve-SoC sensor, charge slot-1 start/end time entities |
 | Tariff | ✓ | Off-peak binary sensor, optional EV dispatching sensor, overnight window end time |
 | Forecast source | ✓ | Solcast sensor, daily-total sensor, or none |
 | Forecast details | ✓ | Optional live generation sensor, winter/summer fallback range, hemisphere |
 | Loads & learning | ✓ | Optional home-load and managed-load sensors, optional daily-energy sensor, daily kWh target |
 | EV charger | optional | Power sensor, minimum activation power |
 | Hot water | optional | Eddi diverted-energy and status sensors, optional total-energy and diverter-power sensors (the latter draws the dashboard's diversion rail), tank capacity, heater power, reserve threshold, depletion fallback |
-| Behaviour | ✓ | Write mode (dry-run / live), notify target, plan time, device name |
+| Behaviour | ✓ | Write mode (dry-run / live), notify target, device name |
 
 Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
+
+**The battery reserve floor (%) is display-only.** It describes the inverter's reserve floor for energy calculations — it is not, and never was, a minimum-SoC control. If you configure the optional reserve-SoC sensor, that live entity always wins for actuation purposes; the static field only feeds usable-energy calculations and the projection floor when no live sensor is available. This field is never written to.
+
+### Migrating from the overnight planner
+
+If you're upgrading from a version that planned an overnight charge target, the regime engine replaces that decision outright rather than refining it. Practically, that means:
+
+- The charge-slot-1 start/end pickers above are new and required for the regime to work — GivEnergy inverters only grid-charge inside a scheduled slot, and the regime needs that slot open around the clock.
+- Any existing automations that set the charge window or cap discharge during dispatch (e.g. hand-rolled GivTCP automations) should be disabled once EC is pinning the slot and driving the setpoint — leaving both running risks fighting writes. A dry run (`write_mode: dry_run`) alongside your existing automations for a few days lets you compare what EC would have done before switching over.
+- If your stored reserve floor was set to something other than your inverter's true hardware minimum (as a workaround for the old planner), reset it to the true value — it's inert now, but there's no reason to leave the wrong number in a display field.
 
 ### Adapting your sensors with template sensors
 
 Conductor reads each input as a *role* — house load, solar power, diverter power, and so on — not a specific device. Where your hardware doesn't expose a clean entity for a role, compose one with a Home Assistant [template sensor](https://www.home-assistant.io/integrations/template/) and point conductor at it. The adaptation lives in your configuration, which is what keeps conductor itself device-agnostic.
 
-The common case is **house load excluding a solar diverter**. Most house-load (or "consumption") power sensors sit upstream of the diverter, so when an Eddi soaks up surplus solar the reading spikes — which both jumps the dashboard's consumption line and inflates the learned baseline that sizes the overnight charge. Netting the diverter out gives conductor a clean household floor. Create this as a UI Template helper, or in YAML:
+The common case is **house load excluding a solar diverter**. Most house-load (or "consumption") power sensors sit upstream of the diverter, so when an Eddi soaks up surplus solar the reading spikes — which both jumps the dashboard's consumption line and inflates the learned baseline that feeds the mission tape's SoC projection. Netting the diverter out gives conductor a clean household floor. Create this as a UI Template helper, or in YAML:
 
 ```yaml
 template:
@@ -157,9 +166,9 @@ This means conductor works with any inverter, any EV charger, any forecast servi
 
 Conductor operates at the level of sophistication your entity mapping supports:
 
-- Map only an off-peak binary sensor → basic overnight charge scheduling
-- Also map a price sensor → cost-threshold dispatch decisions
-- Also map hourly forecast slots → morning-gap calculation and intraday routing
+- Map only an off-peak binary sensor → basic cheap-window SoC-setpoint control
+- Also map import/export rate sensors → the rate-watch validates the strategy's economics live
+- Also map hourly forecast slots → hot-water diversion estimate and a slot-based mission-tape SoC projection
 - Also map deferrable and advisory loads → full coordination across all devices
 
 Each additional entity slot unlocks a richer strategy. None are required to get started.
@@ -168,9 +177,9 @@ Each additional entity slot unlocks a richer strategy. None are required to get 
 
 ## Roadmap
 
-**Shipped** — discharge guard; overnight charge planning (Solcast / daily-total / seasonal forecast); baseline load and daily-target learned from recorder statistics; hot-water reserve safety net for solar diverters; entity reference resilience across renames; a registry-resolved dashboard strategy
+**Shipped** — SoC-setpoint regime with always-on charge-slot pinning; discharge guard; warn-only tariff rate-watch; baseline load and daily-target learned from recorder statistics; hot-water reserve safety net for solar diverters; entity reference resilience across renames; a registry-resolved dashboard strategy
 
-**Planned** — saving-session precharge; forecast bias correction from (forecast, actual) pairs; active deferrable-load dispatch (EV, HWC); advisory load notifications; formal OpenADR/EEBUS grid event reception
+**Planned** — saving-session precharge; active deferrable-load dispatch (EV, HWC); advisory load notifications; formal OpenADR/EEBUS grid event reception
 
 ---
 

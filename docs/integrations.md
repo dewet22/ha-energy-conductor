@@ -7,20 +7,20 @@ intent — things you only find out by doing it.
 
 ## Solar forecast
 
-### Solcast (recommended for slot-based planning)
+### Solcast (recommended for slot-based projection)
 
 **Integration:** [HACS — Solcast PV Solar](https://github.com/BJReplay/ha-solcastpv-solar-forecast)
 
 The Solcast integration exposes per-day sensors, each with a `detailedForecast`
-attribute containing 48 half-hourly slots. EC reads this to derive the morning gap
-(first meaningful solar after the off-peak window end) as well as the daily total.
+attribute containing 48 half-hourly slots. EC reads this for the hot-water
+diversion estimate and the mission-tape SoC projection.
 
 **Required sensor:** `sensor.solcast_pv_forecast_forecast_tomorrow`
 
 Configure EC's Solcast sensor to the **Forecast Tomorrow** sensor, **not**:
-- `Forecast Today` — contains today's slots; at planning time (~21:00) these are
-  mostly past-midnight hours with near-zero PV, and the morning-gap calculation
-  breaks (first slot predates tomorrow's window end, gap = 0).
+- `Forecast Today` — contains today's slots, not tomorrow's; use the separate
+  "Forecast Today" picker (`forecast_solcast_today_sensor`) if you want today's
+  slots stitched into the projection as well.
 - `Forecast Next X Hours` / `Blithe` / aggregate sensors — no `detailedForecast`
   attribute; EC silently falls back to seasonal.
 
@@ -48,8 +48,8 @@ Slot timestamps are in the HA instance's local timezone (e.g. BST/Europe/London)
 
 **Accuracy vs forecast.solar:** In production, Solcast and forecast.solar typically
 agree within 10–15% on daily totals. Solcast is preferred when available because
-the slot data allows a derived morning gap; forecast.solar currently only exposes
-a scalar daily total.
+the slot data feeds a more detailed SoC projection; forecast.solar currently only
+exposes a scalar daily total.
 
 ---
 
@@ -61,13 +61,9 @@ a scalar daily total.
 tomorrow, no per-slot breakdown.
 
 Configure as `daily_total_sensor` forecast source and point at this sensor.
-EC uses it as the day's kWh estimate with a **fixed 4-hour morning gap assumption**
-(no slot data to derive it from).
-
-The `power_production_next_12hours` sensor (average watts over the next 12 h)
-could theoretically indicate whether meaningful solar arrives before 09:00, but
-it is an average over the window rather than a transition point and is not
-precise enough to derive a gap reliably.
+EC uses it as the day's kWh estimate for the hot-water diversion calculation.
+It has no per-slot data, so the mission-tape SoC projection sees zero forecast
+PV during the day under this source (no synthetic slots are invented).
 
 **Upgrading to slot-based:** The forecast.solar integration computes hourly estimates
 internally but does not currently expose them as a sensor attribute. A `detailedForecast`
@@ -124,7 +120,7 @@ managed-loads filter (idle-floor method).
 
 | Entity | Range | Meaning | EC wiring |
 |---|---|---|---|
-| `charge_target_soc` | 4–100 % | **Overnight SoC target** | overnight planner writes here |
+| `charge_target_soc` | 4–100 % | **SoC setpoint** | regime engine writes here (100% cheap-charge, control minimum self-consume) |
 | `battery_soc_reserve` | 4–100 % | **Minimum SoC floor** | optional reserve sensor reads here |
 | `battery_charge_limit` | 0–50 % | Charge *power rate* (% of max) | not used |
 | `battery_discharge_limit` | 0–50 % | Discharge *power rate* (% of max) | discharge guard — see below |
@@ -133,7 +129,7 @@ managed-loads filter (idle-floor method).
 
 **True battery capacity:** `sensor…battery_nominal_capacity` (e.g. 17.7 kWh) — use
 this for `CONF_BATTERY_CAPACITY_KWH`, not a guessed round number. A wrong capacity
-scales every SoC%↔kWh conversion in the overnight planner.
+scales every SoC%↔kWh conversion in the SoC projection and usable-energy calcs.
 
 **Discharge guard live write is BLOCKED.** EC's discharge guard reasons in **watts**
 (hardware-agnostic), but `givenergy_local` exposes only a 0–50 % power-*rate* knob
@@ -144,8 +140,8 @@ produces correct watt decisions for notification/inspection. Unblocking requires
 watt-valued `number` entities — the Modbus registers are watt-valued, so the data
 exists. (Cross-agent request dispatched via the givenergy-coordination inbox.)
 
-The overnight charge-target path is **not** blocked: `charge_target_soc` is a % SoC
-target that matches what the planner outputs.
+The charge-target setpoint path is **not** blocked: `charge_target_soc` is a % SoC
+value that matches what the regime engine writes.
 
 ---
 

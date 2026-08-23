@@ -157,14 +157,14 @@ class SiteState:
     baseline_load_w: float
     baseline_source: str | None = None  # "stats" | "default"
     baseline_qualifying_buckets: int | None = None  # idle-floor buckets that fed the percentile
-    daily_kwh_target: float = 0.0  # learned or static; consumed by overnight planner
+    daily_kwh_target: float = 0.0  # learned or static; informational diagnostic sensor only
     daily_kwh_target_source: str | None = None  # "stats" | "default"
     daily_kwh_target_qualifying_days: int | None = None  # daily totals that fed the percentile
     hot_water: HotWaterState | None = None  # None when the diverter isn't configured
     grid: GridState | None = None  # None when the grid meter sensors aren't configured
     # Forecast for the mission-tape SoC projection: spans the projection window
-    # (today-remaining + tomorrow), unlike `solar_forecast` which is tomorrow-only
-    # for the overnight planner. None falls back to `solar_forecast`. See
+    # (today-remaining + tomorrow), unlike `solar_forecast` which is tomorrow-only.
+    # None falls back to `solar_forecast`. See
     # overnight.project_soc / adapter._build_projection_forecast.
     projection_forecast: SolarForecast | None = None
 

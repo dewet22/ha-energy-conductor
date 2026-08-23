@@ -326,7 +326,7 @@ class Adapter:
 
         # Solar forecast
         solar_forecast = await self._build_forecast(now)
-        # Forecast for the SoC projection — today-remaining + tomorrow (the planner
+        # Forecast for the SoC projection — today-remaining + tomorrow (the
         # forecast above is tomorrow-only). None falls back to solar_forecast.
         projection_forecast = self._build_projection_forecast(now, solar_forecast)
 
@@ -517,13 +517,13 @@ class Adapter:
     ) -> SolarForecast | None:
         """A forecast spanning the SoC-projection window (today-remaining + tomorrow).
 
-        The planner forecast is tomorrow-only by design, but the mission-tape SoC
+        `planner_forecast` is tomorrow-only by design, but the mission-tape SoC
         projection runs forward over today's daylight — so without today's slots the
         midday sun is invisible and a full battery is shown bleeding down at baseline.
         Builds today's slots from the optional "Forecast Today" Solcast sensor and
-        concatenates the planner's tomorrow slots. Returns None (the projection then
-        falls back to the planner forecast) when no today sensor is configured or it
-        yields nothing — preserving the prior behaviour.
+        concatenates the tomorrow-only slots. Returns None (the projection then
+        falls back to the tomorrow-only forecast) when no today sensor is configured or
+        it yields nothing — preserving the prior behaviour.
         """
         if self.config.get(CONF_FORECAST_SOURCE) != FORECAST_SOURCE_SOLCAST:
             return None
@@ -569,8 +569,9 @@ class Adapter:
         # [{'period_start': datetime(2026-06-01, tzinfo=Europe/London), 'pv_estimate': 0.5}, ...]
         # period_start is a timezone-aware datetime in the HA instance's local timezone.
         raw = state.attributes.get("detailedForecast") or []
-        # Keep only the requested local date's slots (defaults to tomorrow, for the
-        # overnight planner; the SoC projection passes today to see today's sun).
+        # Keep only the requested local date's slots (defaults to tomorrow, the
+        # forecast used for hot-water diversion; the SoC projection passes today
+        # to see today's sun).
         # Take the local date first, then add a day — adding a UTC timedelta before
         # converting can land on the wrong local date across a DST transition.
         keep_date = target_date or dt_util.as_local(now).date() + timedelta(days=1)
@@ -723,7 +724,7 @@ class Adapter:
         return value, len(samples)
 
     def _compute_daily_target(self, now: datetime) -> tuple[float, str, int | None]:
-        """Return (daily_kwh_target, source, qualifying_days) for the overnight planner.
+        """Return (daily_kwh_target, source, qualifying_days) for the diagnostic sensor.
 
         Learns from a cumulative house-energy sensor's daily totals when configured;
         otherwise (or on insufficient data / recorder failure) returns the static

@@ -24,8 +24,8 @@ def _forecast_kw_at(state: SiteState, t: datetime) -> float:
     """Average forecast PV power (kW) over the slot containing `t`, 0 outside slots.
 
     Prefers `projection_forecast` (today-remaining + tomorrow) so a daytime
-    projection sees today's sun; the planner's tomorrow-only `solar_forecast`
-    is the fallback when no today forecast is configured.
+    projection sees today's sun; the tomorrow-only `solar_forecast` is the
+    fallback when no today forecast is configured.
     """
     forecast = state.projection_forecast or state.solar_forecast
     for slot in forecast.slots:

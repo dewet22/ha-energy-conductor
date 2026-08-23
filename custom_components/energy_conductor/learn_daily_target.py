@@ -1,9 +1,10 @@
 """Learned daily-kWh target from historical house-energy totals.
 
-The overnight planner sizes the charge target around an expected next-day
-consumption. Rather than rely on a static configured value, we learn it from
-the past N days of actual house energy: the percentile of daily totals robust
-to one anomalous day (party, EV cabin warm-up, day away).
+Rather than rely on a static configured value for the "calculated daily
+target" diagnostic sensor (and the hot-water depletion estimate, which uses
+this same helper against its own history), we learn it from the past N days
+of actual house energy: the percentile of daily totals robust to one
+anomalous day (party, EV cabin warm-up, day away).
 """
 
 from __future__ import annotations

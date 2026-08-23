@@ -1,4 +1,4 @@
-"""Property-based tests for spec invariants (§8).
+"""Property-based test for a spec invariant (§8).
 
 1. discharge_limit() is monotonic across the activation threshold —
    small power increases never cause the limit to flap.
