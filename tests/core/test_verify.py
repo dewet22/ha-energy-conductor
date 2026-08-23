@@ -25,9 +25,11 @@ def _cap(value: int = 0) -> Decision:
     )
 
 
-def _state(*, off_peak: bool = True, battery_power: float | None, grid=None):
+def _state(
+    *, off_peak: bool = True, dispatching: bool = False, battery_power: float | None, grid=None
+):
     return a_site_state(
-        tariff=a_tariff(off_peak_now=off_peak),
+        tariff=a_tariff(off_peak_now=off_peak, ev_dispatching_now=dispatching),
         battery=a_battery(power_w=battery_power),
         grid=grid,
     )
@@ -82,8 +84,25 @@ def test_not_applicable_when_not_capped():
 
 
 def test_not_applicable_when_not_off_peak():
+    # Neither cheap-energy flag: the guard wouldn't be capping, so there is nothing to assert.
     state = _state(off_peak=False, battery_power=2000.0)
     assert check_actuation(state, _cap(0), "applied") is None
+
+
+def test_dispatch_only_cap_is_judged():
+    """The guard caps on off-peak OR dispatch, so verification must cover both.
+
+    A dispatch outside the off-peak window is precisely the EV-drain scenario this check
+    exists for — declining to judge it would blind the check where it matters most.
+    """
+    drained = _state(off_peak=False, dispatching=True, battery_power=2000.0)
+    result = check_actuation(drained, _cap(0), "applied")
+    assert result is not None
+    assert result.ok is False
+    assert "discharging" in result.detail
+
+    idle = _state(off_peak=False, dispatching=True, battery_power=10.0)
+    assert check_actuation(idle, _cap(0), "applied").ok is True
 
 
 def test_not_applicable_without_battery_power():
