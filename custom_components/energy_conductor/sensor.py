@@ -330,6 +330,10 @@ class OvernightPlanSensor(_BaseSensor):
             # the Tonight view reads regime + setpoint + whether it still pays as one row.
             "rate_watch": self.coordinator.rate_watch_status,
             "rate_watch_margin_gbp": self.coordinator.rate_watch_margin_gbp,
+            # "pinned" | "unconfigured" — whether charge slot 1 is held always-on. Without
+            # it the setpoint is only a charge ceiling, never a floor, so the regime's
+            # two-sided claim doesn't hold and the dashboard must be able to say so.
+            "slot_pin": self.coordinator.slot_pin_status,
         }
         # SoC projection for the mission tape: served from EC's own model so the
         # dashboard never re-derives it client-side. Unmistakably a projection.

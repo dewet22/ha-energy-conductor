@@ -6,6 +6,8 @@ from datetime import timedelta
 
 import pytest
 from custom_components.energy_conductor.const import (
+    CONF_CHARGE_SLOT_1_END_ENTITY,
+    CONF_CHARGE_SLOT_1_START_ENTITY,
     CONF_DISPATCHING_SENSOR,
     CONF_EV_POWER_SENSOR,
     CONF_EXPORT_RATE_SENSOR,
@@ -109,6 +111,34 @@ async def test_setpoint_sensor_rate_watch_na_without_rate_sensors(hass: HomeAssi
     attrs = hass.states.get(_entity(hass, entry, "overnight-plan")).attributes
     assert attrs["rate_watch"] == "n/a"
     assert attrs["rate_watch_margin_gbp"] is None
+
+
+async def test_setpoint_sensor_reports_slot_pin_unconfigured(hass: HomeAssistant) -> None:
+    """Without the slot pickers the setpoint is a charge ceiling, not a two-sided target —
+    that has to be visible, not silently skipped."""
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="tp8")
+    assert await _setup(hass, entry)
+
+    attrs = hass.states.get(_entity(hass, entry, "overnight-plan")).attributes
+    assert attrs["slot_pin"] == "unconfigured"
+
+
+async def test_setpoint_sensor_reports_slot_pin_pinned(hass: HomeAssistant) -> None:
+    _arrange_entities(hass, soc="50")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **MOCK_CONFIG,
+            CONF_CHARGE_SLOT_1_START_ENTITY: "time.charge_slot_1_start",
+            CONF_CHARGE_SLOT_1_END_ENTITY: "time.charge_slot_1_end",
+        },
+        entry_id="tp9",
+    )
+    assert await _setup(hass, entry)
+
+    attrs = hass.states.get(_entity(hass, entry, "overnight-plan")).attributes
+    assert attrs["slot_pin"] == "pinned"
 
 
 async def test_soc_projection_targets_full(hass: HomeAssistant) -> None:
