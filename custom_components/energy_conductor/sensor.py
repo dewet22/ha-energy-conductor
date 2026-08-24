@@ -46,7 +46,6 @@ from .const import (
     CONF_GRID_IMPORT_SENSOR,
     CONF_HOME_LOAD_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_POWER_SENSOR,
     CONF_IMPORT_COST_OFF_PEAK_SENSOR,
     CONF_IMPORT_COST_PEAK_SENSOR,
@@ -232,9 +231,8 @@ def _level_sources(config: dict[str, Any]) -> dict[str, str] | None:
 
 def _money_sources(config: dict[str, Any]) -> dict[str, str] | None:
     sources = {name: config[key] for name, key in _MONEY_SOURCE_KEYS if config.get(key)}
-    # Hot water heating displaces gas whether diverted or boosted: prefer the
-    # total-in counter, fall back to the green/diverted one.
-    hot_water = config.get(CONF_HOTWATER_ENERGY_SENSOR) or config.get(CONF_HOTWATER_GREEN_SENSOR)
+    # Hot water heating displaces gas whether diverted or boosted.
+    hot_water = config.get(CONF_HOTWATER_ENERGY_SENSOR)
     if hot_water:
         sources["hot_water"] = hot_water
     return sources or None

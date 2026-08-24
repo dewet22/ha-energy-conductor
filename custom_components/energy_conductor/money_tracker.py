@@ -24,7 +24,6 @@ from .const import (
     CONF_GAS_RATE_SENSOR,
     CONF_GRID_EXPORT_ENERGY_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_IMPORT_COST_SENSOR,
     CONF_IMPORT_RATE_SENSOR,
     CONF_PV_ENERGY_SENSOR,
@@ -205,11 +204,9 @@ class MoneyTracker:
             import_rate,
         )
 
-        # Hot-water heating displaces gas: prefer the total-in counter, fall back to
-        # the green/diverted one (older configs may only have the core pair).
+        # Hot-water heating displaces gas whether diverted or boosted (v4 collapsed the
+        # green/total split into the single energy-in sensor).
         hw = self._read_float(CONF_HOTWATER_ENERGY_SENSOR)
-        if hw is None:
-            hw = self._read_float(CONF_HOTWATER_GREEN_SENSOR)
         self._advance(ACC_HOTWATER_GAS, day, hw, gas_rate)
 
         savings = self.savings_today

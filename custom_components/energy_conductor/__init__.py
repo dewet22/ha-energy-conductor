@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 
 from .const import (
     _LEGACY_CONF_CHEAP_RATE_SENSOR,
+    _LEGACY_CONF_HOTWATER_GREEN_SENSOR,
     CONF_ENTITY_REFS,
+    CONF_HOTWATER_ENERGY_SENSOR,
     CONF_OFF_PEAK_SENSOR,
     DOMAIN,
 )
@@ -173,4 +175,28 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data = {**entry.data}
         new_data[CONF_ENTITY_REFS] = capture_all(hass, new_data)
         hass.config_entries.async_update_entry(entry, data=new_data, version=3)
+    if entry.version == 3:
+        # v3 → v4: the hot-water green/diverted and total energy-in roles collapse into one
+        # (CONF_HOTWATER_ENERGY_SENSOR). The legacy green value wins when set — existing
+        # installs hold their real counter there — and its unique_id anchor moves with it.
+        def _collapse(cfg: dict) -> dict:
+            if _LEGACY_CONF_HOTWATER_GREEN_SENSOR not in cfg:
+                return cfg
+            out = {**cfg}
+            out[CONF_HOTWATER_ENERGY_SENSOR] = out.pop(_LEGACY_CONF_HOTWATER_GREEN_SENSOR)
+            refs = out.get(CONF_ENTITY_REFS)
+            if isinstance(refs, dict) and _LEGACY_CONF_HOTWATER_GREEN_SENSOR in refs:
+                new_refs = {**refs}
+                new_refs[CONF_HOTWATER_ENERGY_SENSOR] = new_refs.pop(
+                    _LEGACY_CONF_HOTWATER_GREEN_SENSOR
+                )
+                out[CONF_ENTITY_REFS] = new_refs
+            return out
+
+        hass.config_entries.async_update_entry(
+            entry,
+            data=_collapse({**entry.data}),
+            options=_collapse({**entry.options}),
+            version=4,
+        )
     return True

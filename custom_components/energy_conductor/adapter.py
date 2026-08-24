@@ -48,7 +48,6 @@ from .const import (
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_MAX_TEMP_STATE,
     CONF_HOTWATER_STATUS_SENSOR,
@@ -802,9 +801,9 @@ class Adapter:
         (see hotwater.py). None unless both core sensors (green diversion + status) are set;
         any recorder failure degrades to None so the rest of the tick is unaffected.
         """
-        green_sensor = self.config.get(CONF_HOTWATER_GREEN_SENSOR)
+        energy_sensor = self.config.get(CONF_HOTWATER_ENERGY_SENSOR)
         status_sensor = self.config.get(CONF_HOTWATER_STATUS_SENSOR)
-        if not green_sensor or not status_sensor:
+        if not energy_sensor or not status_sensor:
             return None
         try:
             capacity = float(
@@ -822,20 +821,14 @@ class Adapter:
             )
 
             last_full_at, full_dates = self._hot_water_full_events(
-                now, status_sensor, max_temp_state, green_sensor
+                now, status_sensor, max_temp_state, energy_sensor
             )
-            daily_green = self._hot_water_daily_kwh(now, green_sensor)
-            # Use total-in sensor (green + boost) for depletion learning when available.
-            # On a full→full day total energy in ≈ actual heat loss + draw, regardless
-            # of source. While the overnight boost runs, green-only understates depletion
-            # (it measures marginal solar top-up, not full draw). Once the boost is off,
-            # total == green, so there's no cost to always preferring total when set.
-            total_sensor = self.config.get(CONF_HOTWATER_ENERGY_SENSOR)
-            learning_totals = (
-                self._hot_water_daily_kwh(now, total_sensor) if total_sensor else daily_green
-            )
+            # Total delivered energy (diversion AND boost): on a full→full day it ≈ the
+            # day's heat loss + draw regardless of source, so it feeds depletion learning,
+            # corroboration, and top-up alike (v4 collapsed the green/total split).
+            daily_energy = self._hot_water_daily_kwh(now, energy_sensor)
             depletion, depletion_source = learn_depletion(
-                self._hot_water_steady_samples(learning_totals, full_dates),
+                self._hot_water_steady_samples(daily_energy, full_dates),
                 percentile=HOTWATER_DEPLETION_PERCENTILE,
                 min_samples=HOTWATER_DEPLETION_MIN_SAMPLES,
                 fallback=depletion_fallback,
@@ -846,14 +839,14 @@ class Adapter:
                 # diversion session and integrate green diversion up from zero, so a cold
                 # tank's reserve rises with absorbed kWh instead of reading a flat 0.
                 cold_fill_since = dt_util.start_of_local_day(now)
-                green_since = self._hot_water_green_since(cold_fill_since, now, green_sensor)
-                reserve = estimate_reserve_cold_fill(green_since, capacity)
+                energy_since = self._hot_water_energy_since(cold_fill_since, now, energy_sensor)
+                reserve = estimate_reserve_cold_fill(energy_since, capacity)
                 reserve_source = "cold_fill"
             else:
-                green_since = self._hot_water_green_since(last_full_at, now, green_sensor)
+                energy_since = self._hot_water_energy_since(last_full_at, now, energy_sensor)
                 reserve = estimate_reserve(
                     elapsed_hours_since_full=(now - last_full_at).total_seconds() / 3600.0,
-                    energy_in_since_full_kwh=green_since,
+                    energy_in_since_full_kwh=energy_since,
                     depletion_kwh_per_day=depletion,
                     capacity_kwh=capacity,
                 )
@@ -1003,15 +996,15 @@ class Adapter:
                 samples.append(kwh)
         return samples
 
-    def _hot_water_green_since(
-        self, last_full_at: datetime, now: datetime, green_entity: str
+    def _hot_water_energy_since(
+        self, last_full_at: datetime, now: datetime, energy_entity: str
     ) -> float:
-        """Green diversion energy (kWh) accumulated since the last full event."""
+        """Delivered energy (kWh, diversion and boost alike) since the last full event."""
         stats = statistics_during_period(
-            self.hass, last_full_at, now, {green_entity}, "hour", None, {"change"}
+            self.hass, last_full_at, now, {energy_entity}, "hour", None, {"change"}
         )
         return sum(
             kwh
-            for row in stats.get(green_entity, [])
+            for row in stats.get(energy_entity, [])
             if row.get("change") is not None and math.isfinite(kwh := float(row["change"]))
         )
