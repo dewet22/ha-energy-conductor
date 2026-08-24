@@ -319,3 +319,59 @@ async def test_boost_origin_full_anchors_via_delivered_energy(hass, now):
     assert hw.last_full_at == at
     assert hw.reserve_source == "anchored"
     assert hw.reserve_kwh > 0
+
+
+async def test_corroboration_starvation_surfaced(hass, now, caplog):
+    """Transition-gated fulls exist but the energy series is dead across their windows:
+    the anchor stays un-set (no false full) and the condition is SURFACED — reserve_source
+    'corroboration_starved' plus a warning log — instead of silently reading as cold_fill.
+    (The repo's standing lesson: every silent fallback needs observability.)"""
+    full_days = [6, 7, 8]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(_PATCH_STATS, return_value={}),  # energy stats empty everywhere
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.last_full_at is None  # starved corroboration must not anchor
+    assert hw.reserve_source == "corroboration_starved"
+    assert any("corroboration" in r.message.lower() for r in caplog.records)
+
+
+async def test_corroboration_starvation_warning_is_episodic(hass, now, caplog):
+    """The warning fires once per starvation episode, not every tick."""
+    full_days = [6, 7, 8]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(_PATCH_STATS, return_value={}),
+    ):
+        adapter._hot_water_state(now, _forecast())
+        first = sum("corroboration" in r.message.lower() for r in caplog.records)
+        adapter._hot_water_state(now, _forecast())
+        second = sum("corroboration" in r.message.lower() for r in caplog.records)
+
+    assert first == 1
+    assert second == 1  # no new warning on the next tick
+
+
+async def test_phantom_full_still_rejected_without_starvation_flag(hass, now):
+    """Idle-origin 'Max temp reached' (isolated tank) fails the TRANSITION gate — that is
+    an ordinary rejection, not corroboration starvation: reserve_source stays cold_fill."""
+    at = datetime(2026, 6, 8, 3, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state="Stopped", last_changed=at - timedelta(minutes=5)),
+        SimpleNamespace(state=MAX_TEMP, last_changed=at),
+    ]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: states}),
+        patch(_PATCH_STATS, return_value={}),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.last_full_at is None
+    assert hw.reserve_source == "cold_fill"

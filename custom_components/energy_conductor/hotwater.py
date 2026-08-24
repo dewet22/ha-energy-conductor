@@ -3,12 +3,13 @@
 Open-loop energy balance for a hot-water cylinder with no temperature sensor. The
 estimate is anchored by the diverter's "Max temp reached" status (ground-truth full):
 reserve snaps to capacity at each full event, then depletes by a lumped daily rate
-(standing loss + draw) and is topped up by measured green diversion since. Because the
-full anchor recurs whenever solar (or a boost) refills the tank, drift is bounded to the
-length of a cloudy spell.
+(standing loss + draw) and is topped up by measured delivered energy since — diversion
+and boost alike (v4 collapsed the green/total split). Because the full anchor recurs
+whenever solar or a boost refills the tank, drift is bounded to the length of a spell
+without fulls.
 
 Pure functions only — no Home Assistant imports. The adapter supplies the recorder-derived
-inputs (last full timestamp, green energy since, learned depletion).
+inputs (last full timestamp, delivered energy since, learned depletion).
 """
 
 from __future__ import annotations
@@ -25,19 +26,19 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 def corroborated_full_events(
     full_events: list[datetime],
-    diversion_by_hour: dict[datetime, float],
+    energy_by_hour: dict[datetime, float],
     *,
     window_hours: int,
     min_kwh: float,
 ) -> list[datetime]:
-    """The 'Max temp reached' events with real diversion in the hours leading up to them.
+    """The 'Max temp reached' events with real delivered energy in the hours before them.
 
-    A genuine full is the terminus of an active diversion session, so meaningful green
-    energy flowed in the window ending at the event. The diverter's false 'Max temp
-    reached' — element isolated at the safety switch (open circuit, no current draw) or
-    the status republished on a reconnect/restart — carries zero diversion in that window
-    and must not anchor the reserve. ``diversion_by_hour`` maps each hour-bucket start to
-    that hour's diverted kWh; an event is corroborated when the buckets covering its hour
+    A genuine full is the terminus of active heating — diversion or boost — so meaningful
+    energy entered the tank in the window ending at the event. The diverter's false 'Max
+    temp reached' — element isolated at the safety switch (open circuit, no current draw)
+    or the status republished on a reconnect/restart — carries zero delivered energy in
+    that window and must not anchor the reserve. ``energy_by_hour`` maps each hour-bucket
+    start to that hour's delivered kWh; an event is corroborated when the buckets covering its hour
     and the ``window_hours - 1`` preceding hours sum to at least ``min_kwh``. The adapter
     takes the latest of these as the reserve anchor (a later false event never overrides an
     earlier genuine one) and their dates for steady-day depletion learning.
@@ -46,7 +47,7 @@ def corroborated_full_events(
     for event in full_events:
         bucket = event.replace(minute=0, second=0, microsecond=0)
         recent_kwh = sum(
-            diversion_by_hour.get(bucket - timedelta(hours=i), 0.0) for i in range(window_hours)
+            energy_by_hour.get(bucket - timedelta(hours=i), 0.0) for i in range(window_hours)
         )
         if recent_kwh >= min_kwh:
             corroborated.append(event)
@@ -80,7 +81,7 @@ def estimate_reserve(
     """Estimated usable energy in the tank (kWh), clamped to [0, capacity].
 
     At the last "Max temp reached" the tank was full (= capacity). Since then it has lost
-    `depletion_kwh_per_day` per day and gained `energy_in_since_full_kwh` of green diversion.
+    `depletion_kwh_per_day` per day and gained `energy_in_since_full_kwh` of delivered energy.
     The clamp at capacity absorbs diversion the full tank would have rejected.
     """
     elapsed_days = max(0.0, elapsed_hours_since_full) / 24.0
@@ -92,8 +93,8 @@ def estimate_reserve_cold_fill(energy_accumulated_kwh: float, capacity_kwh: floa
     """Estimated reserve (kWh) when there is no trusted full anchor in the lookback.
 
     No corroborated full in the lookback ⇒ the tank has depleted, so it is treated as empty
-    at the start of the current diversion session and measured green diversion is integrated
-    up from zero. Raw green capped at capacity — no depletion term: over the short intra-day
+    at the start of the current heating session and measured delivered energy is integrated
+    up from zero. Raw energy capped at capacity — no depletion term: over the short intra-day
     fill window standing loss is negligible against fill power, and subtracting it would risk
     pinning a genuinely warming tank at zero.
     """
@@ -101,7 +102,7 @@ def estimate_reserve_cold_fill(energy_accumulated_kwh: float, capacity_kwh: floa
 
 
 def learn_depletion(
-    steady_day_green_totals: list[float],
+    steady_day_energy_totals: list[float],
     *,
     percentile: float,
     min_samples: int,
@@ -110,12 +111,12 @@ def learn_depletion(
     """Lumped daily depletion (kWh/day) and its source.
 
     A "steady" day is one bracketed by "Max temp reached" at both ends (tank full→full):
-    net tank energy change ≈ 0, so that day's green diversion ≈ the day's depletion
+    net tank energy change ≈ 0, so that day's delivered energy ≈ the day's depletion
     (standing loss + draw). The percentile is robust to one anomalous day. Falls back to
     the configured constant when fewer than `min_samples` steady days are available.
     """
     value = learned_daily_kwh(
-        steady_day_green_totals, percentile=percentile, min_samples=min_samples
+        steady_day_energy_totals, percentile=percentile, min_samples=min_samples
     )
     if value is None:
         return fallback, "default"

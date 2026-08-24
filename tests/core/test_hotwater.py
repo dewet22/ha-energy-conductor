@@ -1,8 +1,8 @@
 """Tests for the pure-core hot-water reserve estimate.
 
 Recap:
-  reserve = clamp(capacity - depletion*elapsed_days + green_since_full, 0, capacity)
-  depletion learned from steady (full→full) days' green diversion, else configured fallback
+  reserve = clamp(capacity - depletion*elapsed_days + energy_since_full, 0, capacity)
+  depletion learned from steady (full→full) days' delivered energy, else configured fallback
   boost recommended when reserve projected one day forward (- depletion + expected refill)
   falls below the comfort threshold; suggested hours = ceil(deficit/heater_kw), clamped 1..2
 """
@@ -115,7 +115,7 @@ class TestTransitionGatedFullEvents:
 
 
 class TestEstimateReserveColdFill:
-    """No trusted anchor: integrate measured green diversion up from an assumed-empty tank,
+    """No trusted anchor: integrate measured delivered energy up from an assumed-empty tank,
     capped at capacity — the gradual rise while a cold tank fills."""
 
     def test_integrates_green_up_from_zero(self):
