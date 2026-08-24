@@ -48,7 +48,6 @@ from .const import (
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_MAX_TEMP_STATE,
     CONF_HOTWATER_STATUS_SENSOR,
@@ -239,6 +238,8 @@ class Adapter:
         self.config = config
         # Episode latch for the zero-slot Solcast warning (warn once, re-arm on recovery).
         self._solcast_zero_slots_warned = False
+        # Episode latch for hot-water corroboration starvation (warn once per episode).
+        self._hotwater_starved_warned = False
 
     async def build_site_state(self) -> SiteState:
         """Read entities and assemble a SiteState. Raises EntityProblem on hard failures."""
@@ -341,7 +342,7 @@ class Adapter:
             self._compute_daily_target(now)
         )
 
-        # Hot-water reserve — optional; None unless the Eddi green + status sensors are set.
+        # Hot-water reserve — optional; None unless the energy-in + status sensors are set.
         hot_water = self._hot_water_state(now, solar_forecast)
 
         # Grid meter — optional; read-only observability + actuation verification.
@@ -799,12 +800,12 @@ class Adapter:
         """Estimate the hot-water reserve and whether a boost should be prompted.
 
         Open-loop energy balance anchored by the diverter's "Max temp reached" status
-        (see hotwater.py). None unless both core sensors (green diversion + status) are set;
+        (see hotwater.py). None unless both core sensors (energy-in + status) are set;
         any recorder failure degrades to None so the rest of the tick is unaffected.
         """
-        green_sensor = self.config.get(CONF_HOTWATER_GREEN_SENSOR)
+        energy_sensor = self.config.get(CONF_HOTWATER_ENERGY_SENSOR)
         status_sensor = self.config.get(CONF_HOTWATER_STATUS_SENSOR)
-        if not green_sensor or not status_sensor:
+        if not energy_sensor or not status_sensor:
             return None
         try:
             capacity = float(
@@ -821,21 +822,24 @@ class Adapter:
                 CONF_HOTWATER_MAX_TEMP_STATE, DEFAULT_HOTWATER_MAX_TEMP_STATE
             )
 
-            last_full_at, full_dates = self._hot_water_full_events(
-                now, status_sensor, max_temp_state, green_sensor
+            last_full_at, full_dates, starved = self._hot_water_full_events(
+                now, status_sensor, max_temp_state, energy_sensor
             )
-            daily_green = self._hot_water_daily_kwh(now, green_sensor)
-            # Use total-in sensor (green + boost) for depletion learning when available.
-            # On a full→full day total energy in ≈ actual heat loss + draw, regardless
-            # of source. While the overnight boost runs, green-only understates depletion
-            # (it measures marginal solar top-up, not full draw). Once the boost is off,
-            # total == green, so there's no cost to always preferring total when set.
-            total_sensor = self.config.get(CONF_HOTWATER_ENERGY_SENSOR)
-            learning_totals = (
-                self._hot_water_daily_kwh(now, total_sensor) if total_sensor else daily_green
-            )
+            if starved and not self._hotwater_starved_warned:
+                self._hotwater_starved_warned = True
+                _LOGGER.warning(
+                    "Hot-water full events found but corroboration energy is absent across "
+                    "their windows — the energy-in sensor looks dead or mispointed; the "
+                    "reserve anchor is held back until it recovers"
+                )
+            elif not starved:
+                self._hotwater_starved_warned = False
+            # Total delivered energy (diversion AND boost): on a full→full day it ≈ the
+            # day's heat loss + draw regardless of source, so it feeds depletion learning,
+            # corroboration, and top-up alike (v4 collapsed the green/total split).
+            daily_energy = self._hot_water_daily_kwh(now, energy_sensor)
             depletion, depletion_source = learn_depletion(
-                self._hot_water_steady_samples(learning_totals, full_dates),
+                self._hot_water_steady_samples(daily_energy, full_dates),
                 percentile=HOTWATER_DEPLETION_PERCENTILE,
                 min_samples=HOTWATER_DEPLETION_MIN_SAMPLES,
                 fallback=depletion_fallback,
@@ -843,17 +847,17 @@ class Adapter:
 
             if last_full_at is None:
                 # No trusted full anchor → treat the tank as empty at the start of today's
-                # diversion session and integrate green diversion up from zero, so a cold
+                # heating session and integrate delivered energy up from zero, so a cold
                 # tank's reserve rises with absorbed kWh instead of reading a flat 0.
                 cold_fill_since = dt_util.start_of_local_day(now)
-                green_since = self._hot_water_green_since(cold_fill_since, now, green_sensor)
-                reserve = estimate_reserve_cold_fill(green_since, capacity)
-                reserve_source = "cold_fill"
+                energy_since = self._hot_water_energy_since(cold_fill_since, now, energy_sensor)
+                reserve = estimate_reserve_cold_fill(energy_since, capacity)
+                reserve_source = "corroboration_starved" if starved else "cold_fill"
             else:
-                green_since = self._hot_water_green_since(last_full_at, now, green_sensor)
+                energy_since = self._hot_water_energy_since(last_full_at, now, energy_sensor)
                 reserve = estimate_reserve(
                     elapsed_hours_since_full=(now - last_full_at).total_seconds() / 3600.0,
-                    energy_in_since_full_kwh=green_since,
+                    energy_in_since_full_kwh=energy_since,
                     depletion_kwh_per_day=depletion,
                     capacity_kwh=capacity,
                 )
@@ -888,15 +892,21 @@ class Adapter:
             return None
 
     def _hot_water_full_events(
-        self, now: datetime, status_entity: str, max_temp_state: str, green_entity: str
-    ) -> tuple[datetime | None, set]:
-        """Return (last genuine 'Max temp reached' timestamp, set of local dates).
+        self, now: datetime, status_entity: str, max_temp_state: str, energy_entity: str
+    ) -> tuple[datetime | None, set, bool]:
+        """Return (last genuine full timestamp, set of local dates, corroboration-starved).
+
+        The third element is True when transition-gated fulls exist but NONE corroborate —
+        active-heating origins with zero measured energy are contradictory, which means the
+        energy-in series is dead/mispointed rather than the fulls being phantoms. The caller
+        surfaces that instead of silently treating the tank as never-full (the defect that
+        let the reserve decay for a week while status stayed ok, 2026-08-23).
 
         A 'Max temp reached' anchors the reserve only when it passes two gates: (1) the
         transition gate — its immediately-prior status was active heating (Diverting/Boosting),
         since a genuine full trips to max temp while power is flowing, whereas a trip from an
         idle origin (Stopped, a reconnect "unavailable" republish, or a supply-dip "Paused")
-        on a cold/isolated tank is a phantom; and (2) the corroboration gate — real green
+        on a cold/isolated tank is a phantom; and (2) the corroboration gate — real delivered
         diversion flowed in the hours leading up to it. Both reject the diverter's false fulls,
         so the reserve isn't pinned full (and the depletion clock isn't reset by a boot anchor).
         """
@@ -920,27 +930,28 @@ class Adapter:
             if s.state == max_temp_state
         ]
         if not events_with_prior:
-            return None, set()
+            return None, set(), False
         # Gate 1 (transition): keep only fulls that follow active heating (Diverting/Boosting).
         full_times = transition_gated_full_events(
             events_with_prior, active_states=HOTWATER_ACTIVE_DIVERSION_STATES
         )
         if not full_times:
-            return None, set()
+            return None, set(), False
         # Gate 2 (corroboration): real diversion flowed in the window before the event. Fetch
         # from one window before `start` so a full event in the first hour of the lookback
         # still sees its preceding hour's diversion (else it could falsely drop).
         diversion_start = start - timedelta(hours=HOTWATER_FULL_WINDOW_HOURS - 1)
         corroborated = corroborated_full_events(
             full_times,
-            self._hot_water_hourly_kwh(diversion_start, now, green_entity),
+            self._hot_water_hourly_kwh(diversion_start, now, energy_entity),
             window_hours=HOTWATER_FULL_WINDOW_HOURS,
             min_kwh=HOTWATER_FULL_MIN_KWH,
         )
         if not corroborated:
-            return None, set()
+            # Gate-1-passed fulls with no corroborating energy anywhere: starved, not phantom.
+            return None, set(), True
         full_dates = {dt_util.as_local(ts).date() for ts in corroborated}
-        return max(corroborated), full_dates
+        return max(corroborated), full_dates, False
 
     def _hot_water_hourly_kwh(self, start: datetime, now: datetime, entity: str) -> dict:
         """Map each hour-bucket start (UTC, hour-aligned) to that hour's diverted kWh.
@@ -991,27 +1002,27 @@ class Adapter:
             daily[day] = kwh
         return daily
 
-    def _hot_water_steady_samples(self, daily_green: dict, full_dates: set) -> list[float]:
+    def _hot_water_steady_samples(self, daily_energy: dict, full_dates: set) -> list[float]:
         """Green totals for days bracketed by 'Max temp reached' on both that day and the prior.
 
-        On such full→full days net tank energy ≈ 0, so the day's green diversion ≈ depletion.
+        On such full→full days net tank energy ≈ 0, so the day's delivered energy ≈ depletion.
         """
         samples: list[float] = []
-        for day, kwh in daily_green.items():
+        for day, kwh in daily_energy.items():
             prev = day - timedelta(days=1)
             if day in full_dates and prev in full_dates and 0 < kwh <= HOTWATER_DEPLETION_MAX_KWH:
                 samples.append(kwh)
         return samples
 
-    def _hot_water_green_since(
-        self, last_full_at: datetime, now: datetime, green_entity: str
+    def _hot_water_energy_since(
+        self, last_full_at: datetime, now: datetime, energy_entity: str
     ) -> float:
-        """Green diversion energy (kWh) accumulated since the last full event."""
+        """Delivered energy (kWh, diversion and boost alike) since the last full event."""
         stats = statistics_during_period(
-            self.hass, last_full_at, now, {green_entity}, "hour", None, {"change"}
+            self.hass, last_full_at, now, {energy_entity}, "hour", None, {"change"}
         )
         return sum(
             kwh
-            for row in stats.get(green_entity, [])
+            for row in stats.get(energy_entity, [])
             if row.get("change") is not None and math.isfinite(kwh := float(row["change"]))
         )

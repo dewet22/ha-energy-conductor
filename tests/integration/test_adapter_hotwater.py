@@ -1,4 +1,4 @@
-"""Adapter hot-water reserve tests (recorder status history + green stats wiring).
+"""Adapter hot-water reserve tests (recorder status history + energy stats wiring).
 
 Exercises Adapter._hot_water_state directly with mocked recorder calls, mirroring
 tests/integration/test_adapter_daily_target.py. The pure-core maths is covered in
@@ -17,14 +17,13 @@ from custom_components.energy_conductor.const import (
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_THRESHOLD_PERCENT,
 )
 from custom_components.energy_conductor.model import SolarForecast
 
-GREEN = "sensor.eddi_green"
+ENERGY = "sensor.eddi_energy"
 STATUS = "sensor.eddi_status"
 MAX_TEMP = "Max temp reached"
 
@@ -53,7 +52,7 @@ def _full_states(days_with_full: list[int], *, hour: int = 3) -> list[SimpleName
     return states
 
 
-def _daily_green(days: list[int], kwh: float) -> list[dict]:
+def _daily_energy(days: list[int], kwh: float) -> list[dict]:
     return [{"start": datetime(2026, 6, d, 0, 0, tzinfo=UTC), "change": kwh} for d in days]
 
 
@@ -63,14 +62,14 @@ def _full_hours(days: list[int], *, hour: int = 3) -> list[datetime]:
 
 
 def _hourly_corroboration_rows(full_hours: list[datetime], kwh: float = 0.3) -> list[dict]:
-    """Hourly green rows placing diversion in each full event's own hour, so the
+    """Hourly energy rows placing delivered energy in each full event's own hour, so the
     corroboration honours those fulls as genuine (a real diversion session ran into them)."""
     return [{"start": h, "change": kwh} for h in full_hours]
 
 
 def _adapter(hass, extra: dict | None = None) -> Adapter:
     config = {
-        CONF_HOTWATER_GREEN_SENSOR: GREEN,
+        CONF_HOTWATER_ENERGY_SENSOR: ENERGY,
         CONF_HOTWATER_STATUS_SENSOR: STATUS,
         CONF_HOTWATER_CAPACITY_KWH: 11.0,
         CONF_HOTWATER_HEATER_KW: 2.7,
@@ -84,12 +83,12 @@ def _adapter(hass, extra: dict | None = None) -> Adapter:
 def _stats_side_effect(daily_rows: list[dict], hourly_total: float, full_hours=()):
     def _impl(hass, start, end, ids, period, units, types):
         if period == "day":
-            return {GREEN: daily_rows}
+            return {ENERGY: daily_rows}
         # Two hourly queries share this branch; the corroboration one spans the full
         # lookback, the green-since-full one only [last_full, now].
         if end - start >= timedelta(days=9):
-            return {GREEN: _hourly_corroboration_rows(list(full_hours))}
-        return {GREEN: [{"start": start, "change": hourly_total}]}
+            return {ENERGY: _hourly_corroboration_rows(list(full_hours))}
+        return {ENERGY: [{"start": start, "change": hourly_total}]}
 
     return _impl
 
@@ -105,7 +104,7 @@ async def test_unconfigured_returns_none(hass, now):
 async def test_recent_full_reserve_high_no_boost(hass, now):
     # Tank reached full every day incl. this morning → reserve ≈ capacity, no prompt.
     full_days = [1, 2, 3, 4, 5, 6, 7, 8]
-    daily_rows = _daily_green([1, 2, 3, 4, 5, 6, 7], 2.5)
+    daily_rows = _daily_energy([1, 2, 3, 4, 5, 6, 7], 2.5)
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
@@ -129,7 +128,7 @@ async def test_recent_full_reserve_high_no_boost(hass, now):
 async def test_stale_full_low_reserve_recommends_boost(hass, now):
     # Last full was 6 days ago, little diversion since → reserve depletes → prompt.
     full_days = [1, 2]
-    daily_rows = _daily_green([1, 2], 2.5)  # too few steady days → depletion falls back
+    daily_rows = _daily_energy([1, 2], 2.5)  # too few steady days → depletion falls back
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
@@ -158,7 +157,7 @@ async def test_uncorroborated_full_ignored_anchors_last_genuine(hass, now):
     """
     # Genuine full on day 6 (diversion in its hour); phantom full this morning (none).
     full_days = [6, 8]
-    daily_rows = _daily_green([6, 7], 2.5)
+    daily_rows = _daily_energy([6, 7], 2.5)
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
@@ -195,7 +194,7 @@ async def test_full_from_stopped_not_anchored(hass, now):
         SimpleNamespace(state="Stopped", last_changed=day8 - timedelta(minutes=5)),
         SimpleNamespace(state=MAX_TEMP, last_changed=day8),
     ]
-    daily_rows = _daily_green([6, 7], 2.5)
+    daily_rows = _daily_energy([6, 7], 2.5)
     adapter = _adapter(hass)
     with (
         patch(_PATCH_HISTORY, return_value={STATUS: status}),
@@ -265,15 +264,15 @@ async def test_non_finite_recorder_rows_skipped(hass, now):
         {"start": now, "change": float("nan")},  # skipped
         {"start": now, "change": 0.5},
     ]
-    with patch(_PATCH_STATS, return_value={GREEN: hourly_rows}):
-        assert adapter._hot_water_green_since(now, now, GREEN) == pytest.approx(1.5)
+    with patch(_PATCH_STATS, return_value={ENERGY: hourly_rows}):
+        assert adapter._hot_water_energy_since(now, now, ENERGY) == pytest.approx(1.5)
 
     daily_rows = [
         {"start": datetime(2026, 6, 1, 0, 0, tzinfo=UTC), "change": 2.5},
         {"start": datetime(2026, 6, 2, 0, 0, tzinfo=UTC), "change": float("nan")},  # skipped
     ]
-    with patch(_PATCH_STATS, return_value={GREEN: daily_rows}):
-        daily = adapter._hot_water_daily_kwh(now, GREEN)
+    with patch(_PATCH_STATS, return_value={ENERGY: daily_rows}):
+        daily = adapter._hot_water_daily_kwh(now, ENERGY)
     assert list(daily.values()) == [2.5]
 
 
@@ -289,56 +288,90 @@ async def test_hourly_kwh_clamps_negative_and_skips_nonfinite(hass, now):
         {"start": h11, "change": -0.5},  # meter reset/correction → clamped to 0
         {"start": h12, "change": float("nan")},  # skipped
     ]
-    with patch(_PATCH_STATS, return_value={GREEN: rows}):
-        by_hour = adapter._hot_water_hourly_kwh(now, now, GREEN)
+    with patch(_PATCH_STATS, return_value={ENERGY: rows}):
+        by_hour = adapter._hot_water_hourly_kwh(now, now, ENERGY)
     assert by_hour[h10] == 0.3
     assert by_hour[h11] == 0.0
     assert h12 not in by_hour
 
 
-TOTAL = "sensor.eddi_total"
-
-
-def _stats_side_effect_with_total(
-    green_daily: list[dict], total_daily: list[dict], hourly_total: float, full_hours=()
-):
-    """Stats mock that distinguishes green vs total entity for day-period queries."""
-
-    def _impl(hass, start, end, ids, period, units, types):
-        if period == "day":
-            if TOTAL in ids:
-                return {TOTAL: total_daily}
-            return {GREEN: green_daily}
-        if end - start >= timedelta(days=9):  # full-lookback corroboration query
-            return {GREEN: _hourly_corroboration_rows(list(full_hours))}
-        return {GREEN: [{"start": start, "change": hourly_total}]}  # green-since-full
-
-    return _impl
-
-
-async def test_total_sensor_used_for_depletion_learning(hass, now):
-    # Green-only steady days show ~1 kWh/day (post-boost marginal top-up).
-    # Total-in steady days show ~2.5 kWh/day (actual heat loss + draw).
-    # With the total sensor configured, depletion should be learned from total.
-    full_days = [1, 2, 3, 4, 5, 6, 7, 8]
-    green_daily = _daily_green([1, 2, 3, 4, 5, 6, 7], 1.0)  # understated
-    total_daily = [
-        {"start": datetime(2026, 6, d, 0, 0, tzinfo=UTC), "change": 2.5}
-        for d in [1, 2, 3, 4, 5, 6, 7]
+async def test_boost_origin_full_anchors_via_delivered_energy(hass, now):
+    """A scheduled grid boost that trips 'Max temp reached' anchors the reserve: the
+    transition gate sees the Boosting origin and the corroboration gate sees the boost's
+    delivered energy on the single energy-in sensor (the green-only starvation defect,
+    live-confirmed 2026-08-23, must not return)."""
+    at = datetime(2026, 6, 8, 4, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state="Boosting", last_changed=at - timedelta(minutes=20)),
+        SimpleNamespace(state=MAX_TEMP, last_changed=at),
     ]
-    adapter = _adapter(hass, extra={CONF_HOTWATER_ENERGY_SENSOR: TOTAL})
+    adapter = _adapter(hass)
     with (
-        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(_PATCH_HISTORY, return_value={STATUS: states}),
         patch(
             _PATCH_STATS,
-            side_effect=_stats_side_effect_with_total(
-                green_daily, total_daily, 0.5, full_hours=_full_hours(full_days)
-            ),
+            side_effect=_stats_side_effect(_daily_energy([1, 2], 2.5), 0.5, full_hours=[at]),
         ),
     ):
         hw = adapter._hot_water_state(now, _forecast())
 
     assert hw is not None
-    assert hw.depletion_source == "stats"
-    # Should be learned from total (~2.5), not from green (~1.0)
-    assert hw.depletion_kwh_per_day == pytest.approx(2.5, abs=0.1)
+    assert hw.last_full_at == at
+    assert hw.reserve_source == "anchored"
+    assert hw.reserve_kwh > 0
+
+
+async def test_corroboration_starvation_surfaced(hass, now, caplog):
+    """Transition-gated fulls exist but the energy series is dead across their windows:
+    the anchor stays un-set (no false full) and the condition is SURFACED — reserve_source
+    'corroboration_starved' plus a warning log — instead of silently reading as cold_fill.
+    (The repo's standing lesson: every silent fallback needs observability.)"""
+    full_days = [6, 7, 8]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(_PATCH_STATS, return_value={}),  # energy stats empty everywhere
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.last_full_at is None  # starved corroboration must not anchor
+    assert hw.reserve_source == "corroboration_starved"
+    assert any("corroboration" in r.message.lower() for r in caplog.records)
+
+
+async def test_corroboration_starvation_warning_is_episodic(hass, now, caplog):
+    """The warning fires once per starvation episode, not every tick."""
+    full_days = [6, 7, 8]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: _full_states(full_days)}),
+        patch(_PATCH_STATS, return_value={}),
+    ):
+        adapter._hot_water_state(now, _forecast())
+        first = sum("corroboration" in r.message.lower() for r in caplog.records)
+        adapter._hot_water_state(now, _forecast())
+        second = sum("corroboration" in r.message.lower() for r in caplog.records)
+
+    assert first == 1
+    assert second == 1  # no new warning on the next tick
+
+
+async def test_phantom_full_still_rejected_without_starvation_flag(hass, now):
+    """Idle-origin 'Max temp reached' (isolated tank) fails the TRANSITION gate — that is
+    an ordinary rejection, not corroboration starvation: reserve_source stays cold_fill."""
+    at = datetime(2026, 6, 8, 3, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state="Stopped", last_changed=at - timedelta(minutes=5)),
+        SimpleNamespace(state=MAX_TEMP, last_changed=at),
+    ]
+    adapter = _adapter(hass)
+    with (
+        patch(_PATCH_HISTORY, return_value={STATUS: states}),
+        patch(_PATCH_STATS, return_value={}),
+    ):
+        hw = adapter._hot_water_state(now, _forecast())
+
+    assert hw is not None
+    assert hw.last_full_at is None
+    assert hw.reserve_source == "cold_fill"

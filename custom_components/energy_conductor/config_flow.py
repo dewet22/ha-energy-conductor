@@ -66,7 +66,6 @@ from .const import (
     CONF_HOTWATER_CAPACITY_KWH,
     CONF_HOTWATER_DEPLETION_KWH,
     CONF_HOTWATER_ENERGY_SENSOR,
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_HEATER_KW,
     CONF_HOTWATER_MAX_TEMP_STATE,
     CONF_HOTWATER_POWER_SENSOR,
@@ -157,7 +156,6 @@ GRID_KEYS = (
     CONF_BATTERY_POWER_POSITIVE_IS_CHARGING,
 )
 HOTWATER_KEYS = (
-    CONF_HOTWATER_GREEN_SENSOR,
     CONF_HOTWATER_STATUS_SENSOR,
     CONF_HOTWATER_ENERGY_SENSOR,
     CONF_HOTWATER_POWER_SENSOR,
@@ -501,14 +499,11 @@ def hotwater_schema(defaults: dict[str, Any], *, options: bool) -> vol.Schema:
     """Hot-water diverter (Eddi). All optional — feature inert unless green + status are set."""
     return vol.Schema(
         {
-            _marker(CONF_HOTWATER_GREEN_SENSOR, options=options, defaults=defaults): (
+            _marker(CONF_HOTWATER_ENERGY_SENSOR, options=options, defaults=defaults): (
                 _sensor_selector(device_class="energy")
             ),
             _marker(CONF_HOTWATER_STATUS_SENSOR, options=options, defaults=defaults): (
                 _sensor_selector()
-            ),
-            _marker(CONF_HOTWATER_ENERGY_SENSOR, options=options, defaults=defaults): (
-                _sensor_selector(device_class="energy")
             ),
             _marker(CONF_HOTWATER_POWER_SENSOR, options=options, defaults=defaults): (
                 _sensor_selector(device_class="power")
@@ -631,7 +626,7 @@ def _reanchor(hass, refs: dict[str, Any], key: str, value: Any) -> None:
 
 
 class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -701,8 +696,8 @@ class EnergyConductorConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="hotwater", data_schema=hotwater_schema({}, options=False)
             )
-        # Only store hot-water fields when both core sensors (green + status) are set.
-        if user_input.get(CONF_HOTWATER_GREEN_SENSOR) and user_input.get(
+        # Only store hot-water fields when both core sensors (energy-in + status) are set.
+        if user_input.get(CONF_HOTWATER_ENERGY_SENSOR) and user_input.get(
             CONF_HOTWATER_STATUS_SENSOR
         ):
             self._data.update({k: v for k, v in user_input.items() if v is not None})

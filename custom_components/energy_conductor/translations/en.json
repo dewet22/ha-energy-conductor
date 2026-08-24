@@ -67,9 +67,8 @@
         "title": "Hot water (optional)",
         "description": "Track a solar diverter (myenergi Eddi) and prompt for a manual boost before a cloudy spell leaves the tank cold. Inert unless the green + status sensors are set.",
         "data": {
-          "hotwater_green_sensor": "Green/diverted energy sensor (kWh, total_increasing) — core energy-in",
+          "hotwater_energy_sensor": "Energy-in sensor (kWh, total_increasing; total delivered incl. boosts) — anchors corroboration, reserve top-up and depletion learning",
           "hotwater_status_sensor": "Diverter status sensor (emits 'Max temp reached' when the tank is full)",
-          "hotwater_energy_sensor": "Total energy-in sensor (optional; display only)",
           "hotwater_power_sensor": "Diverter power sensor (W; optional) — drives the dashboard diversion rail",
           "hotwater_capacity_kwh": "Cylinder capacity (kWh to heat cold-to-hot)",
           "hotwater_heater_kw": "Heater power (kW) — sets the suggested boost duration",
@@ -205,9 +204,8 @@
       "hotwater": {
         "title": "Hot water",
         "data": {
-          "hotwater_green_sensor": "Green/diverted energy sensor (kWh, total_increasing) — core energy-in",
+          "hotwater_energy_sensor": "Energy-in sensor (kWh, total_increasing; total delivered incl. boosts) — anchors corroboration, reserve top-up and depletion learning",
           "hotwater_status_sensor": "Diverter status sensor (emits 'Max temp reached' when the tank is full)",
-          "hotwater_energy_sensor": "Total energy-in sensor (optional; display only)",
           "hotwater_power_sensor": "Diverter power sensor (W; optional) — drives the dashboard diversion rail",
           "hotwater_capacity_kwh": "Cylinder capacity (kWh to heat cold-to-hot)",
           "hotwater_heater_kw": "Heater power (kW) — sets the suggested boost duration",

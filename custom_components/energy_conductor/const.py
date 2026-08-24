@@ -60,13 +60,17 @@ CONF_EV_POWER_SENSOR = "ev_power_sensor"
 CONF_EV_MIN_ACTIVATION_W = "ev_min_activation_power_w"
 
 # Config keys — hot water (myenergi Eddi diverter)
-# Core: a green/diverted-energy sensor (kWh, total_increasing) drives the energy balance,
-# and a status sensor whose "Max temp reached" state anchors the estimate to a full tank.
-# Boost energy enters the model ONLY via that anchor, so green-only energy-in is correct
-# whether or not a scheduled boost is running. Total-in is optional, display-only.
-CONF_HOTWATER_GREEN_SENSOR = "hotwater_green_sensor"
+# Core: one energy-in sensor (kWh, total_increasing; total delivered — diversion AND boost)
+# drives the energy balance, and a status sensor whose "Max temp reached" state anchors the
+# estimate to a full tank. Boost energy heats water identically to diverted energy, so the
+# corroboration gate, reserve top-up, and depletion learning all read total delivered; a
+# green-only counter starves the anchor whenever the tank is kept hot by scheduled boosts
+# (live-confirmed 2026-08-23). The isolated-tank phantom is still rejected: an isolated
+# element draws nothing at all.
+# v3 config key, migrated into CONF_HOTWATER_ENERGY_SENSOR (v4) — migration-only.
+_LEGACY_CONF_HOTWATER_GREEN_SENSOR = "hotwater_green_sensor"
 CONF_HOTWATER_STATUS_SENSOR = "hotwater_status_sensor"
-CONF_HOTWATER_ENERGY_SENSOR = "hotwater_energy_sensor"  # optional total-in, display only
+CONF_HOTWATER_ENERGY_SENSOR = "hotwater_energy_sensor"  # core energy-in (total delivered)
 CONF_HOTWATER_POWER_SENSOR = "hotwater_power_sensor"  # optional diverter power (W); tape rail
 CONF_HOTWATER_CAPACITY_KWH = "hotwater_capacity_kwh"
 CONF_HOTWATER_DEPLETION_KWH = "hotwater_depletion_kwh"  # fallback when not learned
