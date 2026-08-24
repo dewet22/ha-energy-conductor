@@ -470,3 +470,41 @@ async def test_migrate_v3_to_v4_energy_only_untouched(hass):
     assert await async_migrate_entry(hass, entry) is True
     assert entry.version == 4
     assert entry.data[CONF_HOTWATER_ENERGY_SENSOR] == "sensor.eddi_used_today"
+
+
+async def test_migrate_v3_to_v4_legacy_green_in_data_beats_energy_in_options(hass):
+    """Mixed-store case (wizard wrote green to data; a later options save wrote the
+    display-only energy field): the legacy green value must win the RUNTIME MERGE
+    (options shadow data), and its anchor must land in the winning refs dict."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        data={
+            CONF_BATTERY_SOC_SENSOR: "sensor.battery_soc",
+            _LEGACY_CONF_HOTWATER_GREEN_SENSOR: "sensor.eddi_session",
+            CONF_ENTITY_REFS: {
+                _LEGACY_CONF_HOTWATER_GREEN_SENSOR: {"platform": "myenergi", "unique_id": "g"},
+            },
+        },
+        options={
+            CONF_HOTWATER_ENERGY_SENSOR: "sensor.eddi_used_today",
+            CONF_ENTITY_REFS: {
+                CONF_HOTWATER_ENERGY_SENSOR: {"platform": "myenergi", "unique_id": "t"},
+            },
+        },
+        entry_id="mig_v4_mixed_stores",
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 4
+
+    merged = {**entry.data, **entry.options}
+    assert _LEGACY_CONF_HOTWATER_GREEN_SENSOR not in merged
+    assert merged[CONF_HOTWATER_ENERGY_SENSOR] == "sensor.eddi_session"
+    # Whole refs dicts shadow each other in the merge — the winning one must carry
+    # the legacy anchor under the energy key.
+    assert merged[CONF_ENTITY_REFS][CONF_HOTWATER_ENERGY_SENSOR] == {
+        "platform": "myenergi",
+        "unique_id": "g",
+    }

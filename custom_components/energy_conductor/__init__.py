@@ -179,24 +179,47 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # v3 → v4: the hot-water green/diverted and total energy-in roles collapse into one
         # (CONF_HOTWATER_ENERGY_SENSOR). The legacy green value wins when set — existing
         # installs hold their real counter there — and its unique_id anchor moves with it.
-        def _collapse(cfg: dict) -> dict:
-            if _LEGACY_CONF_HOTWATER_GREEN_SENSOR not in cfg:
-                return cfg
-            out = {**cfg}
-            out[CONF_HOTWATER_ENERGY_SENSOR] = out.pop(_LEGACY_CONF_HOTWATER_GREEN_SENSOR)
-            refs = out.get(CONF_ENTITY_REFS)
-            if isinstance(refs, dict) and _LEGACY_CONF_HOTWATER_GREEN_SENSOR in refs:
-                new_refs = {**refs}
-                new_refs[CONF_HOTWATER_ENERGY_SENSOR] = new_refs.pop(
-                    _LEGACY_CONF_HOTWATER_GREEN_SENSOR
-                )
-                out[CONF_ENTITY_REFS] = new_refs
-            return out
-
-        hass.config_entries.async_update_entry(
-            entry,
-            data=_collapse({**entry.data}),
-            options=_collapse({**entry.options}),
-            version=4,
-        )
+        # The collapse must honour RUNTIME precedence ({**data, **options}): a legacy green
+        # in `data` must not be shadowed by a stale display-only energy value in `options`,
+        # and CONF_ENTITY_REFS dicts shadow each other WHOLE, so the migrated anchor has to
+        # land in whichever store's refs dict wins the merge.
+        legacy = _LEGACY_CONF_HOTWATER_GREEN_SENSOR
+        new_data, new_options = {**entry.data}, {**entry.options}
+        # Effective legacy value/anchor under runtime precedence (options over data).
+        eff_value = new_options.get(legacy, new_data.get(legacy))
+        data_refs = new_data.get(CONF_ENTITY_REFS)
+        options_refs = new_options.get(CONF_ENTITY_REFS)
+        eff_anchor = None
+        for refs in (options_refs, data_refs):
+            if isinstance(refs, dict) and legacy in refs:
+                eff_anchor = refs[legacy]
+                break
+        # Strip the legacy key (and its anchor) from both stores unconditionally.
+        for cfg in (new_data, new_options):
+            cfg.pop(legacy, None)
+            refs = cfg.get(CONF_ENTITY_REFS)
+            if isinstance(refs, dict) and legacy in refs:
+                cfg[CONF_ENTITY_REFS] = {k: v for k, v in refs.items() if k != legacy}
+        if eff_value is not None:
+            # Write where it wins: options if options carries any hot-water energy state,
+            # else data (overwriting a subordinate display-only value either way).
+            target = (
+                new_options
+                if (legacy in entry.options or CONF_HOTWATER_ENERGY_SENSOR in new_options)
+                else new_data
+            )
+            target[CONF_HOTWATER_ENERGY_SENSOR] = eff_value
+            # The anchor goes into the refs dict that wins the merge (options' whole dict
+            # shadows data's when present); absent any anchor, drop a stale energy anchor
+            # from the winning dict so it can't misresolve the migrated value.
+            winning = new_options if CONF_ENTITY_REFS in new_options else new_data
+            refs = winning.get(CONF_ENTITY_REFS)
+            if isinstance(refs, dict):
+                refs = {**refs}
+                if eff_anchor is not None:
+                    refs[CONF_HOTWATER_ENERGY_SENSOR] = eff_anchor
+                else:
+                    refs.pop(CONF_HOTWATER_ENERGY_SENSOR, None)
+                winning[CONF_ENTITY_REFS] = refs
+        hass.config_entries.async_update_entry(entry, data=new_data, options=new_options, version=4)
     return True
