@@ -185,15 +185,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # land in whichever store's refs dict wins the merge.
         legacy = _LEGACY_CONF_HOTWATER_GREEN_SENSOR
         new_data, new_options = {**entry.data}, {**entry.options}
-        # Effective legacy value/anchor under runtime precedence (options over data).
+        # Effective legacy value under runtime precedence (options over data). The anchor
+        # must come from the SAME store as the value — pairing an options-side value with
+        # a data-side anchor for an older sensor would let resolve_config redirect the
+        # migrated value back to that old entity. No same-store anchor → migrate unanchored.
+        value_from_options = legacy in new_options
         eff_value = new_options.get(legacy, new_data.get(legacy))
-        data_refs = new_data.get(CONF_ENTITY_REFS)
-        options_refs = new_options.get(CONF_ENTITY_REFS)
-        eff_anchor = None
-        for refs in (options_refs, data_refs):
-            if isinstance(refs, dict) and legacy in refs:
-                eff_anchor = refs[legacy]
-                break
+        source_refs = (new_options if value_from_options else new_data).get(CONF_ENTITY_REFS)
+        eff_anchor = source_refs.get(legacy) if isinstance(source_refs, dict) else None
         # Strip the legacy key (and its anchor) from both stores unconditionally.
         for cfg in (new_data, new_options):
             cfg.pop(legacy, None)

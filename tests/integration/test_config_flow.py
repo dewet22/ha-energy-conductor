@@ -508,3 +508,36 @@ async def test_migrate_v3_to_v4_legacy_green_in_data_beats_energy_in_options(has
         "platform": "myenergi",
         "unique_id": "g",
     }
+
+
+async def test_migrate_v3_to_v4_anchor_stays_with_the_value_store(hass):
+    """Different legacy values in data and options, with the anchor only in data:
+    the options value wins, and it must NOT inherit data's anchor for the OLDER
+    sensor — resolve_config would redirect the migrated value back to it. The
+    winning value migrates unanchored instead."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        data={
+            CONF_BATTERY_SOC_SENSOR: "sensor.battery_soc",
+            _LEGACY_CONF_HOTWATER_GREEN_SENSOR: "sensor.old_green",
+            CONF_ENTITY_REFS: {
+                _LEGACY_CONF_HOTWATER_GREEN_SENSOR: {"platform": "myenergi", "unique_id": "old"},
+            },
+        },
+        options={
+            _LEGACY_CONF_HOTWATER_GREEN_SENSOR: "sensor.new_green",
+            CONF_ENTITY_REFS: {},  # newly selected entity was never anchorable
+        },
+        entry_id="mig_v4_anchor_coherence",
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 4
+
+    merged = {**entry.data, **entry.options}
+    assert merged[CONF_HOTWATER_ENERGY_SENSOR] == "sensor.new_green"
+    # The winning refs dict (options') must not carry any energy anchor — pairing
+    # sensor.new_green with unique_id "old" would resolve to the wrong entity.
+    assert CONF_HOTWATER_ENERGY_SENSOR not in merged[CONF_ENTITY_REFS]
