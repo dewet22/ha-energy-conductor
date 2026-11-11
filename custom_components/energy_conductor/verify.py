@@ -1,10 +1,12 @@
 """Actuation verification — did EC's commands take effect? (pure core).
 
-Two checks, both live-mode only:
+Three checks, all live-mode only:
 - **anti-drain** (`check_actuation`): when EC caps discharge at 0 on off-peak energy — the window
   or an EV dispatch, the same pair the discharge guard caps on — the battery must be idle.
   A battery that keeps discharging means the cap never took effect — the failure mode behind
   the EV-drain incident. Battery power is the direct signal; grid is context.
+- **charge actuation** (`check_charge_actuation`): a setpoint held well above SoC must have the
+  battery charging — the mirror of anti-drain, which reads a stalled charge as healthy idle.
 - **write-readback** (`check_write_landed`): for a write that *returned success*, did the
   commanded value actually land on the setpoint entity? The givenergy integration commits the
   inverter's write-echo straight to its cache (no optimistic echo), so the entity reflecting
@@ -16,7 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .const import VERIFY_DISCHARGE_THRESHOLD_W, VERIFY_READBACK_TOLERANCE
+from .const import (
+    VERIFY_CHARGE_SOC_MARGIN,
+    VERIFY_DISCHARGE_THRESHOLD_W,
+    VERIFY_READBACK_TOLERANCE,
+)
 from .decisions import Decision, DecisionKind
 from .model import SiteState
 
@@ -65,6 +71,46 @@ def check_actuation(
             ok=True, detail=f"battery charging at {-power_w:.0f} W{grid_note}"
         )
     return VerificationResult(ok=True, detail=f"battery idle at {power_w:.0f} W{grid_note}")
+
+
+def check_charge_actuation(
+    state: SiteState, decision: Decision | None, outcome: str | None
+) -> VerificationResult | None:
+    """Verify a live charge setpoint against the meter, or None when not applicable.
+
+    The mirror of the anti-drain check: a setpoint well above SoC must have the battery
+    charging. Without it a battery the inverter refuses to charge reads as "idle" under the
+    discharge cap — exactly what the anti-drain check wants to see (Nov 2026: two weeks at
+    the floor after a power cut, status ok throughout).
+
+    SoC only gates *whether* a charge is owed — the setpoint must sit more than the margin above
+    it (the near-full taper and the self-consume floor are not stalls). Battery power alone
+    judges whether it is happening; the caller's mismatch window absorbs the charge ramp.
+    Also requires the setpoint to be live on hardware and battery power to be known.
+    """
+    if decision is None or decision.kind is not DecisionKind.SET_CHARGE_TARGET:
+        return None
+    if outcome not in ("applied", "unchanged"):
+        return None
+    soc = state.battery.soc_percent
+    if decision.value - soc <= VERIFY_CHARGE_SOC_MARGIN:
+        return None
+    power_w = state.battery.power_w
+    if power_w is None:
+        return None
+
+    grid_note = f", grid import {state.grid.import_w:.0f} W" if state.grid is not None else ""
+    if power_w < -VERIFY_DISCHARGE_THRESHOLD_W:
+        return VerificationResult(
+            ok=True, detail=f"battery charging at {-power_w:.0f} W{grid_note}"
+        )
+    return VerificationResult(
+        ok=False,
+        detail=(
+            f"setpoint {decision.value:g}% but SoC {soc:g}% and battery not charging "
+            f"({power_w:.0f} W){grid_note}"
+        ),
+    )
 
 
 def check_write_landed(
