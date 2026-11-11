@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from energy_conductor.const import VERIFY_CHARGE_SOC_MARGIN
 from energy_conductor.decisions import Decision, DecisionKind
 from energy_conductor.verify import (
     check_actuation,
+    check_charge_actuation,
     check_time_write_landed,
     check_write_landed,
 )
@@ -121,6 +123,100 @@ def test_not_applicable_for_other_decision_kinds():
     )
     assert check_actuation(state, charge, "applied") is None
     assert check_actuation(state, None, "applied") is None
+
+
+# --- charge actuation (check_charge_actuation) -------------------------------
+
+
+def _setpoint(value: float = 100) -> Decision:
+    return Decision(
+        kind=DecisionKind.SET_CHARGE_TARGET,
+        target_entity="number.charge",
+        value=value,
+        reason="off-peak",
+        dedupe_key=f"setpoint-off_peak_charge-{value:g}",
+    )
+
+
+def _charge_state(*, soc: float, battery_power: float | None, grid=None):
+    return a_site_state(
+        tariff=a_tariff(off_peak_now=True),
+        battery=a_battery(soc_percent=soc, power_w=battery_power),
+        grid=grid,
+    )
+
+
+def test_charge_stall_when_setpoint_above_soc_and_battery_idle():
+    """The Nov 2026 incident: setpoint 100 landed, SoC sat at the floor, battery idle at
+    ~2 W for two weeks — the anti-drain check read that as a healthy "idle"."""
+    result = check_charge_actuation(
+        _charge_state(soc=3, battery_power=2.0), _setpoint(100), "unchanged"
+    )
+    assert result is not None
+    assert result.ok is False
+    assert "setpoint 100%" in result.detail
+    assert "SoC 3%" in result.detail
+    assert "not charging" in result.detail
+
+
+def test_charge_stall_detail_includes_grid_import():
+    state = _charge_state(soc=3, battery_power=2.0, grid=a_grid_state(import_w=450.0))
+    result = check_charge_actuation(state, _setpoint(100), "applied")
+    assert "grid import 450 W" in result.detail
+
+
+def test_charge_ok_when_battery_charging():
+    result = check_charge_actuation(
+        _charge_state(soc=30, battery_power=-2500.0), _setpoint(100), "applied"
+    )
+    assert result is not None
+    assert result.ok is True
+    assert "charging at 2500 W" in result.detail
+
+
+def test_charge_stall_when_battery_discharging_below_setpoint():
+    result = check_charge_actuation(
+        _charge_state(soc=30, battery_power=800.0), _setpoint(100), "applied"
+    )
+    assert result.ok is False
+
+
+def test_charge_not_judged_within_soc_margin_of_setpoint():
+    # Near the setpoint the charge tapers (and a full battery holds) — no verdict.
+    soc = 100 - VERIFY_CHARGE_SOC_MARGIN
+    assert (
+        check_charge_actuation(_charge_state(soc=soc, battery_power=0.0), _setpoint(100), "applied")
+        is None
+    )
+
+
+def test_charge_not_judged_at_self_consume_floor():
+    # Self-consume setpoint = control minimum; SoC hovering at the floor is not a stall.
+    assert (
+        check_charge_actuation(_charge_state(soc=3, battery_power=0.0), _setpoint(4), "applied")
+        is None
+    )
+
+
+@pytest.mark.parametrize("outcome", ["dry_run", "failed", None, "notified"])
+def test_charge_not_judged_when_setpoint_not_live(outcome):
+    assert (
+        check_charge_actuation(_charge_state(soc=3, battery_power=0.0), _setpoint(100), outcome)
+        is None
+    )
+
+
+def test_charge_not_judged_without_battery_power():
+    assert (
+        check_charge_actuation(_charge_state(soc=3, battery_power=None), _setpoint(100), "applied")
+        is None
+    )
+
+
+def test_charge_not_judged_for_other_decision_kinds():
+    stalled = _charge_state(soc=3, battery_power=0.0)
+    assert check_charge_actuation(stalled, _cap(0), "applied") is None
+    assert check_charge_actuation(stalled, None, "applied") is None
 
 
 # --- write-readback (check_write_landed) -------------------------------------

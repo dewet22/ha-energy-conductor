@@ -212,6 +212,10 @@ VERIFY_DISCHARGE_THRESHOLD_W = 150  # below this the battery is treated as effec
 VERIFY_MISMATCH_SECONDS = (
     90  # a mismatch must persist this long before flagging (settle + debounce)
 )
+# Charge actuation: a setpoint this far above SoC must have the battery charging. The margin
+# keeps the near-full taper out of judgement. Battery power responds within ~30 s of the
+# setpoint landing, so the shared VERIFY_MISMATCH_SECONDS window covers the ramp.
+VERIFY_CHARGE_SOC_MARGIN = 5
 # Write-readback: setpoint registers are integers (%/W); allow float/rounding slack only.
 VERIFY_READBACK_TOLERANCE = 0.5
 

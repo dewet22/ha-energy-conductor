@@ -319,11 +319,12 @@ def _site_state(
     dispatching: bool = False,
     battery_power: float | None = None,
     grid: GridState | None = None,
+    soc: float = 90.0,
 ) -> SiteState:
     return SiteState(
         now=now or datetime(2026, 6, 8, 21, 0, tzinfo=UTC),
         battery=Battery(
-            90.0,
+            soc,
             11.0,
             3000,
             3000,
@@ -384,11 +385,18 @@ from custom_components.energy_conductor.const import (  # noqa: E402
 _T0 = datetime(2026, 6, 8, 23, 0, tzinfo=UTC)
 
 
-async def _tick(coordinator, *, secs: int, battery_power: float) -> None:
-    """Run one live off-peak tick with the given battery power, `secs` after _T0."""
+async def _tick(coordinator, *, secs: int, battery_power: float, soc: float = 100.0) -> None:
+    """Run one live off-peak tick with the given battery power, `secs` after _T0.
+
+    SoC defaults to full so an idle battery is healthy under the off-peak setpoint of 100 —
+    below it, the charge-actuation check would (rightly) read idle as a stalled charge."""
     coordinator.adapter.build_site_state = AsyncMock(
         return_value=_site_state(
-            None, now=_T0 + timedelta(seconds=secs), off_peak=True, battery_power=battery_power
+            None,
+            now=_T0 + timedelta(seconds=secs),
+            off_peak=True,
+            battery_power=battery_power,
+            soc=soc,
         )
     )
     await coordinator._async_update_data()
@@ -432,6 +440,25 @@ async def test_verification_skipped_in_dry_run(coordinator) -> None:
     await _tick(coordinator, secs=0, battery_power=2000.0)
     await _tick(coordinator, secs=95, battery_power=2000.0)
     assert coordinator.verification_status == "n/a"
+
+
+async def test_verification_flags_stalled_charge(coordinator) -> None:
+    """Live mode: setpoint 100 with SoC at the floor and the battery idle is a mismatch once
+    it persists — the anti-drain check alone reads it as healthy idle."""
+    coordinator.write_mode = WRITE_MODE_LIVE
+    await _tick(coordinator, secs=0, battery_power=2.0, soc=3.0)  # setpoint 100 written live
+    assert coordinator.verification_status != "mismatch"  # persistence window starts
+    n_before = coordinator.notifications_sent
+
+    await _tick(coordinator, secs=95, battery_power=2.0, soc=3.0)
+    assert coordinator.verification_status == "mismatch"
+    assert "not charging" in coordinator.last_verification_detail
+    assert coordinator.notifications_sent == n_before + 1
+
+    # The battery starts charging → verdict clears.
+    await _tick(coordinator, secs=130, battery_power=-2500.0, soc=4.0)
+    assert coordinator.verification_status == "ok"
+    assert "charging at 2500 W" in coordinator.last_verification_detail
 
 
 # ---- write-readback verification ---------------------------------------------------------

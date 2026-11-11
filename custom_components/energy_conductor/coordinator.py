@@ -55,6 +55,7 @@ from .regimes import REGIME_OFF_PEAK_CHARGE, charge_setpoint, current_regime
 from .verify import (
     VerificationResult,
     check_actuation,
+    check_charge_actuation,
     check_time_write_landed,
     check_write_landed,
 )
@@ -458,10 +459,11 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
     async def _verify_actuation(self, state: SiteState) -> None:
         """Verify EC's commands took effect; flag a persistent mismatch.
 
-        Two live-mode-only checks, folded into one verdict: write-readback (did each commanded
-        setpoint value land — and stay — on its entity?) and the anti-drain actuation check
-        (did the battery physically respond?). A landed-mismatch wins (the write didn't even
-        stick); mismatches must persist VERIFY_MISMATCH_SECONDS before confirming — one timer
+        Live-mode-only checks, folded into one verdict: write-readback (did each commanded
+        setpoint value land — and stay — on its entity?) and the two physical checks — anti-
+        drain (no discharge under the cap) and charge actuation (charging below a held
+        setpoint). A landed-mismatch wins (the write didn't even stick), then any physical
+        mismatch; mismatches must persist VERIFY_MISMATCH_SECONDS before confirming — one timer
         serving as both settle window and debounce, robust to the variable tick cadence. A
         confirmed mismatch raises the actuation-mismatch binary sensor and notifies once per
         episode.
@@ -475,11 +477,15 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         actuation = check_actuation(
             state, self.last_discharge_decision, self.last_discharge_outcome
         )
+        charge = check_charge_actuation(
+            state, self.last_setpoint_decision, self.last_setpoint_outcome
+        )
+        physical = [r for r in (actuation, charge) if r is not None]
         landed = self._check_writes_landed(state.now)
         if landed is not None and not landed.ok:
             result = landed  # the write didn't even land — the most fundamental failure
-        elif actuation is not None:
-            result = actuation
+        elif physical:
+            result = next((r for r in physical if not r.ok), physical[0])
         else:
             result = landed  # ok (all judgeable writes match) or None (nothing to verify)
         if result is None:
