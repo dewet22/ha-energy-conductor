@@ -477,8 +477,12 @@ class EnergyConductorCoordinator(DataUpdateCoordinator[None]):
         actuation = check_actuation(
             state, self.last_discharge_decision, self.last_discharge_outcome
         )
-        charge = check_charge_actuation(
-            state, self.last_setpoint_decision, self.last_setpoint_outcome
+        # Only a pinned slot makes the setpoint two-sided; unpinned, the target is a mere
+        # ceiling and an idle battery below it is correct, not a stalled charge.
+        charge = (
+            check_charge_actuation(state, self.last_setpoint_decision, self.last_setpoint_outcome)
+            if self.slot_pin_status == "pinned"
+            else None
         )
         physical = [r for r in (actuation, charge) if r is not None]
         landed = self._check_writes_landed(state.now)
