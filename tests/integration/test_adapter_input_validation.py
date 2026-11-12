@@ -224,3 +224,24 @@ async def test_battery_power_none_when_stale(hass, freezer):
     freezer.tick(timedelta(seconds=STALE_POWER_SECONDS + 60))
     adapter = Adapter(hass, {CONF_BATTERY_POWER_SENSOR: "sensor.battery_power"})
     assert adapter._battery_power_w() is None
+
+
+async def test_battery_power_fresh_while_reported_unchanged(hass, freezer):
+    """A steady reading the integration keeps reporting is fresh, not stale.
+
+    Nov 2026: at the floor battery power sat at 2-3 W for up to an hour. HA only advances
+    last_updated on a value change, so a last_updated gate dropped the reading every 5 min
+    and the stalled-charge verdict flapped. last_reported advances on every poll.
+    """
+    from datetime import timedelta
+
+    from custom_components.energy_conductor.const import STALE_POWER_SECONDS
+
+    hass.states.async_set("sensor.battery_power", "2")
+    await hass.async_block_till_done()
+    for _ in range(3):
+        freezer.tick(timedelta(seconds=STALE_POWER_SECONDS - 60))
+        hass.states.async_set("sensor.battery_power", "2")  # same value: last_reported only
+        await hass.async_block_till_done()
+    adapter = Adapter(hass, {CONF_BATTERY_POWER_SENSOR: "sensor.battery_power"})
+    assert adapter._battery_power_w() == pytest.approx(2.0)
