@@ -68,7 +68,7 @@ The config flow walks through these steps:
 
 | Step | Required | What you configure |
 |---|---|---|
-| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve % (display-only, see below), optional reserve-SoC sensor, charge slot-1 start/end time entities |
+| Battery | ✓ | SoC sensor, charge control entity, discharge limit entity, capacity, reserve % (see below), optional reserve-SoC sensor, charge slot-1 start/end time entities |
 | Tariff | ✓ | Off-peak binary sensor, optional EV dispatching sensor, overnight window end time |
 | Forecast source | ✓ | Solcast sensor, daily-total sensor, or none |
 | Forecast details | ✓ | Optional live generation sensor, winter/summer fallback range, hemisphere |
@@ -79,7 +79,7 @@ The config flow walks through these steps:
 
 Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
 
-**The battery reserve floor (%) is display-only.** It describes the inverter's reserve floor for energy calculations — it is not, and never was, a minimum-SoC control. If you configure the optional reserve-SoC sensor, that live entity always wins for actuation purposes; the static field only feeds usable-energy calculations, the projection floor and the discharge guard's floor exception when no live sensor is available. This field is never written to.
+**The battery reserve floor (%) is never a minimum-SoC control.** It describes the inverter's reserve floor — it is not, and never was, written to the inverter. If you configure the optional reserve-SoC sensor, that live entity always wins; without it, the static field feeds usable-energy calculations, the projection floor and the discharge guard's floor exception. This field is never written to.
 
 ### Migrating from the overnight planner
 
@@ -87,7 +87,7 @@ If you're upgrading from a version that planned an overnight charge target, the 
 
 - The charge-slot-1 start/end pickers above are new and required for the regime to work — GivEnergy inverters only grid-charge inside a scheduled slot, and the regime needs that slot open around the clock.
 - Any existing automations that set the charge window or cap discharge during dispatch (e.g. hand-rolled GivTCP automations) should be disabled once EC is pinning the slot and driving the setpoint — leaving both running risks fighting writes. A dry run (`write_mode: dry_run`) alongside your existing automations for a few days lets you compare what EC would have done before switching over.
-- If your stored reserve floor was set to something other than your inverter's true hardware minimum (as a workaround for the old planner), reset it to the true value — it's inert now, but there's no reason to leave the wrong number in a display field.
+- If your stored reserve floor was set to something other than your inverter's true hardware minimum (as a workaround for the old planner), reset it to the true value — without a reserve-SoC sensor it still sets where the discharge guard's floor exception applies, so a wrong value changes when the off-peak cap engages.
 
 ### Adapting your sensors with template sensors
 
