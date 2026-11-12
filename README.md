@@ -21,10 +21,11 @@ At a tariff where `off-peak import ÷ round-trip efficiency < export rate` (true
 
 | Regime | Condition (priority order) | Setpoint | Discharge limit |
 |---|---|---|---|
-| **Off-peak charge** | Off-peak sensor on, or dispatch sensor on | 100 % | 0 W |
+| **Off-peak charge** | Off-peak sensor on, or dispatch sensor on | 100 % | 0 W (left open while SoC is within 2 points of the reserve) |
 | **Self-consume** | Otherwise | The charge control's own minimum (typically ~4 %) | Full rated discharge power |
 
 - During an off-peak window (or dispatch) the inverter grid-charges to 100% and the discharge limit holds the battery at zero — no wasteful drain while the target converges. This also covers EV protection: on a whole-house meter, EV smart-charging always lands inside an off-peak/dispatch window, so the battery idles and the car pulls off-peak grid rather than the battery.
+- The one exception is a battery that is already at its reserve when off-peak starts. A GivEnergy inverter sitting at the floor (status `waiting`) will not start a grid charge while the discharge limit is 0, so EC leaves the limit open until the charge has lifted SoC clear of the reserve, then caps it — once charging, the cap no longer stops it. There is nothing to drain at the floor, so the exception costs nothing.
 - Outside an off-peak window it's plain Eco: the battery discharges to serve load, all the way down to the inverter's hardware reserve. There's deliberately no floor above that reserve — a floor there would idle a charged battery during the peak rate for no benefit, since the next off-peak window refills the battery regardless.
 - The self-consume setpoint is read from the charge-target control's own minimum value, not from any reserve configuration, so a misdescribed reserve can never be written back as a floor.
 - A stale or unavailable off-peak/dispatch sensor falls through to self-consume — the failure mode is plain Eco, never a stuck charge.
@@ -78,7 +79,7 @@ The config flow walks through these steps:
 
 Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
 
-**The battery reserve floor (%) is display-only.** It describes the inverter's reserve floor for energy calculations — it is not, and never was, a minimum-SoC control. If you configure the optional reserve-SoC sensor, that live entity always wins for actuation purposes; the static field only feeds usable-energy calculations and the projection floor when no live sensor is available. This field is never written to.
+**The battery reserve floor (%) is display-only.** It describes the inverter's reserve floor for energy calculations — it is not, and never was, a minimum-SoC control. If you configure the optional reserve-SoC sensor, that live entity always wins for actuation purposes; the static field only feeds usable-energy calculations, the projection floor and the discharge guard's floor exception when no live sensor is available. This field is never written to.
 
 ### Migrating from the overnight planner
 

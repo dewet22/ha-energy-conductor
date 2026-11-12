@@ -23,16 +23,29 @@ Two regimes were removed once their premises didn't hold up:
 
 The limit is now only ever 0 or max — both map cleanly onto a percentage-based
 discharge control. See project memory for the full reasoning.
+
+Floor wake: within DISCHARGE_FLOOR_WAKE_MARGIN of the reserve, regime 1 leaves the limit at
+max. A GivEnergy inverter at the floor sits in "waiting" and will not start the off-peak fill
+while the limit is 0 — two weeks of empty nights in Nov 2026, once a power cut had let the
+battery reach the floor before off-peak. There is nothing to protect at the floor, and once
+the charge lifts SoC clear of the margin the cap resumes without interrupting it.
 """
 
 from __future__ import annotations
 
+from .const import DISCHARGE_FLOOR_WAKE_MARGIN
 from .decisions import Decision, DecisionKind
 from .model import SiteState
 
 
 def discharge_limit(state: SiteState, *, target_entity: str) -> Decision:
-    if state.tariff.off_peak_now or state.tariff.ev_dispatching_now:
+    battery = state.battery
+    off_peak = state.tariff.off_peak_now or state.tariff.ev_dispatching_now
+    at_floor = battery.soc_percent <= battery.reserve_percent + DISCHARGE_FLOOR_WAKE_MARGIN
+    if off_peak and at_floor:
+        limit_w = battery.max_discharge_power_w
+        reason = "Off-peak energy at the reserve floor — cap left open so the fill can start"
+    elif off_peak:
         limit_w = 0
         reason = "Off-peak energy (window or dispatch) — battery idle"
     else:

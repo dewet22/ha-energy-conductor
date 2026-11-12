@@ -207,6 +207,13 @@ HOTWATER_ACTIVE_DIVERSION_STATES = ("Diverting", "Boosting")
 STALE_POWER_SECONDS = 5 * 60  # 5 minutes
 STALE_FORECAST_SECONDS = 24 * 3600  # 24 hours
 
+# Discharge guard: within this many SoC points of the reserve, the off-peak cap stays open.
+# At the floor a GivEnergy inverter sits in "waiting" and will not start a grid charge while
+# the discharge limit is 0; once charging, capping to 0 is harmless (live-tested Nov 2026).
+# The slack covers SoC reading either side of the reserve; the battery can't drain past the
+# floor anyway, so leaving the cap open there costs at most this many points of charge.
+DISCHARGE_FLOOR_WAKE_MARGIN = 2
+
 # Actuation verification (anti-drain check)
 VERIFY_DISCHARGE_THRESHOLD_W = 150  # below this the battery is treated as effectively idle
 VERIFY_MISMATCH_SECONDS = (

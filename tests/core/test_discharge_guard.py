@@ -15,6 +15,7 @@ Two regimes were removed:
 
 from datetime import timedelta
 
+from energy_conductor.const import DISCHARGE_FLOOR_WAKE_MARGIN
 from energy_conductor.decisions import DecisionKind
 from energy_conductor.discharge_guard import discharge_limit
 
@@ -113,3 +114,63 @@ class TestNoPreOffPeakHold:
         )
         assert decision.value == 0
         assert "off-peak" in decision.reason.lower()
+
+
+class TestFloorWake:
+    """At the reserve floor the cap is left open so the inverter can start the fill.
+
+    Nov 2026: in "waiting" at the floor, a GivEnergy inverter ignores a charge target above
+    SoC while the discharge limit is 0 — it charged 32 s after the limit was raised, with no
+    other change. Once charging, dropping the limit back to 0 does not stop it, so the cap
+    only needs holding off until SoC clears the floor margin.
+    """
+
+    def test_off_peak_at_floor_leaves_discharge_open(self):
+        decision = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(soc_percent=4.0, reserve_percent=4.0, max_discharge_power_w=100),
+        )
+        assert decision.value == 100
+        assert "floor" in decision.reason.lower()
+
+    def test_below_floor_leaves_discharge_open(self):
+        # SoC reads a point under the reserve on this hardware (3% vs 4%).
+        decision = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(soc_percent=3.0, reserve_percent=4.0),
+        )
+        assert decision.value == 3000
+
+    def test_within_margin_leaves_discharge_open(self):
+        decision = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(soc_percent=4.0 + DISCHARGE_FLOOR_WAKE_MARGIN, reserve_percent=4.0),
+        )
+        assert decision.value == 3000
+
+    def test_above_margin_caps_to_zero(self):
+        # Once the charge has lifted SoC clear of the floor, the anti-drain cap resumes.
+        decision = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(
+                soc_percent=4.0 + DISCHARGE_FLOOR_WAKE_MARGIN + 1, reserve_percent=4.0
+            ),
+        )
+        assert decision.value == 0
+
+    def test_dispatch_at_floor_leaves_discharge_open(self):
+        decision = _decide(
+            tariff=a_tariff(off_peak_now=False, ev_dispatching_now=True),
+            battery=a_battery(soc_percent=4.0, reserve_percent=4.0),
+        )
+        assert decision.value == 3000
+
+    def test_floor_wake_dedupes_like_unconstrained(self):
+        # Same written value as peak → same key, so the peak→off-peak edge at the floor
+        # issues no write, and leaving the floor issues exactly one (to 0).
+        at_floor = _decide(
+            tariff=a_tariff(off_peak_now=True),
+            battery=a_battery(soc_percent=4.0, reserve_percent=4.0),
+        )
+        peak = _decide(battery=a_battery(soc_percent=4.0, reserve_percent=4.0))
+        assert at_floor.dedupe_key == peak.dedupe_key
