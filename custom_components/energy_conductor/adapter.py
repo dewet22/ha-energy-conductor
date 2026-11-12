@@ -130,8 +130,11 @@ def _read_float(hass: HomeAssistant, entity_id: str, *, max_age_seconds: int | N
     # None disables the staleness check, for entities that only write state when
     # their value changes (control numbers, myenergi-style sensors) and can
     # legitimately sit unchanged for days.
+    # last_reported, not last_updated: a value that holds steady (battery power idling at
+    # the floor) only advances last_updated on change, but the integration still reports
+    # it every poll. A stalled integration stops reporting, so this still catches it.
     if max_age_seconds is not None:
-        age = (dt_util.utcnow() - state.last_updated).total_seconds()
+        age = (dt_util.utcnow() - state.last_reported).total_seconds()
         if age > max_age_seconds:
             raise EntityProblem(f"{entity_id}: stale ({age:.0f}s > {max_age_seconds}s)")
     try:
