@@ -111,3 +111,28 @@ async def test_reserve_sensor_value_flows_into_site_state(hass, mock_config_entr
 
     state = await adapter.build_site_state()
     assert state.battery.reserve_percent == pytest.approx(4.0)
+
+
+async def test_reserve_holds_last_reading_while_sensor_briefly_unreadable(
+    hass, mock_config_entry, caplog
+):
+    """A reconnect gap must not swap the live floor for a stale config value (live 2026-11-13).
+
+    The GivEnergy integration's nightly reconnect republishes SoC a fraction of a second before
+    the reserve number. A tick in that gap fell back to a config value of 40 against a live 4,
+    and the discharge guard's floor wake read SoC 37 as "at the floor" and opened the cap.
+    """
+    hass.states.async_set(RESERVE_SENSOR, "4")
+    await hass.async_block_till_done()
+    mock_config_entry.add_to_hass(hass)
+    adapter = _adapter(
+        hass,
+        {CONF_RESERVE_SOC_SENSOR: RESERVE_SENSOR, CONF_BATTERY_RESERVE_PERCENT: 40},
+    )
+    assert adapter._reserve_percent() == pytest.approx(4.0)
+
+    hass.states.async_set(RESERVE_SENSOR, "unavailable")
+    await hass.async_block_till_done()
+
+    assert adapter._reserve_percent() == pytest.approx(4.0)
+    assert "last reading" in caplog.text

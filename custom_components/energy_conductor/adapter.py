@@ -243,6 +243,8 @@ class Adapter:
         self._solcast_zero_slots_warned = False
         # Episode latch for hot-water corroboration starvation (warn once per episode).
         self._hotwater_starved_warned = False
+        # Last good reserve-sensor reading, held across brief unavailability (reconnects).
+        self._last_reserve_percent: float | None = None
 
     async def build_site_state(self) -> SiteState:
         """Read entities and assemble a SiteState. Raises EntityProblem on hard failures."""
@@ -405,8 +407,9 @@ class Adapter:
         """Minimum-SoC reserve floor.
 
         Prefer a live reserve sensor (e.g. GivEnergy battery_soc_reserve) when one
-        is configured, so EC tracks the inverter's actual floor. Fall back to the
-        static configured reserve percent if the sensor is unset or unreadable.
+        is configured, so EC tracks the inverter's actual floor. While the sensor is
+        unreadable, hold its last reading; fall back to the static configured reserve
+        percent only if the sensor is unset or has never been read.
         """
         sensor = self.config.get(CONF_RESERVE_SOC_SENSOR)
         if sensor:
@@ -425,8 +428,19 @@ class Adapter:
                         raw,
                         clamped,
                     )
+                self._last_reserve_percent = clamped
                 return clamped
             except EntityProblem as exc:
+                # Hold the last reading rather than the config value: the inverter's floor
+                # didn't change because the integration blinked, and a config value that
+                # disagrees with it would move the discharge guard's floor wake.
+                if self._last_reserve_percent is not None:
+                    _LOGGER.warning(
+                        "Reserve SoC sensor unreadable (%s); holding last reading %s%%",
+                        exc,
+                        self._last_reserve_percent,
+                    )
+                    return self._last_reserve_percent
                 _LOGGER.warning("Reserve SoC sensor unreadable (%s); using config value", exc)
         return float(self.config.get(CONF_BATTERY_RESERVE_PERCENT, DEFAULT_RESERVE_PERCENT))
 
