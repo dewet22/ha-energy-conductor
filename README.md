@@ -79,7 +79,7 @@ The config flow walks through these steps:
 
 Every group can be changed at any time via the integration's **Configure** option — a menu of the same focused forms — without re-running the full flow.
 
-**The battery reserve floor (%) is never a minimum-SoC control.** It describes the inverter's reserve floor — it is not, and never was, written to the inverter. If you configure the optional reserve-SoC sensor, that live entity always wins; without it, the static field feeds usable-energy calculations, the projection floor and the discharge guard's floor exception. This field is never written to.
+**The battery reserve floor (%) is never a minimum-SoC control.** It describes the inverter's reserve floor — it is not, and never was, written to the inverter. If you configure the optional reserve-SoC sensor, that live entity always wins — while it is briefly unavailable (an integration reconnect, say) EC holds its last reading; without it, the static field feeds usable-energy calculations, the projection floor and the discharge guard's floor exception. This field is never written to.
 
 ### Migrating from the overnight planner
 
